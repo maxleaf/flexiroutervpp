@@ -12,6 +12,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+/*
+ *  Copyright (C) 2019 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - added support for vendor 0x1f18
+ */
+
+#ifndef FLEXIWAN_FIX
+#define FLEXIWAN_FIX
+#endif
+
 #include <vnet/vnet.h>
 #include <vppinfra/vec.h>
 #include <vppinfra/error.h>
@@ -919,7 +930,11 @@ dpdk_bind_devices_to_uio (dpdk_config_main_t * conf)
       ;
     /* all Intel QAT devices VFs */
     else if (d->vendor_id == 0x8086 && d->device_class == PCI_CLASS_PROCESSOR_CO &&
-        (d->device_id == 0x0443 || d->device_id == 0x37c9 || d->device_id == 0x19e3))
+#ifdef FLEXIWAN_FIX
+        (d->device_id == 0x0443 || d->device_id == 0x37c9 || d->device_id == 0x19e3 || d->device_id == 0x1f18))
+#else
+        (d->device_id == 0x0443 || d->device_id == 0x37c9 || d->device_id == 0x19e3)
+#endif /* FLEXIWAN_FIX */
       ;
     /* Cisco VIC */
     else if (d->vendor_id == 0x1137 && d->device_id == 0x0043)

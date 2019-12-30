@@ -13,6 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+/*
+ *  Copyright (C) 2019 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - Use 4789 for VxLan src port - enables full NAT traversal
+ */
+
+#ifndef FLEXIWAN_FIX
+#define FLEXIWAN_FIX
+#endif
+
 #include <vppinfra/error.h>
 #include <vppinfra/hash.h>
 #include <vnet/vnet.h>
@@ -129,8 +140,10 @@ vxlan_encap_inline (vlib_main_t * vm,
 
 	  vlib_buffer_t * b0 = vlib_get_buffer (vm, bi0);
 	  vlib_buffer_t * b1 = vlib_get_buffer (vm, bi1);
+#ifndef FLEXIWAN_FIX
           u32 flow_hash0 = vnet_l2_compute_flow_hash (b0);
           u32 flow_hash1 = vnet_l2_compute_flow_hash (b1);
+#endif
 
 	  /* Get next node index and adj index from tunnel next_dpo */
 	  if (sw_if_index0 != vnet_buffer(b0)->sw_if_index[VLIB_TX])
@@ -238,11 +251,19 @@ vxlan_encap_inline (vlib_main_t * vm,
               udp1 = &hdr1->udp;
 	    }
 
+#ifdef FLEXIWAN_FIX
+          /* Fix UDP length  and set source port */
+          udp0->length = payload_l0;
+          udp0->src_port = clib_host_to_net_u16 (4789);
+          udp1->length = payload_l1;
+          udp1->src_port = clib_host_to_net_u16 (4789);
+#else
           /* Fix UDP length  and set source port */
           udp0->length = payload_l0;
           udp0->src_port = flow_hash0;
           udp1->length = payload_l1;
           udp1->src_port = flow_hash1;
+#endif
 
           if (csum_offload)
             {
@@ -336,7 +357,9 @@ vxlan_encap_inline (vlib_main_t * vm,
 	  n_left_to_next -= 1;
 
 	  vlib_buffer_t * b0 = vlib_get_buffer (vm, bi0);
+#ifndef FLEXIWAN_FIX
           u32 flow_hash0 = vnet_l2_compute_flow_hash(b0);
+#endif
 
 	  /* Get next node index and adj index from tunnel next_dpo */
 	  if (sw_if_index0 != vnet_buffer(b0)->sw_if_index[VLIB_TX])
@@ -398,9 +421,15 @@ vxlan_encap_inline (vlib_main_t * vm,
               udp0 = &hdr->udp;
 	    }
 
+#ifdef FLEXIWAN_FIX
+          /* Fix UDP length  and set source port */
+          udp0->length = payload_l0;
+          udp0->src_port = clib_host_to_net_u16 (4789);
+#else
           /* Fix UDP length  and set source port */
           udp0->length = payload_l0;
           udp0->src_port = flow_hash0;
+#endif
 
           if (csum_offload)
             {

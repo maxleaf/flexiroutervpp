@@ -12,6 +12,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+/*
+ *  Copyright (C) 2019 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - set l2.l2_len metadata for buffers received on L2GRE tunnel and
+ *     flooded to TAP through BVI, so Linux will see proper mac header.
+ */
+
+#ifndef FLEXIWAN_FIX
+#define FLEXIWAN_FIX
+#endif
+
 /**
  * @file
  * @brief L2-GRE over IPSec packet processing.
@@ -165,6 +177,16 @@ ipsec_gre_input (vlib_main_t * vm,
             {
               next0 = IPSEC_GRE_INPUT_NEXT_L2_INPUT;
               b0->error = node->errors[IPSEC_GRE_ERROR_NONE];
+#ifdef FLEXIWAN_FIX
+              // Do that as packet doesn't pass ethernet-input node, where l2.l2_len is set.
+              // We made speculation here, as we expect the tunneled frame to be an ethernet frame.
+              // If that is not true, the next node 'l2-input' will drop it (IPSEC_GRE_INPUT_NEXT_L2_INPUT).
+              // The l2.len is needed in l2_to_bvi(), while forwarding/flooding tunneled frame to BVI.
+              // We need it as we use TAP(router plugin)+BVI+l2gre to encrypt tunneled OSPF exchange by FRRs that run in Linux-es.
+              // And this is because L3 Tunnel interface can't be tapped!
+              //
+              vnet_buffer(b0)->l2.l2_len = sizeof(ethernet_header_t);
+#endif /* FLEXIWAN_FIX */
             }
           else
             {
@@ -176,6 +198,16 @@ ipsec_gre_input (vlib_main_t * vm,
             {
               next1 = IPSEC_GRE_INPUT_NEXT_L2_INPUT;
               b1->error = node->errors[IPSEC_GRE_ERROR_NONE];
+#ifdef FLEXIWAN_FIX
+              // Do that as packet doesn't pass ethernet-input node, where l2.l2_len is set.
+              // We made speculation here, as we expect the tunneled frame to be an ethernet frame.
+              // If that is not true, the next node 'l2-input' will drop it (IPSEC_GRE_INPUT_NEXT_L2_INPUT).
+              // The l2.len is needed in l2_to_bvi(), while forwarding/flooding tunneled frame to BVI.
+              // We need it as we use TAP(router plugin)+BVI+l2gre to encrypt tunneled OSPF exchange by FRRs that run in Linux-es.
+              // And this is because L3 Tunnel interface can't be tapped!
+              //
+              vnet_buffer(b1)->l2.l2_len = sizeof(ethernet_header_t);
+#endif /* FLEXIWAN_FIX */
             }
           else
             {
@@ -321,6 +353,16 @@ drop1:
             {
               next0 = IPSEC_GRE_INPUT_NEXT_L2_INPUT;
               b0->error = node->errors[IPSEC_GRE_ERROR_NONE];
+#ifdef FLEXIWAN_FIX
+              // Do that as packet doesn't pass ethernet-input node, where l2.l2_len is set.
+              // We made speculation here, as we expect the tunneled frame to be an ethernet frame.
+              // If that is not true, the next node 'l2-input' will drop it (IPSEC_GRE_INPUT_NEXT_L2_INPUT).
+              // The l2.len is needed in l2_to_bvi(), while forwarding/flooding tunneled frame to BVI.
+              // We need it as we use TAP(router plugin)+BVI+l2gre to encrypt tunneled OSPF exchange by FRRs that run in Linux-es.
+              // And this is because L3 Tunnel interface can't be tapped!
+              //
+              vnet_buffer(b0)->l2.l2_len = sizeof(ethernet_header_t);
+#endif /* FLEXIWAN_FIX */
             }
           else
             {
