@@ -15,6 +15,17 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2019 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - copy ehternet header from incoming buffer into decrypted buffer,
+ *     so when pushed into TAP it will not be discarded by Linux.
+ */
+
+#ifndef FLEXIWAN_FIX
+#define FLEXIWAN_FIX
+#endif
+
 #include <vnet/vnet.h>
 #include <vnet/api_errno.h>
 #include <vnet/ip/ip.h>
@@ -240,7 +251,21 @@ esp_decrypt_inline (vlib_main_t * vm,
 					   empty_buffers[last_empty_buffer -
 							 1], STORE);
 	  _vec_len (empty_buffers) = last_empty_buffer;
-
+#ifdef FLEXIWAN_FIX
+      // The ethernet header is not copied to the new buffer with decrypted packet.
+      // Though b->current_data is updated! (see o_b0->current_data = sizeof (ethernet_header_t) below).
+      // As a result, when the packet is pushed into tap interface by tap-inject-tx node,
+      // Linux discards it silently, as a junky destination mac address doesn't match the interface mac.
+      // So just go and copy the mac header from encrypted packet into decrypted.
+      {
+          ethernet_header_t* i_eth0, *o_eth0;
+          size_t size_of_ip_header = is_ip6 ? sizeof(ip6_header_t) : sizeof(ip4_header_t);
+          o_b0->current_data = 0;
+          o_eth0 = vlib_buffer_get_current (o_b0);
+          i_eth0 = vlib_buffer_get_current (i_b0) - size_of_ip_header - sizeof (ethernet_header_t);
+          clib_memcpy_fast (o_eth0, i_eth0, sizeof (ethernet_header_t));
+      }
+#endif /* FLEXIWAN_FIX */
 	  /* add old buffer to the recycle list */
 	  vec_add1 (recycle, i_bi0);
 
