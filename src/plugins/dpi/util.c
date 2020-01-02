@@ -20,7 +20,6 @@ int dpi_enable_disable (u32 sw_if_index, int enable_disable)
 {
   dpi_main_t *sm = &dpi_main;
   vnet_sw_interface_t * sw = NULL;
-  u32 *acl_vec = 0;
   int rv = 0;
   vnet_main_t * vnm = vnet_get_main();
 
@@ -40,18 +39,11 @@ int dpi_enable_disable (u32 sw_if_index, int enable_disable)
   vnet_feature_enable_disable ("ip4-unicast", "flow_ip4_in2out",
                                sw_if_index, enable_disable, 0, 0);
 
-  vec_add1 (acl_vec, 0);
-  vec_add1 (acl_vec, 1);
-
   sm->acl_user_id = sm->acl_plugin.register_user_module ("DPI", "label1", "label2");
 
   sm->acl_lc_id = sm->acl_plugin.get_lookup_context_index (sm->acl_user_id, 1, 2);
   if (sm->acl_lc_id < 0)
     return sm->acl_lc_id;
-
-  sm->acl_plugin.set_acl_vec_for_context (sm->acl_lc_id, acl_vec);
-
-  vec_free (acl_vec);
 
   return rv;
 }
@@ -74,6 +66,7 @@ vnet_dpi_app_add_del(u8 * name, u8 add)
         memset(app, 0, sizeof(*app));
 
         app->name = vec_dup(name);
+        app->acl_id = ~0;
         app->rules_by_id = hash_create_mem (0, sizeof (u32), sizeof (uword));
 
         hash_set_mem (sm->dpi_app_by_name, app->name, app - sm->dpi_apps);
@@ -134,6 +127,42 @@ vnet_dpi_rule_add_del(u8 * app_name, u32 rule_index, u8 add,
       rule = pool_elt_at_index (app->rules, p[0]);
       hash_unset_mem (app->rules_by_id, &rule_index);
       pool_put (app->rules, rule);
+    }
+
+  return 0;
+}
+
+int
+vnet_dpi_acl_add_del(u8 * app_name, u32 acl_index, u8 add)
+{
+  dpi_main_t *sm = &dpi_main;
+  uword *p = NULL;
+  dpi_app_t *app = NULL;
+
+  p = hash_get_mem (sm->dpi_app_by_name, app_name);
+  if (!p)
+    return VNET_API_ERROR_NO_SUCH_ENTRY;
+
+  app = pool_elt_at_index (sm->dpi_apps, p[0]);
+
+  if (add)
+    {
+      if (p)
+        return VNET_API_ERROR_VALUE_EXIST;
+
+      app->acl_id = acl_index;
+
+      vec_add1 (sm->acl_vec, app->acl_id);
+      sm->acl_plugin.set_acl_vec_for_context (sm->acl_lc_id, sm->acl_vec);
+    }
+  else
+    {
+      if (!p)
+        return VNET_API_ERROR_NO_SUCH_ENTRY;
+
+      app->acl_id = ~0;
+
+      //TBD: Implement ACL id removal from ACL plugin context
     }
 
   return 0;

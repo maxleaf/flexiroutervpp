@@ -32,6 +32,7 @@ typedef struct {
   u8 * name;
   uword * rules_by_id;
   dpi_rule_t * rules;
+  u32 acl_id;
 } dpi_app_t;
 
 typedef struct {
@@ -47,6 +48,7 @@ typedef struct {
 
   u32 acl_user_id;
   int acl_lc_id;
+  u32 *acl_vec;
   acl_plugin_methods_t acl_plugin;
 
   volatile u32 *writer_lock;

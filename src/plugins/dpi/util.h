@@ -32,5 +32,6 @@ int vnet_dpi_app_add_del(u8 * name, u8 add);
 
 int vnet_dpi_rule_add_del(u8 * app_name, u32 rule_index, u8 add,
                           dpi_rule_args_t * args);
+int vnet_dpi_acl_add_del(u8 * app_name, u32 acl_index, u8 add);
 
 #endif /* DPI_PLUGIN_UTIL_H_ */
