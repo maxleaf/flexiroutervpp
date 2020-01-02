@@ -281,17 +281,17 @@ VLIB_CLI_COMMAND (dpi_show_apps_command, static) =
 /* *INDENT-ON* */
 
 static clib_error_t *
-dpi_application_rule_add_del_command_fn (vlib_main_t * vm,
-                                         unformat_input_t * input,
-                                         vlib_cli_command_t * cmd)
+dpi_application_acl_rule_add_del_command_fn (vlib_main_t * vm,
+                                             unformat_input_t * input,
+                                             vlib_cli_command_t * cmd)
 {
   unformat_input_t _line_input, *line_input = &_line_input;
   u8 *app_name = NULL;
-  u32 rule_index = 0;
+  u32 rule_index = ~0;
+  u32 acl_index = ~0;
   clib_error_t *error = NULL;
   int rv = 0;
   int add = 1;
-  dpi_rule_args_t rule_args = {};
 
   /* Get a line of input. */
   if (!unformat_user (input, unformat_line_input, line_input))
@@ -299,41 +299,20 @@ dpi_application_rule_add_del_command_fn (vlib_main_t * vm,
 
   while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
     {
-      if (unformat (line_input, "%_%v%_ rule %u",
-                    &app_name, &rule_index))
+      rv = unformat (line_input, "%_%v%_ rule %u", &app_name, &rule_index);
+      if (!rv)
+        rv = unformat (line_input, "%_%v%_ acl %u", &app_name, &acl_index);
+      if (!rv)
         {
-          if (unformat (line_input, "del"))
-            {
-              add = 0;
-              break;
-            }
-          else if (unformat (line_input, "add"))
-            {
-              add = 1;
-
-              if (unformat (line_input, "network %U/%d", unformat_ip46_address,
-                            &rule_args.server_ip, IP46_TYPE_ANY, &rule_args.ip_prefix))
-                {
-                  if (unformat (line_input, "port %d", &rule_args.start_port))
-                    break;
-                  else if (unformat (line_input, "ports %d-%d", &rule_args.start_port,
-                                      &rule_args.end_port))
-                    break;
-                }
-              else
-                {
-                  error = clib_error_return (0, "unknown input `%U'",
-                                             format_unformat_error, input);
-                  goto done;
-                }
-            }
-          else
-            {
-              error = clib_error_return (0, "unknown input `%U'",
-                                         format_unformat_error, input);
-              goto done;
-            }
+          error = clib_error_return (0, "unknown input `%U'",
+                                     format_unformat_error, input);
+          goto done;
         }
+
+      if (unformat (line_input, "del"))
+          add = 0;
+      else if (unformat (line_input, "add"))
+          add = 1;
       else
         {
           error = clib_error_return (0, "unknown input `%U'",
@@ -342,7 +321,21 @@ dpi_application_rule_add_del_command_fn (vlib_main_t * vm,
         }
     }
 
-  rv = vnet_dpi_rule_add_del(app_name, rule_index, add, &rule_args);
+  if (rule_index != ~0)
+    {
+      rv = vnet_dpi_rule_add_del(app_name, rule_index, add);
+    }
+  else if (acl_index != ~0)
+    {
+      rv = vnet_dpi_acl_add_del(app_name, acl_index, add);
+    }
+  else
+    {
+      error = clib_error_return (0, "unknown input `%U'",
+                                 format_unformat_error, input);
+      goto done;
+    }
+
   switch (rv)
     {
     case 0:
@@ -376,90 +369,7 @@ done:
 VLIB_CLI_COMMAND (upf_application_rule_add_del_command, static) =
 {
   .path = "application",
-  .short_help = "application <name> rule <id> (add | del) [network <ip/prefix>] [port <port>] [ports <port>-<port>]",
-  .function = dpi_application_rule_add_del_command_fn,
-};
-/* *INDENT-ON* */
-
-static clib_error_t *
-dpi_application_acl_add_del_command_fn (vlib_main_t * vm,
-                                        unformat_input_t * input,
-                                        vlib_cli_command_t * cmd)
-{
-  unformat_input_t _line_input, *line_input = &_line_input;
-  u8 *app_name = NULL;
-  u32 acl_index = 0;
-  clib_error_t *error = NULL;
-  int rv = 0;
-  int add = 1;
-
-  /* Get a line of input. */
-  if (!unformat_user (input, unformat_line_input, line_input))
-    return error;
-
-  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
-    {
-      if (unformat (line_input, "%_%v%_ acl %u",
-                    &app_name, &acl_index))
-        {
-          if (unformat (line_input, "del"))
-            {
-              add = 0;
-            }
-          else if (unformat (line_input, "add"))
-            {
-              add = 1;
-            }
-          else
-            {
-              error = clib_error_return (0, "unknown input `%U'",
-                                         format_unformat_error, input);
-              goto done;
-            }
-        }
-      else
-        {
-          error = clib_error_return (0, "unknown input `%U'",
-                                     format_unformat_error, input);
-          goto done;
-        }
-    }
-
-  rv = vnet_dpi_acl_add_del(app_name, acl_index, add);
-  switch (rv)
-    {
-    case 0:
-      break;
-
-    case VNET_API_ERROR_VALUE_EXIST:
-      error = clib_error_return (0, "rule already exists...");
-      break;
-
-    case VNET_API_ERROR_NO_SUCH_ENTRY:
-      error = clib_error_return (0, "application or rule does not exist...");
-      break;
-
-    case VNET_API_ERROR_INSTANCE_IN_USE:
-      error = clib_error_return (0, "application is in use...");
-      break;
-
-    default:
-      error = clib_error_return (0, "%s returned %d", __FUNCTION__, rv);
-      break;
-    }
-
-done:
-  vec_free (app_name);
-  unformat_free (line_input);
-
-  return error;
-}
-
-/* *INDENT-OFF* */
-VLIB_CLI_COMMAND (upf_application_acl_add_del_command, static) =
-{
-  .path = "application",
-  .short_help = "application <name> acl <id> (add | del)",
-  .function = dpi_application_acl_add_del_command_fn,
+  .short_help = "application <name> (acl|rule) <id> (add | del)",
+  .function = dpi_application_acl_rule_add_del_command_fn,
 };
 /* *INDENT-ON* */

@@ -89,8 +89,7 @@ vnet_dpi_app_add_del(u8 * name, u8 add)
 }
 
 int
-vnet_dpi_rule_add_del(u8 * app_name, u32 rule_index, u8 add,
-                      dpi_rule_args_t * args)
+vnet_dpi_rule_add_del(u8 * app_name, u32 rule_index, u8 add)
 {
   dpi_main_t *sm = &dpi_main;
   uword *p = NULL;
@@ -112,10 +111,6 @@ vnet_dpi_rule_add_del(u8 * app_name, u32 rule_index, u8 add,
       pool_get (app->rules, rule);
       memset(rule, 0, sizeof(*rule));
       rule->id = rule_index;
-      rule->server_ip = args->server_ip;
-      rule->ip_prefix = args->ip_prefix;
-      rule->start_port = args->start_port;
-      rule->end_port = args->end_port;
 
       hash_set_mem (app->rules_by_id, &rule_index, rule - app->rules);
     }
@@ -147,9 +142,6 @@ vnet_dpi_acl_add_del(u8 * app_name, u32 acl_index, u8 add)
 
   if (add)
     {
-      if (p)
-        return VNET_API_ERROR_VALUE_EXIST;
-
       app->acl_id = acl_index;
 
       vec_add1 (sm->acl_vec, app->acl_id);
