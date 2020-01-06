@@ -132,7 +132,7 @@ classify_node_fn (vlib_main_t * vm, vlib_node_runtime_t * node,
                                        sm->acl_lc_id, b0,
                                        is_ip60,
                                        /* is_input */ 0,
-                                       /* is_l2_path */ 1,
+                                       /* is_l2_path */ 0,
                                        &pkt_5tuple0);
 
         res = acl_plugin_match_5tuple_inline (sm->acl_plugin.p_acl_main,
