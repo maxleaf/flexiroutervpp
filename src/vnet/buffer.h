@@ -353,6 +353,11 @@ typedef struct
       u32 flags;
     } snat;
 
+    struct
+    {
+      u32 flow_id;
+    } app;
+
     u32 unused[6];
   };
 } vnet_buffer_opaque_t;

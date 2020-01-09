@@ -59,6 +59,8 @@ classify_node_fn (vlib_main_t * vm, vlib_node_runtime_t * node,
     u32 n_left_from, * from, next_index, * to_next, n_left_to_next;
     dpi_main_t *sm = &dpi_main;
     u8 is_ip60 = 0;
+    flowtable_main_t * fm = &flowtable_main;
+    flow_entry_t * flow = NULL;
 
     from = vlib_frame_vector_args(frame);
     n_left_from = frame->n_vectors;
@@ -128,6 +130,9 @@ classify_node_fn (vlib_main_t * vm, vlib_node_runtime_t * node,
         bi0 = to_next[0] = from[0];
         b0 = vlib_get_buffer(vm, bi0);
 
+        flow = pool_elt_at_index(fm->flows, vnet_buffer (b0)->app.flow_id);
+        ASSERT(flow != NULL);
+
         acl_plugin_fill_5tuple_inline (sm->acl_plugin.p_acl_main,
                                        sm->acl_lc_id, b0,
                                        is_ip60,
@@ -144,7 +149,8 @@ classify_node_fn (vlib_main_t * vm, vlib_node_runtime_t * node,
                                               &trace_bitmap0);
         if (res > 0)
           {
-            printf ("Rule matched! \n");
+            printf ("Rule matched, acl:%u, rule:%u\n",
+                    acl_match_p0, rule_match_p0);
           }
 
         /* frame mgmt */

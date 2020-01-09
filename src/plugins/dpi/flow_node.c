@@ -147,6 +147,9 @@ flow_node_fn (vlib_main_t * vm, vlib_node_runtime_t * node,
             timer_wheel_resched_flow(fm, fmt, flow, current_time);
           }
 
+        /* fill opaque buffer with flow data */
+        vnet_buffer (b0)->app.flow_id = flow - fm->flows;
+
         /* frame mgmt */
         from++;
         to_next++;
