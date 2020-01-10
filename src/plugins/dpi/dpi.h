@@ -40,6 +40,8 @@ typedef struct {
   uword* dpi_app_by_name;
   /* apps vector */
   dpi_app_t *dpi_apps;
+  /* acl to app hash */
+  uword * app_by_acl;
 
   /**
    * API dynamically registered base ID.

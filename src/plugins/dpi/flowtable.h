@@ -118,6 +118,7 @@ typedef struct flow_entry {
   /* UPF data */
   u8 src_intf;                        /* UPF source interface type */
   u32 application_id;                 /* L7 app index */
+  u8 acl_match_performed;
   u32 next[FT_DIRECTION_MAX];
 } flow_entry_t;
 

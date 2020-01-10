@@ -131,26 +131,35 @@ int
 vnet_dpi_acl_add_del(u8 * app_name, u32 acl_index, u8 add)
 {
   dpi_main_t *sm = &dpi_main;
-  uword *p = NULL;
+  uword *app_p = NULL;
+  uword *acl_p = NULL;
   dpi_app_t *app = NULL;
 
-  p = hash_get_mem (sm->dpi_app_by_name, app_name);
-  if (!p)
+  app_p = hash_get_mem (sm->dpi_app_by_name, app_name);
+  if (!app_p)
     return VNET_API_ERROR_NO_SUCH_ENTRY;
 
-  app = pool_elt_at_index (sm->dpi_apps, p[0]);
+  app = pool_elt_at_index (sm->dpi_apps, app_p[0]);
+  acl_p = hash_get_mem (sm->app_by_acl, &acl_index);
 
   if (add)
     {
-      app->acl_id = acl_index;
+      if (acl_p)
+        return VNET_API_ERROR_VALUE_EXIST;
 
-      vec_add1 (sm->acl_vec, app->acl_id);
+      hash_set_mem (sm->app_by_acl, &acl_index, app_p[0]);
+
+      vec_add1 (sm->acl_vec, acl_index);
       sm->acl_plugin.set_acl_vec_for_context (sm->acl_lc_id, sm->acl_vec);
+
+      app->acl_id = acl_index;
     }
   else
     {
-      if (!p)
+      if (!acl_p)
         return VNET_API_ERROR_NO_SUCH_ENTRY;
+
+      hash_unset_mem (sm->app_by_acl, &acl_index);
 
       app->acl_id = ~0;
 

@@ -280,6 +280,7 @@ flowtable_entry_lookup_create(flowtable_main_t * fm, flowtable_main_per_cpu_t * 
   f->next[FT_FORWARD] = FT_NEXT_CLASSIFY;
   f->next[FT_REVERSE] = FT_NEXT_CLASSIFY;
   f->application_id = ~0;
+  f->acl_match_performed = 0;
 
   /* insert in timer list */
   pool_get(fmt->timers, timer_entry);

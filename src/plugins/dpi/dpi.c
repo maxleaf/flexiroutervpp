@@ -34,6 +34,8 @@ dpi_init (vlib_main_t * vm)
   sm->dpi_app_by_name = hash_create_vec (DPI_APP_BY_NAME_INIT_LENGTH,
                                          sizeof (u8), sizeof (uword));
 
+  sm->app_by_acl = hash_create_vec (0, sizeof (u32), sizeof (uword));
+
   error = flowtable_init(vm);
   if (error)
     return error;

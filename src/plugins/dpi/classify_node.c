@@ -52,13 +52,51 @@ typedef struct
   u32 next_index;
 } classify_trace_t;
 
+static void
+match_acl(vlib_buffer_t * b0, u8 is_ip60, flow_entry_t * flow)
+{
+  dpi_main_t *sm = &dpi_main;
+  fa_5tuple_opaque_t pkt_5tuple0;
+  u8 action0 = 0;
+  u32 acl_pos_p0, acl_match_p0;
+  u32 rule_match_p0, trace_bitmap0;
+  int res = 0;
+  uword *acl_p = NULL;
+
+  acl_plugin_fill_5tuple_inline (sm->acl_plugin.p_acl_main,
+                                 sm->acl_lc_id, b0,
+                                 is_ip60,
+                                 /* is_input */ 0,
+                                 /* is_l2_path */ 0,
+                                 &pkt_5tuple0);
+
+  res = acl_plugin_match_5tuple_inline (sm->acl_plugin.p_acl_main,
+                                        sm->acl_lc_id,
+                                        &pkt_5tuple0, is_ip60,
+                                        &action0, &acl_pos_p0,
+                                        &acl_match_p0,
+                                        &rule_match_p0,
+                                        &trace_bitmap0);
+  if (res > 0)
+    {
+      printf ("Rule matched, acl:%u, rule:%u\n",
+              acl_match_p0, rule_match_p0);
+
+//TBD : Save application ID and not ACL id.
+      flow->application_id = acl_match_p0;
+      acl_p = hash_get_mem (sm->app_by_acl, &acl_match_p0);
+      if (acl_p)
+        printf ("App:%lu\n", acl_p[0]);
+    }
+
+  flow->acl_match_performed = 1;
+}
+
 static uword
 classify_node_fn (vlib_main_t * vm, vlib_node_runtime_t * node,
              vlib_frame_t * frame, u8 is_ip4)
 {
     u32 n_left_from, * from, next_index, * to_next, n_left_to_next;
-    dpi_main_t *sm = &dpi_main;
-    u8 is_ip60 = 0;
     flowtable_main_t * fm = &flowtable_main;
     flow_entry_t * flow = NULL;
 
@@ -121,11 +159,6 @@ classify_node_fn (vlib_main_t * vm, vlib_node_runtime_t * node,
         u32 bi0;
         u32 next0 = CLASSIFY_IN2OUT_NEXT_LOOKUP;
         vlib_buffer_t * b0;
-        fa_5tuple_opaque_t pkt_5tuple0;
-        u8 action0 = 0;
-        u32 acl_pos_p0, acl_match_p0;
-        u32 rule_match_p0, trace_bitmap0;
-        int res = 0;
 
         bi0 = to_next[0] = from[0];
         b0 = vlib_get_buffer(vm, bi0);
@@ -133,24 +166,9 @@ classify_node_fn (vlib_main_t * vm, vlib_node_runtime_t * node,
         flow = pool_elt_at_index(fm->flows, vnet_buffer (b0)->app.flow_id);
         ASSERT(flow != NULL);
 
-        acl_plugin_fill_5tuple_inline (sm->acl_plugin.p_acl_main,
-                                       sm->acl_lc_id, b0,
-                                       is_ip60,
-                                       /* is_input */ 0,
-                                       /* is_l2_path */ 0,
-                                       &pkt_5tuple0);
-
-        res = acl_plugin_match_5tuple_inline (sm->acl_plugin.p_acl_main,
-                                              sm->acl_lc_id,
-                                              &pkt_5tuple0, is_ip60,
-                                              &action0, &acl_pos_p0,
-                                              &acl_match_p0,
-                                              &rule_match_p0,
-                                              &trace_bitmap0);
-        if (res > 0)
+        if (flow->acl_match_performed == 0)
           {
-            printf ("Rule matched, acl:%u, rule:%u\n",
-                    acl_match_p0, rule_match_p0);
+            match_acl(b0, !is_ip4, flow);
           }
 
         /* frame mgmt */
