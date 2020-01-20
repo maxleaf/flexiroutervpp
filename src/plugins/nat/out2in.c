@@ -1091,6 +1091,9 @@ snat_out2in_node_fn (vlib_main_t * vm,
 
 	  pkts_processed += next1 == SNAT_OUT2IN_NEXT_LOOKUP;
 
+	  vnet_feature_next (&next0, b0);
+	  vnet_feature_next (&next1, b1);
+
 	  /* verify speculative enqueues, maybe switch current next frame */
 	  vlib_validate_buffer_enqueue_x2 (vm, node, next_index,
 					   to_next, n_left_to_next,
@@ -1293,6 +1296,8 @@ snat_out2in_node_fn (vlib_main_t * vm,
 	    }
 
 	  pkts_processed += next0 == SNAT_OUT2IN_NEXT_LOOKUP;
+
+	  vnet_feature_next (&next0, b0);
 
 	  /* verify speculative enqueue, maybe switch current next frame */
 	  vlib_validate_buffer_enqueue_x1 (vm, node, next_index,
