@@ -12,6 +12,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - fixed NAT ignored ABF
+ */
+
+#ifndef FLEXIWAN_FIX
+#define FLEXIWAN_FIX
+#endif
+
 /**
  * @file
  * @brief NAT44 endpoint-dependent outside to inside network translation
@@ -1091,9 +1102,10 @@ snat_out2in_node_fn (vlib_main_t * vm,
 
 	  pkts_processed += next1 == SNAT_OUT2IN_NEXT_LOOKUP;
 
+#ifdef FLEXIWAN_FIX
 	  vnet_feature_next (&next0, b0);
 	  vnet_feature_next (&next1, b1);
-
+#endif /* FLEXIWAN_FIX */
 	  /* verify speculative enqueues, maybe switch current next frame */
 	  vlib_validate_buffer_enqueue_x2 (vm, node, next_index,
 					   to_next, n_left_to_next,
@@ -1297,8 +1309,9 @@ snat_out2in_node_fn (vlib_main_t * vm,
 
 	  pkts_processed += next0 == SNAT_OUT2IN_NEXT_LOOKUP;
 
+#ifdef FLEXIWAN_FIX
 	  vnet_feature_next (&next0, b0);
-
+#endif /* FLEXIWAN_FIX */
 	  /* verify speculative enqueue, maybe switch current next frame */
 	  vlib_validate_buffer_enqueue_x1 (vm, node, next_index,
 					   to_next, n_left_to_next,

@@ -12,6 +12,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - fixed NAT ignored ABF
+ */
+
+#ifndef FLEXIWAN_FIX
+#define FLEXIWAN_FIX
+#endif
+
 /**
  * @file
  * @brief NAT44 hairpinning
@@ -590,8 +601,9 @@ nat44_hairpinning_fn_inline (vlib_main_t * vm,
 	  if (snat_hairpinning (sm, b0, ip0, udp0, tcp0, proto0, is_ed))
 	    next0 = NAT_HAIRPIN_NEXT_LOOKUP;
 
+#ifdef FLEXIWAN_FIX
 	  vnet_feature_next (&next0, b0);
-
+#endif /* FLEXIWAN_FIX */
 	  pkts_processed += next0 != NAT_HAIRPIN_NEXT_DROP;
 
 	  /* verify speculative enqueue, maybe switch current next frame */
@@ -700,9 +712,9 @@ snat_hairpin_dst_fn_inline (vlib_main_t * vm,
 
 	  b0 = vlib_get_buffer (vm, bi0);
 	  next0 = NAT_HAIRPIN_NEXT_LOOKUP;
-
+#ifdef FLEXIWAN_FIX
 	  vnet_feature_next (&next0, b0);
-
+#endif /* FLEXIWAN_FIX */
 	  ip0 = vlib_buffer_get_current (b0);
 
 	  proto0 = ip_proto_to_snat_proto (ip0->protocol);
