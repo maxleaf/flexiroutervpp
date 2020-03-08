@@ -22,10 +22,6 @@
  *     so when pushed into TAP it will not be discarded by Linux.
  */
 
-#ifndef FLEXIWAN_FIX
-#define FLEXIWAN_FIX
-#endif
-
 #include <vnet/vnet.h>
 #include <vnet/api_errno.h>
 #include <vnet/ip/ip.h>

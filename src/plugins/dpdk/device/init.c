@@ -19,10 +19,6 @@
  *   - added support for vendor 0x1f18
  */
 
-#ifndef FLEXIWAN_FIX
-#define FLEXIWAN_FIX
-#endif
-
 #include <vnet/vnet.h>
 #include <vppinfra/vec.h>
 #include <vppinfra/error.h>
