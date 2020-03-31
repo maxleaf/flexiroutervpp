@@ -1,7 +1,5 @@
 /*
- * abf_error.def: ABF errors
- *
- * Copyright (c) 2012 Cisco and/or its affiliates.
+ * Copyright (c) 2017 Cisco and/or its affiliates.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
@@ -23,5 +21,32 @@
  *  For more details see official documentation on the Flexiwan Multi-Link.
  */
 
-abf_error (NONE, "no match")
-abf_error (MATCHED, "matched")
+#ifndef __FWABF_LINKS_H__
+#define __FWABF_LINKS_H__
+
+#include <vnet/fib/fib_path_list.h>
+
+
+typedef u8 fwabf_label_t;	/*flexiwan path label used by policy to choose link*/
+
+// nnoww - document - check C-file
+extern u32 fwabf_links_add_interface (
+                        const u32 sw_if_index,
+                        const fwabf_label_t fwlabel,
+                        const fib_route_path_t* rpath);
+
+// nnoww - document - check C-file
+extern u32 fwabf_links_del_interface (const u32 sw_if_index);
+
+// nnoww - document - check C-file
+extern dpo_id_t fwabf_links_get_dpo (fwabf_label_t fwlabel, dpo_proto_t dpo_proto);
+
+/*
+ * fd.io coding-style-patch-verification: ON
+ *
+ * Local Variables:
+ * eval: (c-set-style "gnu")
+ * End:
+ */
+
+#endif /*__FWABF_LINKS_H__*/

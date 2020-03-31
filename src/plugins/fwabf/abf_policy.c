@@ -17,7 +17,7 @@
  *  Copyright (C) 2020 flexiWAN Ltd.
  *  This file is part of the FWABF plugin.
  *  The FWABF plugin is fork of the FDIO VPP ABF plugin.
- *  It enhances ABF with functinality required for Flexiwan Multi-Link feature.
+ *  It enhances ABF with functionality required for Flexiwan Multi-Link feature.
  *  For more details see official documentation on the Flexiwan Multi-Link.
  */
 
@@ -25,13 +25,47 @@
 
 #include <vlib/vlib.h>
 #include <vnet/plugin/plugin.h>
-#include <vnet/fib/fib_path_list.h>
-#include <vnet/fib/fib_walk.h>
+#include <vnet/dpo/dpo.h>
+#include <vnet/dpo/drop_dpo.h>
 
+
+// nnoww - TODO - hash flow to make random selection for flow, and not for packet
+// nnoww - TODO - check if policy -> labels <-> interface showed be optimized (add policy to fib???)
+// nnoww - TODO - enable "all traffic" class
+// nnoww - TODO - move format functions to separate file
+// nnoww - TODO - take care of IPv6
+// nnoww - TODO - fallback of drop (check if still needed) ?
+// nnoww - TODO - add counters to labels and show them by CLI (see vlib_node_increment_counter() in abf_itf_attach.c)
+// nnoww - TODO - clean all nnoww-s :)
+// nnoww - TODO - add validation on delete policy that no attachment objects exist!
+// nnoww - TODO - check trace of FWABF node and add missing info if needed
+
+// nnoww - TEST - test POLICY CLI thoroughly
+
+// nnoww - LIMITATION - for now (March 2020) we don't enable more than one labels per interface
+// nnoww - LIMITATION - for now (March 2020) we don't enable labels with mixed IPv4/6 tunnels and WAN-s - see fwabf_sw_interface_t::dpo_proto field.
+
+
+// nnoww - TEST - ???? - NAT & ABF coexistence:
+//                  1. Modified by NAT packets go through FWABF
+//                  2. NOT Modified by NAT packets go through FWABF
+//                  3. Reassembled packets go through FWABF
+//                  4. ICMP packet go FWABF ???
+//
+// nnoww - LIMITATION - no ABF on WAN-to-LAN packets, as it does not work with NAT today! (see Denys fixes in NAT branch)
+
+// nnoww - TEST - DONE - remove policy restore original flow / add again recreates new flow!
+// nnoww - TEST - DONE - remove tunnel restore original flow / add again (and new fwabf link) - recreates new flow!
+// nnoww - TEST - DONE - stop VPP-3 restore original flow / start again recreates new flow!
+
+
+// nnoww - TEST - ???? - Incoming DHCP Server packets should be not shadled by policy!
+
+// nnoww - moved to fwabf_sw_interface_t
 /**
  * FIB node type the attachment is registered
  */
-fib_node_type_t abf_policy_fib_node_type;
+//fib_node_type_t abf_policy_fib_node_type;
 
 /**
  * Pool of ABF objects
@@ -39,39 +73,39 @@ fib_node_type_t abf_policy_fib_node_type;
 static abf_policy_t *abf_policy_pool;
 
 /**
- * DB of ABF policy objects
- *  - policy ID to index conversion.
- */
-static uword *abf_policy_db;
+  * DB of ABF policy objects
+  *  - policy ID to index conversion.
+  */
+static abf_policy_t *abf_policy_db;
 
 
 abf_policy_t *
-abf_policy_get (u32 index)
+fwabf_policy_get (u32 index)
 {
   return (pool_elt_at_index (abf_policy_pool, index));
 }
 
-static u32
-abf_policy_get_index (const abf_policy_t * abf)
-{
-  return (abf - abf_policy_pool);
-}
+// static u32
+// fwabf_policy_get_index (const abf_policy_t * abf)
+// {
+//   return (abf - abf_policy_pool);
+// }
 
 static abf_policy_t *
-abf_policy_find_i (u32 policy_id)
+fwabf_policy_find_i (u32 policy_id)
 {
   u32 api;
 
-  api = abf_policy_find (policy_id);
+  api = fwabf_policy_find (policy_id);
 
   if (INDEX_INVALID != api)
-    return (abf_policy_get (api));
+    return (fwabf_policy_get (api));
 
   return (NULL);
 }
 
 u32
-abf_policy_find (u32 policy_id)
+fwabf_policy_find (u32 policy_id)
 {
   uword *p;
 
@@ -84,160 +118,194 @@ abf_policy_find (u32 policy_id)
 }
 
 
-void
-abf_policy_update (u32 policy_id,
-		   u32 acl_index, const fib_route_path_t * rpaths)
+u32
+abf_policy_add (u32 policy_id, u32 acl_index, fwabf_policy_action_t * action)
 {
   abf_policy_t *ap;
   u32 api;
 
-  api = abf_policy_find (policy_id);
+  api = fwabf_policy_find (policy_id);
+  if (api != INDEX_INVALID)
+  {
+    clib_warning ("fawbf: abf_policy_add: policy-id %d exists (index %d)", policy_id, api);
+    return VNET_API_ERROR_VALUE_EXIST;
+  }
 
-  if (INDEX_INVALID == api)
-    {
-      /*
-       * create a new policy
-       */
-      pool_get (abf_policy_pool, ap);
+  pool_get (abf_policy_pool, ap);
+  api = ap - abf_policy_pool;
 
-      api = ap - abf_policy_pool;
-      fib_node_init (&ap->ap_node, abf_policy_fib_node_type);
-      ap->ap_acl = acl_index;
-      ap->ap_id = policy_id;
-      ap->ap_pl = fib_path_list_create ((FIB_PATH_LIST_FLAG_SHARED |
-					 FIB_PATH_LIST_FLAG_NO_URPF), rpaths);
+  ap->ap_acl = acl_index;
+  ap->ap_id  = policy_id;
+  ap->action = *action;
 
-      /*
-       * become a child of the path list so we get poked when
-       * the forwarding changes.
-       */
-      ap->ap_sibling = fib_path_list_child_add (ap->ap_pl,
-						abf_policy_fib_node_type,
-						api);
-
-      /*
-       * add this new policy to the DB
-       */
-      hash_set (abf_policy_db, policy_id, api);
-
-      /*
-       * take a lock on behalf of the CLI/API creation
-       */
-      fib_node_lock (&ap->ap_node);
-    }
-  else
-    {
-      /*
-       * update an existing policy.
-       * - add the path to the path-list and swap our ancestry
-       * - backwalk to poke all attachments to update
-       */
-      fib_node_index_t old_pl;
-
-      ap = abf_policy_get (api);
-      old_pl = ap->ap_pl;
-
-      if (FIB_NODE_INDEX_INVALID != old_pl)
-	{
-	  ap->ap_pl = fib_path_list_copy_and_path_add (old_pl,
-						       (FIB_PATH_LIST_FLAG_SHARED
-							|
-							FIB_PATH_LIST_FLAG_NO_URPF),
-						       rpaths);
-	  fib_path_list_child_remove (old_pl, ap->ap_sibling);
-	}
-      else
-	{
-	  ap->ap_pl = fib_path_list_create ((FIB_PATH_LIST_FLAG_SHARED |
-					     FIB_PATH_LIST_FLAG_NO_URPF),
-					    rpaths);
-	}
-
-      ap->ap_sibling = fib_path_list_child_add (ap->ap_pl,
-						abf_policy_fib_node_type,
-						api);
-
-      fib_node_back_walk_ctx_t ctx = {
-	.fnbw_reason = FIB_NODE_BW_REASON_FLAG_EVALUATE,
-      };
-
-      fib_walk_sync (abf_policy_fib_node_type, api, &ctx);
-    }
-}
-
-static void
-abf_policy_destroy (abf_policy_t * ap)
-{
   /*
-   * this ABF should not be a sibling on the path list, since
-   * that was removed when the API config went
-   */
-  ASSERT (ap->ap_sibling == ~0);
-  ASSERT (ap->ap_pl == FIB_NODE_INDEX_INVALID);
-
-  hash_unset (abf_policy_db, ap->ap_id);
-  pool_put (abf_policy_pool, ap);
+    * add this new policy to the DB
+    */
+  hash_set (abf_policy_db, policy_id, api);
+  return 0;
 }
 
 int
-abf_policy_delete (u32 policy_id, const fib_route_path_t * rpaths)
+abf_policy_delete (u32 policy_id)
 {
+  fwabf_policy_link_group_t* group;
   abf_policy_t *ap;
   u32 api;
 
-  api = abf_policy_find (policy_id);
-
+  api = fwabf_policy_find (policy_id);
   if (INDEX_INVALID == api)
-    {
-      /*
-       * no such policy
-       */
-      return (-1);
-    }
-  else
-    {
-      /*
-       * update an existing policy.
-       * - add the path to the path-list and swap our ancestry
-       * - backwalk to poke all attachments to update
-       */
-      fib_node_index_t old_pl;
+    return VNET_API_ERROR_INVALID_VALUE;
 
-      ap = abf_policy_get (api);
-      old_pl = ap->ap_pl;
+  ap = fwabf_policy_get (api);
 
-      ap->ap_pl =
-	fib_path_list_copy_and_path_remove (ap->ap_pl,
-					    (FIB_PATH_LIST_FLAG_SHARED |
-					     FIB_PATH_LIST_FLAG_NO_URPF),
-					    rpaths);
+  vec_foreach (group, ap->action.link_groups)
+    vec_free (group->links);
+  vec_free (ap->action.link_groups);
 
-      fib_path_list_child_remove (old_pl, ap->ap_sibling);
-      ap->ap_sibling = ~0;
-
-      if (FIB_NODE_INDEX_INVALID == ap->ap_pl)
-	{
-	  /*
-	   * no more paths on this policy. It's toast
-	   * remove the CLI/API's lock
-	   */
-	  fib_node_unlock (&ap->ap_node);
-	}
-      else
-	{
-	  ap->ap_sibling = fib_path_list_child_add (ap->ap_pl,
-						    abf_policy_fib_node_type,
-						    api);
-
-	  fib_node_back_walk_ctx_t ctx = {
-	    .fnbw_reason = FIB_NODE_BW_REASON_FLAG_EVALUATE,
-	  };
-
-	  fib_walk_sync (abf_policy_fib_node_type, api, &ctx);
-	}
-    }
-
+  hash_unset (abf_policy_db, policy_id);
+  pool_put (abf_policy_pool, ap);
   return (0);
+}
+
+/**
+ * Get an DPO to use for packet forwarding according to policy
+ *
+ * @param index     index of abf_policy_t in pool
+ * @param dpo_proto the IP4/IP6
+ * @return VPP's object index
+ */
+dpo_id_t fwabf_policy_get_dpo (index_t index, dpo_proto_t dpo_proto)
+{
+  abf_policy_t*              ap  = fwabf_policy_get (index);
+  dpo_id_t                   dpo;
+  dpo_id_t                   dpo_invalid = DPO_INVALID;
+  fwabf_policy_link_group_t* group;
+  fwabf_label_t*             fwlabel;
+
+  // nnoww - TODO - optmize (think of adding policy to FIB and keep only currently available groups and ifaces only!)
+  // nnoww - TODO - implement random!
+  // nnoww - TODO - use ip4_compute_flow_hash for random!
+
+  vec_foreach (group, ap->action.link_groups)
+    {
+      vec_foreach (fwlabel, group->links)
+        {
+          dpo = fwabf_links_get_dpo (*fwlabel, dpo_proto);
+          if (dpo.dpoi_type != DPO_DROP)
+            return dpo;
+        }
+    }
+
+  /*
+   * At this point no active DPO was found.
+   * If fallback is default route, indicate that to caller by DPO_INVALID.
+   * If fallback is to drop packets, use the last found DPO, which should be DPO_DROP.
+   */
+  if (PREDICT_TRUE(ap->action.fallback==FWABF_FALLBACK_DEFAULT_ROUTE))
+    return dpo_invalid;
+
+  /*
+   * If no DPO was found due to absence of interfaces with policy labels,
+   * simulate the dropping DPO.
+   */
+  if (PREDICT_FALSE(!dpo_id_is_valid(&dpo)))
+    {
+    	dpo_copy(&dpo, drop_dpo_get(dpo_proto));
+    }
+  return dpo;
+}
+
+uword
+unformat_labels (unformat_input_t * input, va_list * args)
+{
+  fwabf_label_t** labels = va_arg (*args, fwabf_label_t**);
+  fwabf_label_t   label;
+
+  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (input, "%d,", &label))
+        {
+          vec_add1(*labels, label);
+        }
+      else if (unformat (input, "%d", &label))
+        {
+          vec_add1(*labels, label);
+          return 1; /* finished to parse list of labels */
+        }
+      else
+        return 0; /* failed to parse list of labels*/
+    }
+  return 0; /* failed to parse input line */
+}
+
+uword
+unformat_link_group (unformat_input_t * input, va_list * args)
+{
+  fwabf_policy_link_group_t* group = va_arg (*args, fwabf_policy_link_group_t*);
+
+  group->alg   = FWABF_SELECTION_ORDERED;
+  group->links = (NULL);
+
+  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (input, "random"))
+        {
+          group->alg = FWABF_SELECTION_RANDOM;
+        }
+      else if (unformat (input, "labels %U", unformat_labels, &group->links))
+        ;
+      else
+        return 0; /* failed to parse action*/
+    }
+
+  if (vec_len(group->links) == 0)
+    return 0;
+
+  return 1; /* parsed successfully */
+}
+
+uword
+unformat_action (unformat_input_t * input, va_list * args)
+{
+  fwabf_policy_action_t*    action = va_arg (*args, fwabf_policy_action_t *);
+  fwabf_policy_link_group_t group;
+  u32                       gid;
+
+  action->fallback    = FWABF_FALLBACK_DEFAULT_ROUTE;
+  action->alg         = FWABF_SELECTION_ORDERED;
+  action->link_groups = (NULL);
+
+  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (input, "select_group random"))
+        {
+          action->alg = FWABF_SELECTION_RANDOM;
+        }
+      else if (unformat (input, "fallback drop"))
+        {
+          action->fallback = FWABF_FALLBACK_DROP;
+        }
+      /* Now parse groups of links.
+         Firstly give a try to 1-group action - action without 'group' keyword */
+      else if (unformat (input, "%U", unformat_link_group, &group))
+        {
+          vec_add1(action->link_groups, group);
+          return 1;   /* finished to parse list of groups*/
+        }
+      /* Now give a chance to list of groups */
+      else if (unformat (input, "group %d %U,", &gid, unformat_link_group, &group))
+        {
+          vec_add1(action->link_groups, group);
+        }
+      else if (unformat (input, "group %d %U", &gid, unformat_link_group, &group))
+        {
+          vec_add1(action->link_groups, group);
+          return 1;   /* finished to parse list of groups*/
+        }
+      else
+        return 0; /* failed to parse action*/
+    }
+  return 0; /* groups were not found */
 }
 
 static clib_error_t *
@@ -245,9 +313,10 @@ abf_policy_cmd (vlib_main_t * vm,
 		unformat_input_t * main_input, vlib_cli_command_t * cmd)
 {
   unformat_input_t _line_input, *line_input = &_line_input;
+  fwabf_policy_action_t policy_action;
   u32 acl_index, policy_id;
-  fib_route_path_t *rpaths = NULL, rpath;
   u32 is_del;
+  u32 ret;
 
   is_del = 0;
   acl_index = INDEX_INVALID;
@@ -260,19 +329,18 @@ abf_policy_cmd (vlib_main_t * vm,
   while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
     {
       if (unformat (line_input, "acl %d", &acl_index))
-	;
+        ;
       else if (unformat (line_input, "id %d", &policy_id))
-	;
+        ;
       else if (unformat (line_input, "del"))
-	is_del = 1;
+        is_del = 1;
       else if (unformat (line_input, "add"))
-	is_del = 0;
-      else if (unformat (line_input, "via %U",
-			 unformat_fib_route_path, &rpath))
-	vec_add1 (rpaths, rpath);
+        is_del = 0;
+      else if (unformat (line_input, "action %U", unformat_action, &policy_action))
+        ;
       else
-	return (clib_error_return (0, "unknown input '%U'",
-				   format_unformat_error, line_input));
+        return (clib_error_return (0, "unknown input '%U'",
+                                   format_unformat_error, line_input));
     }
 
   if (INDEX_INVALID == policy_id)
@@ -283,21 +351,17 @@ abf_policy_cmd (vlib_main_t * vm,
 
   if (!is_del)
     {
-      if (INDEX_INVALID == acl_index)
-	{
-	  vlib_cli_output (vm, "ACL index must be set");
-	  return 0;
-	}
-
-      abf_policy_update (policy_id, acl_index, rpaths);
+      ret = abf_policy_add (policy_id, acl_index, &policy_action);
     }
   else
     {
-      abf_policy_delete (policy_id, rpaths);
+      ret = abf_policy_delete (policy_id);
     }
+  if (ret != 0)
+    return (clib_error_return (0, "abf_policy_%s failed(ret=%d)", ret, (is_del?"delete":"add")));
 
   unformat_free (line_input);
-  return (NULL);
+  return 0;
 }
 
 /* *INDENT-OFF* */
@@ -307,43 +371,58 @@ abf_policy_cmd (vlib_main_t * vm,
 VLIB_CLI_COMMAND (abf_policy_cmd_node, static) = {
   .path = "fwabf policy",
   .function = abf_policy_cmd,
-  .short_help = "fwabf policy [add|del] id <index> acl <index> via ...",
+  .short_help = "fwabf policy [add|del] id <index> [acl <index>] action [select_group random] [fallback drop] [group <id>] [random] labels <label1,label2,...> [group <id> [random] labels <label1,label2,...>] ...",
   .is_mp_safe = 1,
 };
 /* *INDENT-ON* */
+
+static u8*
+format_link_group (u8 * s, va_list * args)
+{
+  fwabf_policy_link_group_t* group   = va_arg (*args, fwabf_policy_link_group_t *);
+  u32                        n_links = vec_len(group->links);
+  char*                      s_alg;
+
+  s_alg = group->alg==FWABF_SELECTION_RANDOM ? "random" : "priority";
+  s = format (s, "order=%s labels=", s_alg);
+  if (n_links > 1)
+    {
+      for (i32 i=0; i<n_links-1; i++)
+        {
+          s = format (s, "%d,", group->links[i]);
+        }
+    }
+  s = format (s, "%d", group->links[n_links-1]);
+  return s;
+}
+
+static u8*
+format_action (u8 * s, va_list * args)
+{
+  fwabf_policy_action_t*     action   = va_arg (*args, fwabf_policy_action_t *);
+  u32                        n_groups = vec_len(action->link_groups);
+  char*                      s_alg;
+
+  if (n_groups > 1)
+    {
+      s_alg = action->alg==FWABF_SELECTION_RANDOM ? "random" : "priority";
+      s = format (s, " select_group: %s\n", s_alg);
+    }
+  for (u32 i=0; i<n_groups; i++)
+    {
+      s = format (s, " group %d: %U\n", i, format_link_group, &action->link_groups[i]);
+    }
+  return s;
+}
 
 static u8 *
 format_abf (u8 * s, va_list * args)
 {
   abf_policy_t *ap = va_arg (*args, abf_policy_t *);
 
-  s = format (s, "abf:[%d]: policy:%d acl:%d",
-	      ap - abf_policy_pool, ap->ap_id, ap->ap_acl);
-  s = format (s, "\n ");
-  if (FIB_NODE_INDEX_INVALID == ap->ap_pl)
-    {
-      s = format (s, "no forwarding");
-    }
-  else
-    {
-      s = fib_path_list_format (ap->ap_pl, s);
-    }
-
-  return (s);
-}
-
-void
-abf_policy_walk (abf_policy_walk_cb_t cb, void *ctx)
-{
-  u32 api;
-
-  /* *INDENT-OFF* */
-  pool_foreach_index(api, abf_policy_pool,
-  ({
-    if (!cb(api, ctx))
-      break;
-  }));
-  /* *INDENT-ON* */
+  s = format (s, "abf:[%d]: policy:%d acl:%d\n%U",
+	      ap - abf_policy_pool, ap->ap_id, ap->ap_acl, format_action, &ap->action);
+  return s;
 }
 
 static clib_error_t *
@@ -358,10 +437,9 @@ abf_show_policy_cmd (vlib_main_t * vm,
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
       if (unformat (input, "%d", &policy_id))
-	;
+        ;
       else
-	return (clib_error_return (0, "unknown input '%U'",
-				   format_unformat_error, input));
+	      break;
     }
 
   if (INDEX_INVALID == policy_id)
@@ -375,12 +453,12 @@ abf_show_policy_cmd (vlib_main_t * vm,
     }
   else
     {
-      ap = abf_policy_find_i (policy_id);
+      ap = fwabf_policy_find_i (policy_id);
 
       if (NULL != ap)
-	vlib_cli_output (vm, "%U", format_abf, ap);
+        vlib_cli_output (vm, "%U", format_abf, ap);
       else
-	vlib_cli_output (vm, "Invalid policy ID:%d", policy_id);
+        vlib_cli_output (vm, "Invalid policy ID:%d", policy_id);
     }
 
   return (NULL);
@@ -395,61 +473,9 @@ VLIB_CLI_COMMAND (abf_policy_show_policy_cmd_node, static) = {
 };
 /* *INDENT-ON* */
 
-static fib_node_t *
-abf_policy_get_node (fib_node_index_t index)
-{
-  abf_policy_t *ap = abf_policy_get (index);
-  return (&(ap->ap_node));
-}
-
-static abf_policy_t *
-abf_policy_get_from_node (fib_node_t * node)
-{
-  return ((abf_policy_t *) (((char *) node) -
-			    STRUCT_OFFSET_OF (abf_policy_t, ap_node)));
-}
-
-static void
-abf_policy_last_lock_gone (fib_node_t * node)
-{
-  abf_policy_destroy (abf_policy_get_from_node (node));
-}
-
-/*
- * A back walk has reached this ABF policy
- */
-static fib_node_back_walk_rc_t
-abf_policy_back_walk_notify (fib_node_t * node,
-			     fib_node_back_walk_ctx_t * ctx)
-{
-  /*
-   * re-stack the fmask on the n-eos of the via
-   */
-  abf_policy_t *abf = abf_policy_get_from_node (node);
-
-  /*
-   * propagate further up the graph.
-   * we can do this synchronously since the fan out is small.
-   */
-  fib_walk_sync (abf_policy_fib_node_type, abf_policy_get_index (abf), ctx);
-
-  return (FIB_NODE_BACK_WALK_CONTINUE);
-}
-
-/*
- * The BIER fmask's graph node virtual function table
- */
-static const fib_node_vft_t abf_policy_vft = {
-  .fnv_get = abf_policy_get_node,
-  .fnv_last_lock = abf_policy_last_lock_gone,
-  .fnv_back_walk = abf_policy_back_walk_notify,
-};
-
 static clib_error_t *
 abf_policy_init (vlib_main_t * vm)
 {
-  abf_policy_fib_node_type = fib_node_register_new_type (&abf_policy_vft);
-
   return (NULL);
 }
 

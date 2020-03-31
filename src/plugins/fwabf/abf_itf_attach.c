@@ -17,7 +17,7 @@
  *  Copyright (C) 2020 flexiWAN Ltd.
  *  This file is part of the FWABF plugin.
  *  The FWABF plugin is fork of the FDIO VPP ABF plugin.
- *  It enhances ABF with functinality required for Flexiwan Multi-Link feature.
+ *  It enhances ABF with functionality required for Flexiwan Multi-Link feature.
  *  For more details see official documentation on the Flexiwan Multi-Link.
  */
 
@@ -31,10 +31,11 @@
 extern vlib_node_registration_t fwabf_ip4_node;
 extern vlib_node_registration_t fwabf_ip6_node;
 
+// no need - abf_itf_attach_t is not bound to FIB anymore
 /**
  * FIB node registered type for the bonds
  */
-static fib_node_type_t abf_itf_attach_fib_node_type;
+//static fib_node_type_t abf_itf_attach_fib_node_type;
 
 /**
  * Pool of ABF interface attachment objects
@@ -114,29 +115,30 @@ abf_itf_attach_db_del (u32 abf_index, u32 sw_if_index)
   hash_unset (abf_itf_attach_db, key);
 }
 
-static void
-abf_itf_attach_stack (abf_itf_attach_t * aia)
-{
-  /*
-   * stack the DPO on the forwarding contributed by the path-list
-   */
-  dpo_id_t via_dpo = DPO_INVALID;
-  abf_policy_t *ap;
+// no need - abf_itf_attach_t is not bound to FIB anymore
+// static void
+// abf_itf_attach_stack (abf_itf_attach_t * aia)
+// {
+//   /*
+//    * stack the DPO on the forwarding contributed by the path-list
+//    */
+//   dpo_id_t via_dpo = DPO_INVALID;
+//   abf_policy_t *ap;
 
-  ap = abf_policy_get (aia->aia_abf);
+//   ap = fwabf_policy_get (aia->aia_abf);
 
-  fib_path_list_contribute_forwarding (ap->ap_pl,
-				       (FIB_PROTOCOL_IP4 == aia->aia_proto ?
-					FIB_FORW_CHAIN_TYPE_UNICAST_IP4 :
-					FIB_FORW_CHAIN_TYPE_UNICAST_IP6),
-				       FIB_PATH_LIST_FWD_FLAG_COLLAPSE,
-				       &via_dpo);
+//   fib_path_list_contribute_forwarding (ap->ap_pl,
+// 				       (FIB_PROTOCOL_IP4 == aia->aia_proto ?
+// 					FIB_FORW_CHAIN_TYPE_UNICAST_IP4 :
+// 					FIB_FORW_CHAIN_TYPE_UNICAST_IP6),
+// 				       FIB_PATH_LIST_FWD_FLAG_COLLAPSE,
+// 				       &via_dpo);
 
-  dpo_stack_from_node ((FIB_PROTOCOL_IP4 == aia->aia_proto ?
-			fwabf_ip4_node.index :
-			fwabf_ip6_node.index), &aia->aia_dpo, &via_dpo);
-  dpo_reset (&via_dpo);
-}
+//   dpo_stack_from_node ((FIB_PROTOCOL_IP4 == aia->aia_proto ?
+// 			fwabf_ip4_node.index :
+// 			fwabf_ip6_node.index), &aia->aia_dpo, &via_dpo);
+//   dpo_reset (&via_dpo);
+// }
 
 static int
 abf_cmp_attach_for_sort (void *v1, void *v2)
@@ -171,17 +173,17 @@ abf_setup_acl_lc (fib_protocol_t fproto, u32 sw_if_index)
 }
 
 int
-abf_itf_attach (fib_protocol_t fproto,
+fwabf_itf_attach (fib_protocol_t fproto,
 		u32 policy_id, u32 priority, u32 sw_if_index)
 {
   abf_itf_attach_t *aia;
   abf_policy_t *ap;
-  u32 api, aiai;
+  u32 api;
 
-  api = abf_policy_find (policy_id);
+  api = fwabf_policy_find (policy_id);
 
   ASSERT (INDEX_INVALID != api);
-  ap = abf_policy_get (api);
+  ap = fwabf_policy_get (api);
 
   /*
    * check this is not a duplicate
@@ -196,19 +198,21 @@ abf_itf_attach (fib_protocol_t fproto,
    */
   pool_get (abf_itf_attach_pool, aia);
 
-  fib_node_init (&aia->aia_node, abf_itf_attach_fib_node_type);
+// no need - abf_itf_attach_t is not bound to FIB anymore
+//  fib_node_init (&aia->aia_node, abf_itf_attach_fib_node_type);
   aia->aia_prio = priority;
-  aia->aia_proto = fproto;
+//  aia->aia_proto = fproto;
   aia->aia_acl = ap->ap_acl;
   aia->aia_abf = api;
   aia->aia_sw_if_index = sw_if_index;
-  aiai = aia - abf_itf_attach_pool;
+//  aiai = aia - abf_itf_attach_pool;
   abf_itf_attach_db_add (policy_id, sw_if_index, aia);
 
-  /*
-   * stack the DPO on the forwarding contributed by the path-list
-   */
-  abf_itf_attach_stack (aia);
+  // no need - abf_itf_attach_t is not bound to FIB anymore
+  // /*
+  //  * stack the DPO on the forwarding contributed by the path-list
+  //  */
+  // abf_itf_attach_stack (aia);
 
   /*
    * Insert the policy on the interfaces list.
@@ -225,8 +229,8 @@ abf_itf_attach (fib_protocol_t fproto,
 				    "ip4-unicast" :
 				    "ip6-unicast"),
 				   (FIB_PROTOCOL_IP4 == fproto ?
-				    "abf-input-ip4" :
-				    "abf-input-ip6"),
+				    "fwabf-input-ip4" :
+				    "fwabf-input-ip6"),
 				   sw_if_index, 1, NULL, 0);
 
       /* if this is the first ABF policy, we need to acquire an ACL lookup context */
@@ -243,19 +247,20 @@ abf_itf_attach (fib_protocol_t fproto,
   /* Prepare and set the list of ACLs for lookup within the context */
   abf_setup_acl_lc (fproto, sw_if_index);
 
-  /*
-   * become a child of the ABF policy so we are notified when
-   * its forwarding changes.
-   */
-  aia->aia_sibling = fib_node_child_add (abf_policy_fib_node_type,
-					 api,
-					 abf_itf_attach_fib_node_type, aiai);
+  // no need - abf_itf_attach_t is not bound to FIB anymore
+  // /*
+  //  * become a child of the ABF policy so we are notified when
+  //  * its forwarding changes.
+  //  */
+  // aia->aia_sibling = fib_node_child_add (abf_policy_fib_node_type,
+	// 				 api,
+	// 				 abf_itf_attach_fib_node_type, aiai);
 
   return (0);
 }
 
 int
-abf_itf_detach (fib_protocol_t fproto, u32 policy_id, u32 sw_if_index)
+fwabf_itf_detach (fib_protocol_t fproto, u32 policy_id, u32 sw_if_index)
 {
   abf_itf_attach_t *aia;
   u32 index;
@@ -290,8 +295,8 @@ abf_itf_detach (fib_protocol_t fproto, u32 policy_id, u32 sw_if_index)
 				    "ip4-unicast" :
 				    "ip6-unicast"),
 				   (FIB_PROTOCOL_IP4 == fproto ?
-				    "abf-input-ip4" :
-				    "abf-input-ip6"),
+				    "fwabf-input-ip4" :
+				    "fwabf-input-ip6"),
 				   sw_if_index, 0, NULL, 0);
 
       /* Return the lookup context, invalidate its id in our records */
@@ -308,21 +313,22 @@ abf_itf_detach (fib_protocol_t fproto, u32 policy_id, u32 sw_if_index)
   /* Prepare and set the list of ACLs for lookup within the context */
   abf_setup_acl_lc (fproto, sw_if_index);
 
-  /*
-   * remove the dependency on the policy
-   */
-  fib_node_child_remove (abf_policy_fib_node_type,
-			 aia->aia_abf, aia->aia_sibling);
+  // no need - abf_itf_attach_t is not bound to FIB anymore
+  // /*
+  //  * remove the dependency on the policy
+  //  */
+  // fib_node_child_remove (abf_policy_fib_node_type,
+	// 		 aia->aia_abf, aia->aia_sibling);
 
   /*
    * remove the attachment from the DB
    */
   abf_itf_attach_db_del (policy_id, sw_if_index);
 
-  /*
-   * release our locks on FIB forwarding data
-   */
-  dpo_reset (&aia->aia_dpo);
+  // /*
+  //  * release our locks on FIB forwarding data
+  //  */
+  // dpo_reset (&aia->aia_dpo);
 
   /*
    * return the object
@@ -338,11 +344,9 @@ format_abf_intf_attach (u8 * s, va_list * args)
   abf_itf_attach_t *aia = va_arg (*args, abf_itf_attach_t *);
   abf_policy_t *ap;
 
-  ap = abf_policy_get (aia->aia_abf);
+  ap = fwabf_policy_get (aia->aia_abf);
   s = format (s, "abf-interface-attach: policy:%d priority:%d",
 	      ap->ap_id, aia->aia_prio);
-  s = format (s, "\n  %U", format_dpo_id, &aia->aia_dpo, 2);
-
   return (s);
 }
 
@@ -396,13 +400,13 @@ abf_itf_attach_cmd (vlib_main_t * vm,
       return (clib_error_return (0, "Specify either ip4 or ip6"));
     }
 
-  if (~0 == abf_policy_find (policy_id))
+  if (~0 == fwabf_policy_find (policy_id))
     return (clib_error_return (0, "invalid policy ID:%d", policy_id));
 
   if (is_del)
-    abf_itf_detach (fproto, policy_id, sw_if_index);
+    fwabf_itf_detach (fproto, policy_id, sw_if_index);
   else
-    abf_itf_attach (fproto, policy_id, priority, sw_if_index);
+    fwabf_itf_attach (fproto, policy_id, priority, sw_if_index);
 
   return (NULL);
 }
@@ -414,7 +418,7 @@ abf_itf_attach_cmd (vlib_main_t * vm,
 VLIB_CLI_COMMAND (abf_itf_attach_cmd_node, static) = {
   .path = "fwabf attach",
   .function = abf_itf_attach_cmd,
-  .short_help = "abf attach <ip4|ip6> [del] policy <value> <interface>",
+  .short_help = "fwabf attach <ip4|ip6> [del] policy <value> <interface>",
   // this is not MP safe
 };
 /* *INDENT-ON* */
@@ -474,19 +478,20 @@ VLIB_CLI_COMMAND (abf_show_attach_cmd_node, static) = {
 };
 /* *INDENT-ON* */
 
-void
-abf_itf_attach_walk (abf_itf_attach_walk_cb_t cb, void *ctx)
-{
-  u32 aii;
+// no need - abf_itf_attach_t is not bound to FIB anymore
+// void
+// abf_itf_attach_walk (abf_itf_attach_walk_cb_t cb, void *ctx)
+// {
+//   u32 aii;
 
-  /* *INDENT-OFF* */
-  pool_foreach_index(aii, abf_itf_attach_pool,
-  ({
-    if (!cb(aii, ctx))
-      break;
-  }));
-  /* *INDENT-ON* */
-}
+//   /* *INDENT-OFF* */
+//   pool_foreach_index(aii, abf_itf_attach_pool,
+//   ({
+//     if (!cb(aii, ctx))
+//       break;
+//   }));
+//   /* *INDENT-ON* */
+// }
 
 typedef enum abf_next_t_
 {
@@ -509,7 +514,7 @@ typedef enum
 } abf_error_t;
 
 always_inline uword
-abf_input_inline (vlib_main_t * vm,
+fwabf_input_inline (vlib_main_t * vm,
 		  vlib_node_runtime_t * node,
 		  vlib_frame_t * frame, fib_protocol_t fproto)
 {
@@ -527,101 +532,109 @@ abf_input_inline (vlib_main_t * vm,
       vlib_get_next_frame (vm, node, next_index, to_next, n_left_to_next);
 
       while (n_left_from > 0 && n_left_to_next > 0)
-	{
-	  const u32 *attachments0;
-	  const abf_itf_attach_t *aia0;
-	  abf_next_t next0 = ABF_NEXT_DROP;
-	  vlib_buffer_t *b0;
-	  u32 bi0, sw_if_index0;
-	  fa_5tuple_opaque_t fa_5tuple0;
-	  u32 match_acl_index = ~0;
-	  u32 match_acl_pos = ~0;
-	  u32 match_rule_index = ~0;
-	  u32 trace_bitmap = 0;
-	  u8 action;
+        {
+          const u32 *attachments0;
+          const abf_itf_attach_t *aia0;
+          abf_next_t next0 = ABF_NEXT_DROP;
+          vlib_buffer_t *b0;
+          u32 bi0, sw_if_index0;
+          fa_5tuple_opaque_t fa_5tuple0;
+          dpo_id_t dpo0;
+          u32 match_acl_index = ~0;
+          u32 match_acl_pos = ~0;
+          u32 match_rule_index = ~0;
+          u32 trace_bitmap = 0;
+          u8 action;
 
-	  bi0 = from[0];
-	  to_next[0] = bi0;
-	  from += 1;
-	  to_next += 1;
-	  n_left_from -= 1;
-	  n_left_to_next -= 1;
+          bi0 = from[0];
+          to_next[0] = bi0;
+          from += 1;
+          to_next += 1;
+          n_left_from -= 1;
+          n_left_to_next -= 1;
 
-	  b0 = vlib_get_buffer (vm, bi0);
-	  sw_if_index0 = vnet_buffer (b0)->sw_if_index[VLIB_RX];
+          b0 = vlib_get_buffer (vm, bi0);
+          sw_if_index0 = vnet_buffer (b0)->sw_if_index[VLIB_RX];
 
-	  ASSERT (vec_len (abf_per_itf[fproto]) > sw_if_index0);
-	  attachments0 = abf_per_itf[fproto][sw_if_index0];
+          ASSERT (vec_len (abf_per_itf[fproto]) > sw_if_index0);
+          attachments0 = abf_per_itf[fproto][sw_if_index0];
 
-	  ASSERT (vec_len (abf_alctx_per_itf[fproto]) > sw_if_index0);
-	  /*
-	   * check if any of the policies attached to this interface matches.
-	   */
-	  u32 lc_index = abf_alctx_per_itf[fproto][sw_if_index0];
+          ASSERT (vec_len (abf_alctx_per_itf[fproto]) > sw_if_index0);
+          /*
+          * check if any of the policies attached to this interface matches.
+          */
+          u32 lc_index = abf_alctx_per_itf[fproto][sw_if_index0];
 
-	  /*
-	     A non-inline version looks like this:
+          /*
+            A non-inline version looks like this:
 
-	     acl_plugin.fill_5tuple (lc_index, b0, (FIB_PROTOCOL_IP6 == fproto),
-	     1, 0, &fa_5tuple0);
-	     if (acl_plugin.match_5tuple
-	     (lc_index, &fa_5tuple0, (FIB_PROTOCOL_IP6 == fproto), &action,
-	     &match_acl_pos, &match_acl_index, &match_rule_index,
-	     &trace_bitmap))
-	     . . .
-	   */
-	  acl_plugin_fill_5tuple_inline (acl_plugin.p_acl_main, lc_index, b0,
-					 (FIB_PROTOCOL_IP6 == fproto), 1, 0,
-					 &fa_5tuple0);
+            acl_plugin.fill_5tuple (lc_index, b0, (FIB_PROTOCOL_IP6 == fproto),
+            1, 0, &fa_5tuple0);
+            if (acl_plugin.match_5tuple
+            (lc_index, &fa_5tuple0, (FIB_PROTOCOL_IP6 == fproto), &action,
+            &match_acl_pos, &match_acl_index, &match_rule_index,
+            &trace_bitmap))
+            . . .
+          */
+          acl_plugin_fill_5tuple_inline (acl_plugin.p_acl_main, lc_index, b0,
+                (FIB_PROTOCOL_IP6 == fproto), 1, 0,
+                &fa_5tuple0);
 
-	  if (acl_plugin_match_5tuple_inline
-	      (acl_plugin.p_acl_main, lc_index, &fa_5tuple0,
-	       (FIB_PROTOCOL_IP6 == fproto), &action, &match_acl_pos,
-	       &match_acl_index, &match_rule_index, &trace_bitmap))
-	    {
-	      /*
-	       * match:
-	       *  follow the DPO chain
-	       */
-	      aia0 = abf_itf_attach_get (attachments0[match_acl_pos]);
+          if (acl_plugin_match_5tuple_inline
+              (acl_plugin.p_acl_main, lc_index, &fa_5tuple0,
+              (FIB_PROTOCOL_IP6 == fproto), &action, &match_acl_pos,
+              &match_acl_index, &match_rule_index, &trace_bitmap))
+            {
+              /*
+              * match:
+              *  follow the DPO chain if available. Otherwise fallback to feature arc.
+              */
+              aia0 = abf_itf_attach_get (attachments0[match_acl_pos]);
+              dpo0 = fwabf_policy_get_dpo (aia0->aia_abf, (dpo_proto_t)fproto);
+              if (PREDICT_TRUE(dpo_id_is_valid(&dpo0)))
+                {
+                  next0 = dpo0.dpoi_next_node;
+                  vnet_buffer (b0)->ip.adj_index[VLIB_TX] = dpo0.dpoi_index;
+                }
+              else
+                {
+                  vnet_feature_next (&next0, b0);
+                }
 
-	      next0 = aia0->aia_dpo.dpoi_next_node;
-	      vnet_buffer (b0)->ip.adj_index[VLIB_TX] =
-		aia0->aia_dpo.dpoi_index;
-	      matches++;
-	    }
-	  else
-	    {
-	      /*
-	       * miss:
-	       *  move on down the feature arc
-	       */
-	      vnet_feature_next (&next0, b0);
-	    }
+              matches++;
+            }
+          else
+            {
+              /*
+              * miss:
+              *  move on down the feature arc
+              */
+              vnet_feature_next (&next0, b0);
+            }
 
-	  if (PREDICT_FALSE (b0->flags & VLIB_BUFFER_IS_TRACED))
-	    {
-	      abf_input_trace_t *tr;
+          if (PREDICT_FALSE (b0->flags & VLIB_BUFFER_IS_TRACED))
+            {
+              abf_input_trace_t *tr;
 
-	      tr = vlib_add_trace (vm, node, b0, sizeof (*tr));
-	      tr->next = next0;
-	      tr->index = vnet_buffer (b0)->ip.adj_index[VLIB_TX];
-	    }
+              tr = vlib_add_trace (vm, node, b0, sizeof (*tr));
+              tr->next = next0;
+              tr->index = vnet_buffer (b0)->ip.adj_index[VLIB_TX];
+            }
 
-	  /* verify speculative enqueue, maybe switch current next frame */
-	  vlib_validate_buffer_enqueue_x1 (vm, node, next_index,
-					   to_next, n_left_to_next, bi0,
-					   next0);
-	}
+          /* verify speculative enqueue, maybe switch current next frame */
+          vlib_validate_buffer_enqueue_x1 (vm, node, next_index,
+                  to_next, n_left_to_next, bi0,
+                  next0);
+        }
 
       vlib_put_next_frame (vm, node, next_index, n_left_to_next);
     }
 
   vlib_node_increment_counter (vm,
-			       (fproto = FIB_PROTOCOL_IP6 ?
-				fwabf_ip4_node.index :
-				fwabf_ip6_node.index),
-			       ABF_ERROR_MATCHED, matches);
+             (fproto = FIB_PROTOCOL_IP6 ?
+        fwabf_ip4_node.index :
+        fwabf_ip6_node.index),
+             ABF_ERROR_MATCHED, matches);
 
   return frame->n_vectors;
 }
@@ -630,14 +643,14 @@ static uword
 abf_input_ip4 (vlib_main_t * vm,
 	       vlib_node_runtime_t * node, vlib_frame_t * frame)
 {
-  return abf_input_inline (vm, node, frame, FIB_PROTOCOL_IP4);
+  return fwabf_input_inline (vm, node, frame, FIB_PROTOCOL_IP4);
 }
 
 static uword
 abf_input_ip6 (vlib_main_t * vm,
 	       vlib_node_runtime_t * node, vlib_frame_t * frame)
 {
-  return abf_input_inline (vm, node, frame, FIB_PROTOCOL_IP6);
+  return fwabf_input_inline (vm, node, frame, FIB_PROTOCOL_IP6);
 }
 
 static u8 *
@@ -693,75 +706,78 @@ VLIB_REGISTER_NODE (fwabf_ip6_node) =
 VNET_FEATURE_INIT (abf_ip4_feat, static) =
 {
   .arc_name = "ip4-unicast",
-  .node_name = "abf-input-ip4",
+  .node_name = "fwabf-input-ip4",
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip4-fa"),
 };
 
 VNET_FEATURE_INIT (abf_ip6_feat, static) =
 {
   .arc_name = "ip6-unicast",
-  .node_name = "abf-input-ip6",
+  .node_name = "fwabf-input-ip6",
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip6-fa"),
 };
 /* *INDENT-ON* */
 
-static fib_node_t *
-abf_itf_attach_get_node (fib_node_index_t index)
-{
-  abf_itf_attach_t *aia = abf_itf_attach_get (index);
-  return (&(aia->aia_node));
-}
+// no need - abf_itf_attach_t is not bound to FIB anymore
+// static fib_node_t *
+// abf_itf_attach_get_node (fib_node_index_t index)
+// {
+//   abf_itf_attach_t *aia = abf_itf_attach_get (index);
+//   return (&(aia->aia_node));
+// }
 
-static abf_itf_attach_t *
-abf_itf_attach_get_from_node (fib_node_t * node)
-{
-  return ((abf_itf_attach_t *) (((char *) node) -
-				STRUCT_OFFSET_OF (abf_itf_attach_t,
-						  aia_node)));
-}
+// static abf_itf_attach_t *
+// abf_itf_attach_get_from_node (fib_node_t * node)
+// {
+//   return ((abf_itf_attach_t *) (((char *) node) -
+// 				STRUCT_OFFSET_OF (abf_itf_attach_t,
+// 						  aia_node)));
+// }
 
-static void
-abf_itf_attach_last_lock_gone (fib_node_t * node)
-{
-  /*
-   * ABF interface attachments are leaves on the graph.
-   * we do not manage locks from children.
-   */
-}
+// static void
+// abf_itf_attach_last_lock_gone (fib_node_t * node)
+// {
+//   /*
+//    * ABF interface attachments are leaves on the graph.
+//    * we do not manage locks from children.
+//    */
+// }
 
-/*
- * abf_itf_attach_back_walk_notify
- *
- * A back walk has reached this BIER fmask
- */
-static fib_node_back_walk_rc_t
-abf_itf_attach_back_walk_notify (fib_node_t * node,
-				 fib_node_back_walk_ctx_t * ctx)
-{
-  /*
-   * re-stack the fmask on the n-eos of the via
-   */
-  abf_itf_attach_t *aia = abf_itf_attach_get_from_node (node);
+// /*
+//  * abf_itf_attach_back_walk_notify
+//  *
+//  * A back walk has reached this BIER fmask
+//  */
+// static fib_node_back_walk_rc_t
+// abf_itf_attach_back_walk_notify (fib_node_t * node,
+// 				 fib_node_back_walk_ctx_t * ctx)
+// {
+//   /*
+//    * re-stack the fmask on the n-eos of the via
+//    */
+//   abf_itf_attach_t *aia = abf_itf_attach_get_from_node (node);
 
-  abf_itf_attach_stack (aia);
+//   abf_itf_attach_stack (aia);
 
-  return (FIB_NODE_BACK_WALK_CONTINUE);
-}
+//   return (FIB_NODE_BACK_WALK_CONTINUE);
+// }
 
-/*
- * The BIER fmask's graph node virtual function table
- */
-static const fib_node_vft_t abf_itf_attach_vft = {
-  .fnv_get = abf_itf_attach_get_node,
-  .fnv_last_lock = abf_itf_attach_last_lock_gone,
-  .fnv_back_walk = abf_itf_attach_back_walk_notify,
-};
+// /*
+//  * The BIER fmask's graph node virtual function table
+//  */
+// static const fib_node_vft_t abf_itf_attach_vft = {
+//   .fnv_get = abf_itf_attach_get_node,
+//   .fnv_last_lock = abf_itf_attach_last_lock_gone,
+//   .fnv_back_walk = abf_itf_attach_back_walk_notify,
+// };
 
 static clib_error_t *
 abf_itf_bond_init (vlib_main_t * vm)
 {
-  abf_itf_attach_fib_node_type =
-    fib_node_register_new_type (&abf_itf_attach_vft);
+  // no need - abf_itf_attach_t is not bound to FIB anymore
+  // abf_itf_attach_fib_node_type =
+  //   fib_node_register_new_type (&abf_itf_attach_vft);
+
   clib_error_t *acl_init_res = acl_plugin_exports_init (&acl_plugin);
   if (acl_init_res)
     return (acl_init_res);

@@ -17,7 +17,7 @@
  *  Copyright (C) 2020 flexiWAN Ltd.
  *  This file is part of the FWABF plugin.
  *  The FWABF plugin is fork of the FDIO VPP ABF plugin.
- *  It enhances ABF with functinality required for Flexiwan Multi-Link feature.
+ *  It enhances ABF with functionality required for Flexiwan Multi-Link feature.
  *  For more details see official documentation on the Flexiwan Multi-Link.
  */
 
@@ -25,7 +25,7 @@
 #define __FWABF_ITF_ATTACH_H__
 
 #include <plugins/fwabf/abf_policy.h>
-#include <vnet/fib/fib_path_list.h>
+//#include <vnet/fib/fib_path_list.h>
 
 /**
  * Attachment data for an ABF policy to an interface
@@ -41,25 +41,30 @@ typedef struct abf_itf_attach_t_
    */
   u32 aia_acl;
 
+  // nnoww - moved to fwabf_sw_interface_t
   /**
    * The DPO actually used for forwarding
    */
-  dpo_id_t aia_dpo;
+  //dpo_id_t aia_dpo;
 
+  // no need - abf_itf_attach_t is not bound to FIB anymore
+  //           Instead it fetches DPO to use for forwarding from fwabf_sw_interface_t.
+  //           The last is bound to FIB and get forwarding updates.
   /**
    * Linkage into the FIB graph
    */
-  fib_node_t aia_node;
+  //fib_node_t aia_node;
 
   /**
    * The VPP index of the ABF policy
    */
   u32 aia_abf;
 
+  // no need - abf_itf_attach_t is not bound to FIB anymore
   /**
    * Sibling index on the policy's path list
    */
-  u32 aia_sibling;
+  //u32 aia_sibling;
 
   /**
    * The protocol for the attachment. i.e. the protocol
@@ -85,21 +90,22 @@ typedef struct abf_itf_attach_t_
  */
 extern abf_itf_attach_t *abf_itf_attach_pool;
 
-static inline abf_itf_attach_t *
-abf_itf_attach_get (u32 index)
+static inline abf_itf_attach_t * abf_itf_attach_get (u32 index)
 {
   return (pool_elt_at_index (abf_itf_attach_pool, index));
 }
 
-extern int abf_itf_attach (fib_protocol_t fproto,
+extern int fwabf_itf_attach (fib_protocol_t fproto,
 			   u32 policy_id, u32 priority, u32 sw_if_index);
 
-extern int abf_itf_detach (fib_protocol_t fproto,
+extern int fwabf_itf_detach (fib_protocol_t fproto,
 			   u32 policy_id, u32 sw_if_index);
 
-typedef int (*abf_itf_attach_walk_cb_t) (index_t aii, void *ctx0);
+// no need - abf_itf_attach_t is not bound to FIB anymore
+//typedef int (*abf_itf_attach_walk_cb_t) (index_t aii, void *ctx0);
 
-extern void abf_itf_attach_walk (abf_itf_attach_walk_cb_t cb, void *ctx);
+// no need - abf_itf_attach_t is not bound to FIB anymore
+//extern void abf_itf_attach_walk (abf_itf_attach_walk_cb_t cb, void *ctx);
 
 /*
  * fd.io coding-style-patch-verification: ON
@@ -109,4 +115,4 @@ extern void abf_itf_attach_walk (abf_itf_attach_walk_cb_t cb, void *ctx);
  * End:
  */
 
-#endif
+#endif /*__FWABF_ITF_ATTACH_H__*/

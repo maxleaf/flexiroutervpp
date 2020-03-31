@@ -15,7 +15,7 @@
 # Copyright (c) 2020 flexiWAN Ltd.
 # This file is part of the FWABF plugin.
 # The FWABF plugin is fork of the FDIO VPP ABF plugin.
-# It enhances ABF with functinality required for Flexiwan Multi-Link feature.
+# It enhances ABF with functionality required for Flexiwan Multi-Link feature.
 # For more details see official documentation on the Flexiwan Multi-Link.
 
 
@@ -24,6 +24,7 @@ add_vpp_plugin(fwabf
   abf_api.c
   abf_itf_attach.c
   abf_policy.c
+  fwabf_links.c
 
   API_FILES
   fwabf.api

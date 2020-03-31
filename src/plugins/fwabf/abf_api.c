@@ -17,7 +17,7 @@
  *  Copyright (C) 2020 flexiWAN Ltd.
  *  This file is part of the FWABF plugin.
  *  The FWABF plugin is fork of the FDIO VPP ABF plugin.
- *  It enhances ABF with functinality required for Flexiwan Multi-Link feature.
+ *  It enhances ABF with functionality required for Flexiwan Multi-Link feature.
  *  For more details see official documentation on the Flexiwan Multi-Link.
  */
 
@@ -35,6 +35,9 @@
 
 #include <vlibapi/api.h>
 #include <vlibmemory/api.h>
+
+
+#ifdef FWABF_API_MESSAGES_ARE_SUPPORTED  /* python bindings are not supported yet */
 
 /* define message IDs */
 #include <fwabf/abf_msg_enum.h>
@@ -59,6 +62,7 @@
 #define vl_api_version(n,v) static u32 api_version=(v);
 #include <fwabf/abf_all_api_h.h>
 #undef vl_api_version
+
 
 /**
  * Base message ID fot the plugin
@@ -94,8 +98,8 @@ vl_api_fwabf_plugin_get_version_t_handler (vl_api_fwabf_plugin_get_version_t * m
   rmp->_vl_msg_id =
     ntohs (VL_API_FWABF_PLUGIN_GET_VERSION_REPLY + abf_base_msg_id);
   rmp->context = mp->context;
-  rmp->major = htonl (ABF_PLUGIN_VERSION_MAJOR);
-  rmp->minor = htonl (ABF_PLUGIN_VERSION_MINOR);
+  rmp->major = htonl (FWABF_PLUGIN_VERSION_MAJOR);
+  rmp->minor = htonl (FWABF_PLUGIN_VERSION_MINOR);
 
   vl_msg_api_send_shmem (q, (u8 *) & rmp);
 }
@@ -146,14 +150,14 @@ vl_api_fwabf_itf_attach_add_del_t_handler (vl_api_fwabf_itf_attach_add_del_t * m
 
   if (mp->is_add)
     {
-      abf_itf_attach (fproto,
+      fwabf_itf_attach (fproto,
 		      ntohl (mp->attach.policy_id),
 		      ntohl (mp->attach.priority),
 		      ntohl (mp->attach.sw_if_index));
     }
   else
     {
-      abf_itf_detach (fproto,
+      fwabf_itf_detach (fproto,
 		      ntohl (mp->attach.policy_id),
 		      ntohl (mp->attach.sw_if_index));
     }
@@ -179,7 +183,7 @@ abf_policy_send_details (u32 api, void *args)
   u8 n_paths;
 
   ctx = args;
-  ap = abf_policy_get (api);
+  ap = fwabf_policy_get (api);
   n_paths = fib_path_list_get_n_paths (ap->ap_pl);
   msg_size = sizeof (*mp) + sizeof (mp->policy.paths[0]) * n_paths;
 
@@ -236,7 +240,7 @@ abf_itf_attach_send_details (u32 aiai, void *args)
 
   ctx = args;
   aia = abf_itf_attach_get (aiai);
-  ap = abf_policy_get (aia->aia_abf);
+  ap = fwabf_policy_get (aia->aia_abf);
 
   mp = vl_msg_api_alloc (sizeof (*mp));
   mp->_vl_msg_id = ntohs (VL_API_FWABF_ITF_ATTACH_DETAILS + abf_base_msg_id);
@@ -324,6 +328,8 @@ abf_api_init (vlib_main_t * vm)
 }
 
 VLIB_INIT_FUNCTION (abf_api_init);
+
+#endif //#ifdef (FWABF_API_MESSAGES_ARE_SUPPORTED)  /* python bindings are not supported yet */
 
 /* *INDENT-OFF* */
 VLIB_PLUGIN_REGISTER () = {
