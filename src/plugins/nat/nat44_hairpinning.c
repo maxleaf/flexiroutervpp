@@ -12,6 +12,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+/*
+ *  Copyright (C) 2019 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - Replace hardcoded next node ip4-lookup with next feature on arc.
+ *     This is to enable coexistence of NAT & ABF/FWABF
+ */
+
+
 /**
  * @file
  * @brief NAT44 hairpinning
@@ -588,7 +597,16 @@ nat44_hairpinning_fn_inline (vlib_main_t * vm,
 				&next0, 0);
 
 	  if (snat_hairpinning (sm, b0, ip0, udp0, tcp0, proto0, is_ed))
+#ifdef FLEXIWAN_FIX
+      // The original code redirects modified by NAT packets to the ip4-lookup
+      // node hardcoded, thus bypassing the abf-input-ip4 / fwabf-input-ip4
+      // nodes. As a result policies has no effect, when NAT feature is ON.
+      // Fix this by using the next feature on the ip4-unicast arc.
+      //
+	    vnet_feature_next (&next0, b0);
+#else
 	    next0 = NAT_HAIRPIN_NEXT_LOOKUP;
+#endif
 
 	  pkts_processed += next0 != NAT_HAIRPIN_NEXT_DROP;
 
@@ -697,7 +715,16 @@ snat_hairpin_dst_fn_inline (vlib_main_t * vm,
 	  n_left_to_next -= 1;
 
 	  b0 = vlib_get_buffer (vm, bi0);
-	  next0 = NAT_HAIRPIN_NEXT_LOOKUP;
+#ifdef FLEXIWAN_FIX
+    // The original code redirects modified by NAT packets to the ip4-lookup
+    // node hardcoded, thus bypassing the abf-input-ip4 / fwabf-input-ip4
+    // nodes. As a result policies has no effect, when NAT feature is ON.
+    // Fix this by using the next feature on the ip4-unicast arc.
+    //
+    vnet_feature_next (&next0, b0);
+#else
+    next0 = NAT_HAIRPIN_NEXT_LOOKUP;
+#endif
 	  ip0 = vlib_buffer_get_current (b0);
 
 	  proto0 = ip_proto_to_snat_proto (ip0->protocol);
