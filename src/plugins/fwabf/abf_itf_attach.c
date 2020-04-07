@@ -21,7 +21,10 @@
  *  For more details see official documentation on the Flexiwan Multi-Link.
  */
 
+// nnoww - DOCUMENT
+
 #include <plugins/fwabf/abf_itf_attach.h>
+#include <plugins/fwabf/fwabf_locals.h>
 #include <vnet/fib/fib_path_list.h>
 #include <plugins/acl/exports.h>
 
@@ -545,6 +548,9 @@ fwabf_input_inline (vlib_main_t * vm,
           u32 match_rule_index = ~0;
           u32 trace_bitmap = 0;
           u8 action;
+          ip4_header_t* ip40;
+          ip6_header_t* ip60;
+          int           local;
 
           bi0 = from[0];
           to_next[0] = bi0;
@@ -554,63 +560,86 @@ fwabf_input_inline (vlib_main_t * vm,
           n_left_to_next -= 1;
 
           b0 = vlib_get_buffer (vm, bi0);
-          sw_if_index0 = vnet_buffer (b0)->sw_if_index[VLIB_RX];
-
-          ASSERT (vec_len (abf_per_itf[fproto]) > sw_if_index0);
-          attachments0 = abf_per_itf[fproto][sw_if_index0];
-
-          ASSERT (vec_len (abf_alctx_per_itf[fproto]) > sw_if_index0);
-          /*
-          * check if any of the policies attached to this interface matches.
-          */
-          u32 lc_index = abf_alctx_per_itf[fproto][sw_if_index0];
 
           /*
-            A non-inline version looks like this:
-
-            acl_plugin.fill_5tuple (lc_index, b0, (FIB_PROTOCOL_IP6 == fproto),
-            1, 0, &fa_5tuple0);
-            if (acl_plugin.match_5tuple
-            (lc_index, &fa_5tuple0, (FIB_PROTOCOL_IP6 == fproto), &action,
-            &match_acl_pos, &match_acl_index, &match_rule_index,
-            &trace_bitmap))
-            . . .
-          */
-          acl_plugin_fill_5tuple_inline (acl_plugin.p_acl_main, lc_index, b0,
-                (FIB_PROTOCOL_IP6 == fproto), 1, 0,
-                &fa_5tuple0);
-
-          if (acl_plugin_match_5tuple_inline
-              (acl_plugin.p_acl_main, lc_index, &fa_5tuple0,
-              (FIB_PROTOCOL_IP6 == fproto), &action, &match_acl_pos,
-              &match_acl_index, &match_rule_index, &trace_bitmap))
+           * Check if the packet is designated to local node.
+           * In that case no policy should be applied, as policy might
+           * enforce it to go out. In that case move down on the feature arc.
+           * Otherwise go and find policy.
+           */
+          if (fproto == FIB_PROTOCOL_IP4)
             {
-              /*
-              * match:
-              *  follow the DPO chain if available. Otherwise fallback to feature arc.
-              */
-              aia0 = abf_itf_attach_get (attachments0[match_acl_pos]);
-              dpo0 = fwabf_policy_get_dpo (aia0->aia_abf, (dpo_proto_t)fproto);
-              if (PREDICT_TRUE(dpo_id_is_valid(&dpo0)))
-                {
-                  next0 = dpo0.dpoi_next_node;
-                  vnet_buffer (b0)->ip.adj_index[VLIB_TX] = dpo0.dpoi_index;
-                }
-              else
-                {
-                  vnet_feature_next (&next0, b0);
-                }
-
-              matches++;
+              ip40  = vlib_buffer_get_current (b0);
+              local = fwabf_locals_ip4_exists (&ip40->dst_address);
+            }
+          else
+          {
+              ip60  = vlib_buffer_get_current (b0);
+              local = fwabf_locals_ip6_exists (&ip60->dst_address);
+          }
+          if (local)
+            {
+              vnet_feature_next (&next0, b0);
             }
           else
             {
+              sw_if_index0 = vnet_buffer (b0)->sw_if_index[VLIB_RX];
+
+              ASSERT (vec_len (abf_per_itf[fproto]) > sw_if_index0);
+              attachments0 = abf_per_itf[fproto][sw_if_index0];
+
+              ASSERT (vec_len (abf_alctx_per_itf[fproto]) > sw_if_index0);
               /*
-              * miss:
-              *  move on down the feature arc
+              * check if any of the policies attached to this interface matches.
               */
-              vnet_feature_next (&next0, b0);
-            }
+              u32 lc_index = abf_alctx_per_itf[fproto][sw_if_index0];
+
+              /*
+                A non-inline version looks like this:
+
+                acl_plugin.fill_5tuple (lc_index, b0, (FIB_PROTOCOL_IP6 == fproto),
+                1, 0, &fa_5tuple0);
+                if (acl_plugin.match_5tuple
+                (lc_index, &fa_5tuple0, (FIB_PROTOCOL_IP6 == fproto), &action,
+                &match_acl_pos, &match_acl_index, &match_rule_index,
+                &trace_bitmap))
+                . . .
+              */
+              acl_plugin_fill_5tuple_inline (acl_plugin.p_acl_main, lc_index, b0,
+                    (FIB_PROTOCOL_IP6 == fproto), 1, 0,
+                    &fa_5tuple0);
+
+              if (acl_plugin_match_5tuple_inline
+                  (acl_plugin.p_acl_main, lc_index, &fa_5tuple0,
+                  (FIB_PROTOCOL_IP6 == fproto), &action, &match_acl_pos,
+                  &match_acl_index, &match_rule_index, &trace_bitmap))
+                {
+                  /*
+                  * match:
+                  *  follow the DPO chain if available. Otherwise fallback to feature arc.
+                  */
+                  aia0 = abf_itf_attach_get (attachments0[match_acl_pos]);
+                  dpo0 = fwabf_policy_get_dpo (aia0->aia_abf, (dpo_proto_t)fproto);
+                  if (PREDICT_TRUE(dpo_id_is_valid(&dpo0)))
+                    {
+                      next0 = dpo0.dpoi_next_node;
+                      vnet_buffer (b0)->ip.adj_index[VLIB_TX] = dpo0.dpoi_index;
+                    }
+                  else
+                    {
+                      vnet_feature_next (&next0, b0);
+                    }
+                  matches++;
+                }
+              else
+                {
+                  /*
+                  * miss:
+                  *  move on down the feature arc
+                  */
+                  vnet_feature_next (&next0, b0);
+                }
+            } /*if (local) else*/
 
           if (PREDICT_FALSE (b0->flags & VLIB_BUFFER_IS_TRACED))
             {

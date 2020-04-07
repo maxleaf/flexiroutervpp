@@ -547,14 +547,14 @@ static const fib_node_vft_t fwabf_sw_interface_vft = {
 };
 
 static
-clib_error_t * fwabf_sw_interface_init (vlib_main_t * vm)
+clib_error_t * fwabf_links_init (vlib_main_t * vm)
 {
   fwabf_sw_interface_fib_node_type = fib_node_register_new_type (&fwabf_sw_interface_vft);
 
   return (NULL);
 }
 
-VLIB_INIT_FUNCTION (fwabf_sw_interface_init);
+VLIB_INIT_FUNCTION (fwabf_links_init);
 
 /*
  * fd.io coding-style-patch-verification: ON

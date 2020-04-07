@@ -21,6 +21,9 @@
  *  For more details see official documentation on the Flexiwan Multi-Link.
  */
 
+
+// nnoww - DOCUMENT
+
 #include <plugins/fwabf/abf_policy.h>
 
 #include <vlib/vlib.h>
@@ -40,11 +43,19 @@
 // nnoww - TODO - add validation on delete policy that no attachment objects exist!
 // nnoww - TODO - check trace of FWABF node and add missing info if needed
 
+
+// nnoww - TODO - check if quad and dual loops & prefetch (see ip4_lookup_inline) should be addded in nodes! (once we can measure benchmarking with the new feature)
+// nnoww - TODO - check if separation of ip4 and ip6 nodes should be done! (once we can measure benchmarking with the new feature)
+
+
 // nnoww - TEST - test POLICY CLI thoroughly
 
 // nnoww - LIMITATION - for now (March 2020) we don't enable more than one labels per interface
 // nnoww - LIMITATION - for now (March 2020) we don't enable labels with mixed IPv4/6 tunnels and WAN-s - see fwabf_sw_interface_t::dpo_proto field.
 
+// nnoww - ASK Nir - if should support LAN Broadcast addresses - 192.168.1.255 - that requires refcounter (the 255.255.255.255 I already added)?
+
+// nnoww - TODO - ensure that endianity of IP6 address stored in fwabf_locals matches that of packet in vlib_buffer
 
 // nnoww - TEST - ???? - NAT & ABF coexistence:
 //                  1. Modified by NAT packets go through FWABF

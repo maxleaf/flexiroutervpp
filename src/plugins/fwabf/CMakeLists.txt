@@ -25,6 +25,7 @@ add_vpp_plugin(fwabf
   abf_itf_attach.c
   abf_policy.c
   fwabf_links.c
+  fwabf_locals.c
 
   API_FILES
   fwabf.api
