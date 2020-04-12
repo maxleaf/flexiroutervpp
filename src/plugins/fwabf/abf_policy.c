@@ -229,18 +229,29 @@ dpo_id_t fwabf_policy_get_dpo (index_t index, dpo_proto_t dpo_proto)
 uword
 unformat_labels (unformat_input_t * input, va_list * args)
 {
+  vlib_main_t*    vm     = va_arg (*args, vlib_main_t *);;
   fwabf_label_t** labels = va_arg (*args, fwabf_label_t**);
-  fwabf_label_t   label;
+  u32             label;
 
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
       if (unformat (input, "%d,", &label))
         {
-          vec_add1(*labels, label);
+          if (label >= FWABF_INVALID_LABEL)
+            {
+              vlib_cli_output (vm, "illegal label %d, should be in range [0-254]", label);
+              return 0;
+            }
+          vec_add1(*labels, (fwabf_label_t)label);
         }
       else if (unformat (input, "%d", &label))
         {
-          vec_add1(*labels, label);
+          if (label >= FWABF_INVALID_LABEL)
+            {
+              vlib_cli_output (vm, "illegal label %d, should be in range [0-254]", label);
+              return 0;
+            }
+          vec_add1(*labels, (fwabf_label_t)label);
           return 1; /* finished to parse list of labels */
         }
       else
@@ -252,6 +263,7 @@ unformat_labels (unformat_input_t * input, va_list * args)
 uword
 unformat_link_group (unformat_input_t * input, va_list * args)
 {
+  vlib_main_t*               vm    = va_arg (*args, vlib_main_t *);;
   fwabf_policy_link_group_t* group = va_arg (*args, fwabf_policy_link_group_t*);
 
   group->alg   = FWABF_SELECTION_ORDERED;
@@ -263,7 +275,7 @@ unformat_link_group (unformat_input_t * input, va_list * args)
         {
           group->alg = FWABF_SELECTION_RANDOM;
         }
-      else if (unformat (input, "labels %U", unformat_labels, &group->links))
+      else if (unformat (input, "labels %U", unformat_labels, vm, &group->links))
         ;
       else
         return 0; /* failed to parse action*/
@@ -278,6 +290,7 @@ unformat_link_group (unformat_input_t * input, va_list * args)
 uword
 unformat_action (unformat_input_t * input, va_list * args)
 {
+  vlib_main_t*              vm     = va_arg (*args, vlib_main_t *);;
   fwabf_policy_action_t*    action = va_arg (*args, fwabf_policy_action_t *);
   fwabf_policy_link_group_t group;
   u32                       gid;
@@ -298,17 +311,17 @@ unformat_action (unformat_input_t * input, va_list * args)
         }
       /* Now parse groups of links.
          Firstly give a try to 1-group action - action without 'group' keyword */
-      else if (unformat (input, "%U", unformat_link_group, &group))
+      else if (unformat (input, "%U", unformat_link_group, vm, &group))
         {
           vec_add1(action->link_groups, group);
           return 1;   /* finished to parse list of groups*/
         }
       /* Now give a chance to list of groups */
-      else if (unformat (input, "group %d %U,", &gid, unformat_link_group, &group))
+      else if (unformat (input, "group %d %U,", &gid, unformat_link_group, vm, &group))
         {
           vec_add1(action->link_groups, group);
         }
-      else if (unformat (input, "group %d %U", &gid, unformat_link_group, &group))
+      else if (unformat (input, "group %d %U", &gid, unformat_link_group, vm, &group))
         {
           vec_add1(action->link_groups, group);
           return 1;   /* finished to parse list of groups*/
@@ -347,7 +360,7 @@ abf_policy_cmd (vlib_main_t * vm,
         is_del = 1;
       else if (unformat (line_input, "add"))
         is_del = 0;
-      else if (unformat (line_input, "action %U", unformat_action, &policy_action))
+      else if (unformat (line_input, "action %U", unformat_action, vm, &policy_action))
         ;
       else
         return (clib_error_return (0, "unknown input '%U'",

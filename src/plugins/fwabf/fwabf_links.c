@@ -103,7 +103,6 @@ extern vlib_node_registration_t fwabf_ip6_node;
 #define FWABF_SW_INTERFACE_IS_INVALID(index) ((index) >= vec_len(fwabf_sw_interface_db) || \
                                               fwabf_sw_interface_db[(index)].sw_if_index == INDEX_INVALID)
 
-#define FWABF_INVALID_LABEL 0xFF
 #define FWABF_SW_IF_INDEX_FREE(sw_if_index)       (fwabf_label_by_sw_if_index_db[(sw_if_index)] = FWABF_INVALID_LABEL)
 #define FWABF_SW_IF_INDEX_IS_INVALID(sw_if_index) ((sw_if_index) >= vec_len(fwabf_label_by_sw_if_index_db) || \
                                                    fwabf_label_by_sw_if_index_db[(sw_if_index)] == FWABF_INVALID_LABEL)
@@ -295,7 +294,7 @@ clib_error_t * fwabf_link_cmd (
   fib_route_path_t  rpath;
   fib_route_path_t* rpath_vec    = 0;
   u32               sw_if_index  = INDEX_INVALID;
-  u8                fwlabel      = FWABF_INVALID_LABEL;
+  u32               fwlabel      = FWABF_INVALID_LABEL;
   u32               is_add       = 0;
 
   /* Get a line of input. */
@@ -305,7 +304,14 @@ clib_error_t * fwabf_link_cmd (
   while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
     {
       if (unformat (line_input, "label %d", &fwlabel))
-	      ;
+        {
+          if (fwlabel >= FWABF_INVALID_LABEL)
+            {
+              if (rpath_vec)
+                vec_free(rpath_vec);
+              return (clib_error_return (0, "illegal label %d, should be in range [0-254]", fwlabel));
+            }
+        }
       else if (unformat (line_input, "via %U", unformat_fib_route_path, &rpath))
         {
           if (rpath_vec != 0)
