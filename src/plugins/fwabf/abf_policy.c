@@ -34,14 +34,16 @@
 
 // nnoww - TODO - hash flow to make random selection for flow, and not for packet
 // nnoww - TODO - check if policy -> labels <-> interface showed be optimized (add policy to fib???)
-// nnoww - TODO - enable "all traffic" class
+// nnoww - DONE - enable "all traffic" class (by Denys :))
 // nnoww - TODO - move format functions to separate file
 // nnoww - TODO - take care of IPv6
-// nnoww - TODO - fallback of drop (check if still needed) ?
+// nnoww - DONE - fallback of drop
 // nnoww - TODO - add counters to labels and show them by CLI (see vlib_node_increment_counter() in abf_itf_attach.c)
 // nnoww - TODO - clean all nnoww-s :)
 // nnoww - TODO - add validation on delete policy that no attachment objects exist!
 // nnoww - TODO - check trace of FWABF node and add missing info if needed
+
+// nnoww - ASK Nir - should we separate IPv4 and IPv6 links, so IPv4 packet is not forwarded into IPv6 labels!
 
 
 // nnoww - TODO - check if quad and dual loops & prefetch (see ip4_lookup_inline) should be addded in nodes! (once we can measure benchmarking with the new feature)
@@ -132,7 +134,8 @@ fwabf_policy_find (u32 policy_id)
 u32
 abf_policy_add (u32 policy_id, u32 acl_index, fwabf_policy_action_t * action)
 {
-  abf_policy_t *ap;
+  abf_policy_t*              ap;
+  fwabf_policy_link_group_t* group;
   u32 api;
 
   api = fwabf_policy_find (policy_id);
@@ -148,6 +151,10 @@ abf_policy_add (u32 policy_id, u32 acl_index, fwabf_policy_action_t * action)
   ap->ap_acl = acl_index;
   ap->ap_id  = policy_id;
   ap->action = *action;
+
+  ap->action.n_link_groups_minus_1 = vec_len(action->link_groups) - 1;
+  vec_foreach (group, ap->action.link_groups)
+    group->n_links_minus_1 = vec_len(group->links) - 1;
 
   /*
     * add this new policy to the DB
@@ -179,29 +186,86 @@ abf_policy_delete (u32 policy_id)
 }
 
 /**
- * Get an DPO to use for packet forwarding according to policy
+ * Get DPO to use for packet forwarding according to policy
  *
  * @param index     index of abf_policy_t in pool
- * @param dpo_proto the IP4/IP6
+ * @param ip4       the IPv4 header to be used for flow hash calculation
  * @return VPP's object index
  */
-dpo_id_t fwabf_policy_get_dpo (index_t index, dpo_proto_t dpo_proto)
+inline dpo_id_t fwabf_policy_get_dpo_ip4 (index_t index, ip4_header_t* ip4)
 {
-  abf_policy_t*              ap  = fwabf_policy_get (index);
+  abf_policy_t*              ap = fwabf_policy_get (index);
   dpo_id_t                   dpo;
   dpo_id_t                   dpo_invalid = DPO_INVALID;
   fwabf_policy_link_group_t* group;
   fwabf_label_t*             fwlabel;
+  fwabf_label_t              label;
+  u32                        flow_hash;
 
-  // nnoww - TODO - optmize (think of adding policy to FIB and keep only currently available groups and ifaces only!)
-  // nnoww - TODO - implement random!
-  // nnoww - TODO - use ip4_compute_flow_hash for random!
+  // nnoww - Ask Nir - do you want me to store flow hash result in metadata and implement it reuse in ip4_forward/op4_lookup etc?
 
-  vec_foreach (group, ap->action.link_groups)
+  // nnoww - TODO - fix logic: today if we choose random group/link and it has no suitable DPO we fallback into ordered search!
+  //                What should be done is choose out of other group/links!
+  //                This will be not needed if we implement optimization: keep subset of valid DPO-s only !
+
+  /*
+   * Take a care of random selection of link group.
+   * If the selection algorithm is not random, just iterate over list of groups
+   * and use the first one with valid DPO.
+   */
+  if (ap->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(ap->action.link_groups) > 1)
     {
+      flow_hash = ip4_compute_flow_hash (ip4, IP_FLOW_HASH_DEFAULT);
+      group = &ap->action.link_groups[flow_hash & ap->action.n_link_groups_minus_1];
+
+      /*
+       * Take a care of random selection of link within selected group.
+       * If randomly selected label has no suitable DPO, fallback into ordered
+       * search over list of labels.
+       */
+      if (group->alg == FWABF_SELECTION_RANDOM  &&  vec_len(group->links) > 1)
+        {
+          label = group->links[flow_hash & group->n_links_minus_1];
+          dpo = fwabf_links_get_dpo (label, DPO_PROTO_IP4);
+          if (dpo.dpoi_type != DPO_DROP)
+            return dpo;
+        }
+
+      /*
+       * No random selection - just iterate over list of labels and use the first
+       * one with valid DPO. If no valid label was found, fallback into ordered
+       * search over list of link groups and their labels.
+       */
       vec_foreach (fwlabel, group->links)
         {
-          dpo = fwabf_links_get_dpo (*fwlabel, dpo_proto);
+          dpo = fwabf_links_get_dpo (*fwlabel, DPO_PROTO_IP4);
+          if (dpo.dpoi_type != DPO_DROP)
+            return dpo;
+        }
+    } /*if (ap->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(ap->action.link_groups) > 1)*/
+
+  /*
+   * No random selection - just iterate over list of groups and use the first
+   * one with valid DPO.
+   */
+  vec_foreach (group, ap->action.link_groups)
+    {
+      /*
+       * Take a care of random selection of link within selected group.
+       * If randomly selected label has no suitable DPO, fallback into ordered
+       * search over list of labels.
+       */
+      if (group->alg == FWABF_SELECTION_RANDOM  &&  vec_len(group->links) > 1)
+        {
+          label = group->links[flow_hash & group->n_links_minus_1];
+          dpo = fwabf_links_get_dpo (label, DPO_PROTO_IP4);
+          if (dpo.dpoi_type != DPO_DROP)
+            return dpo;
+        }
+
+      vec_foreach (fwlabel, group->links)
+        {
+          dpo = fwabf_links_get_dpo (*fwlabel, DPO_PROTO_IP4);
           if (dpo.dpoi_type != DPO_DROP)
             return dpo;
         }
@@ -221,7 +285,115 @@ dpo_id_t fwabf_policy_get_dpo (index_t index, dpo_proto_t dpo_proto)
    */
   if (PREDICT_FALSE(!dpo_id_is_valid(&dpo)))
     {
-    	dpo_copy(&dpo, drop_dpo_get(dpo_proto));
+    	dpo_copy(&dpo, drop_dpo_get(DPO_PROTO_IP4));
+    }
+  return dpo;
+}
+
+/**
+ * Get DPO to use for packet forwarding according to policy
+ *
+ * @param index     index of abf_policy_t in pool
+ * @param ip6       the IPv6 header to be used for flow hash calculation
+ * @return VPP's object index
+ */
+inline dpo_id_t fwabf_policy_get_dpo_ip6 (index_t index, ip6_header_t* ip6)
+{
+  abf_policy_t*              ap = fwabf_policy_get (index);
+  dpo_id_t                   dpo;
+  dpo_id_t                   dpo_invalid = DPO_INVALID;
+  fwabf_policy_link_group_t* group;
+  fwabf_label_t*             fwlabel;
+  fwabf_label_t              label;
+  u32                        flow_hash;
+
+  // nnoww - Ask Nir - do you want me to store flow hash result in metadata and implement it reuse in ip4_forward/op4_lookup etc?
+
+  // nnoww - Ask Nir - the VPP usage of flow hash: [flow_hash & ap->action.n_link_groups_minus_1] works good for pow 2 number of buckets only!
+  //                   Should we adopt it for any number of buckets (bucket = link groups in action, and labels in link group).
+
+  // nnoww - TODO - fix logic: today if we choose random group/link and it has no suitable DPO we fallback into ordered search!
+  //                What should be done is choose out of other group/links!
+  //                This will be not needed if we implement optimization: keep subset of valid DPO-s only !
+
+  /*
+   * Take a care of random selection of link group.
+   * If the selection algorithm is not random, just iterate over list of groups
+   * and use the first one with valid DPO.
+   */
+  if (ap->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(ap->action.link_groups) > 1)
+    {
+      flow_hash = ip6_compute_flow_hash (ip6, IP_FLOW_HASH_DEFAULT);
+      group = &ap->action.link_groups[flow_hash & ap->action.n_link_groups_minus_1];
+
+      /*
+       * Take a care of random selection of link within selected group.
+       * If randomly selected label has no suitable DPO, fallback into ordered
+       * search over list of labels.
+       */
+      if (group->alg == FWABF_SELECTION_RANDOM  &&  vec_len(group->links) > 1)
+        {
+          label = group->links[flow_hash & group->n_links_minus_1];
+          dpo = fwabf_links_get_dpo (label, DPO_PROTO_IP6);
+          if (dpo.dpoi_type != DPO_DROP)
+            return dpo;
+        }
+
+      /*
+       * No random selection - just iterate over list of labels and use the first
+       * one with valid DPO. If no valid label was found, fallback into ordered
+       * search over list of link groups and their labels.
+       */
+      vec_foreach (fwlabel, group->links)
+        {
+          dpo = fwabf_links_get_dpo (*fwlabel, DPO_PROTO_IP6);
+          if (dpo.dpoi_type != DPO_DROP)
+            return dpo;
+        }
+    } /*if (ap->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(ap->action.link_groups) > 1)*/
+
+  /*
+   * No random selection - just iterate over list of groups and use the first
+   * one with valid DPO.
+   */
+  vec_foreach (group, ap->action.link_groups)
+    {
+      /*
+       * Take a care of random selection of link within selected group.
+       * If randomly selected label has no suitable DPO, fallback into ordered
+       * search over list of labels.
+       */
+      if (group->alg == FWABF_SELECTION_RANDOM  &&  vec_len(group->links) > 1)
+        {
+          label = group->links[flow_hash & group->n_links_minus_1];
+          dpo = fwabf_links_get_dpo (label, DPO_PROTO_IP6);
+          if (dpo.dpoi_type != DPO_DROP)
+            return dpo;
+        }
+
+      vec_foreach (fwlabel, group->links)
+        {
+          dpo = fwabf_links_get_dpo (*fwlabel, DPO_PROTO_IP6);
+          if (dpo.dpoi_type != DPO_DROP)
+            return dpo;
+        }
+    }
+
+  /*
+   * At this point no active DPO was found.
+   * If fallback is default route, indicate that to caller by DPO_INVALID.
+   * If fallback is to drop packets, use the last found DPO, which should be DPO_DROP.
+   */
+  if (PREDICT_TRUE(ap->action.fallback==FWABF_FALLBACK_DEFAULT_ROUTE))
+    return dpo_invalid;
+
+  /*
+   * If no DPO was found due to absence of interfaces with policy labels,
+   * simulate the dropping DPO.
+   */
+  if (PREDICT_FALSE(!dpo_id_is_valid(&dpo)))
+    {
+    	dpo_copy(&dpo, drop_dpo_get(DPO_PROTO_IP6));
     }
   return dpo;
 }

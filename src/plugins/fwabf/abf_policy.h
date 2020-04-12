@@ -66,6 +66,11 @@ typedef enum fwabf_selection_alg_t_ {
 typedef struct fwabf_policy_link_group_t_ {
     fwabf_selection_alg_t alg;     /* Choose link randomly or use list order */
     fwabf_label_t*        links;   /* List of links. For now (March 2020) links can be choosen by labels only */
+
+    /*
+     * Below are internally used fields.
+     */
+    u32                   n_links_minus_1;
 } fwabf_policy_link_group_t;
 
 typedef enum {
@@ -78,6 +83,11 @@ typedef struct fwabf_policy_action_t_
     fwabf_fallback_t           fallback;  /* If no usable link was found - drop or use input-ip4/6 feature arc */
     fwabf_selection_alg_t      alg;       /* Choose group of links randomly or use list order */
     fwabf_policy_link_group_t* link_groups;
+
+    /*
+     * Below are internally used fields.
+     */
+    u32                        n_link_groups_minus_1;
 } fwabf_policy_action_t;
 
 typedef struct abf_policy_t_
@@ -123,13 +133,22 @@ typedef struct abf_policy_t_
 extern abf_policy_t *fwabf_policy_get (index_t index);
 
 /**
- * Get an DPO to use for packet forwarding according to policy
+ * Get DPO to use for packet forwarding according to policy
  *
  * @param index     index of abf_policy_t in pool
- * @param dpo_proto the IP4/IP6
+ * @param ip4       the IPv4 header to be used for flow hash calculation
  * @return VPP's object index
  */
-extern dpo_id_t fwabf_policy_get_dpo (index_t index, dpo_proto_t dpo_proto);
+extern dpo_id_t fwabf_policy_get_dpo_ip4 (index_t index, ip4_header_t* ip4);
+
+/**
+ * Get DPO to use for packet forwarding according to policy
+ *
+ * @param index     index of abf_policy_t in pool
+ * @param ip6       the IPv6 header to be used for flow hash calculation
+ * @return VPP's object index
+ */
+extern dpo_id_t fwabf_policy_get_dpo_ip6 (index_t index, ip6_header_t* ip6);
 
 /**
  * Find a ABF object from the client's policy ID
