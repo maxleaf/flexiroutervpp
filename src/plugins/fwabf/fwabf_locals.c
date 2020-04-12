@@ -135,7 +135,7 @@ static int fwabf_locals_ip46_address_cmp (ip46_address_t * a0, ip46_address_t * 
   return (ip46_address_cmp (a0, a1));
 }
 
-static void fwabf_locals_show_ip4_callback_fn (clib_bihash_kv_8_8_t * kv, void * ctx)
+static void fwabf_locals_ip4_show_cb (clib_bihash_kv_8_8_t * kv, void * ctx)
 {
   ip46_address_t** vec_addrs = (ip46_address_t**)ctx;
   ip46_address_t   addr;
@@ -148,7 +148,7 @@ static void fwabf_locals_show_ip4_callback_fn (clib_bihash_kv_8_8_t * kv, void *
   vec_add1(*vec_addrs, addr);
 }
 
-static void fwabf_locals_show_ip6_callback_fn (clib_bihash_kv_16_8_t * kv, void * ctx)
+static void fwabf_locals_ip6_show_cb (clib_bihash_kv_16_8_t * kv, void * ctx)
 {
   ip46_address_t ** vec_addrs = (ip46_address_t**)ctx;
   ip46_address_t    addr;
@@ -198,11 +198,11 @@ fwabf_locals_show_cmd (
 
   if (is_ip4)
     {
-      clib_bihash_foreach_key_value_pair_8_8 (&fwabf_locals_ip4, fwabf_locals_show_ip4_callback_fn, &vec_addrs);
+      clib_bihash_foreach_key_value_pair_8_8 (&fwabf_locals_ip4, fwabf_locals_ip4_show_cb, &vec_addrs);
     }
   else
     {
-      clib_bihash_foreach_key_value_pair_16_8 (&fwabf_locals_ip6, fwabf_locals_show_ip6_callback_fn, &vec_addrs);
+      clib_bihash_foreach_key_value_pair_16_8 (&fwabf_locals_ip6, fwabf_locals_ip6_show_cb, &vec_addrs);
     }
 
   vec_sort_with_function(vec_addrs, fwabf_locals_ip46_address_cmp);
@@ -222,6 +222,72 @@ VLIB_CLI_COMMAND (fwabf_locals_show_cmd_node, static) = {
 };
 /* *INDENT-ON* */
 
+/**
+ * @brief interfaces callback that ads/deletes IP4 address to/from fwabf locals
+ *
+ * @param im              - ip4_main_t*
+ * @param opaque          - uword
+ * @param sw_if_index     - u32
+ * @param address         - ip4_address_t*
+ * @param address_length  - u32
+ * @param is_delete       - u32
+ */
+void fwabf_locals_ip4_add_del_interface_address_cb (
+                  ip4_main_t*     im,
+				          uword           opaque,
+				          u32             sw_if_index,
+				          ip4_address_t*  address,
+				          u32             address_length,
+				          u32             if_address_index,
+                  u32             is_delete)
+{
+  ip46_address_t addr;
+
+  ip46_address_set_ip4(&addr, address);
+
+  if (is_delete)
+    {
+      fwabf_locals_del(&addr);
+    }
+  else
+    {
+      fwabf_locals_add(&addr);
+    }
+}
+
+/**
+ * @brief interfaces callback that ads/deletes IP4 address to/from fwabf locals
+ *
+ * @param im              - ip6_main_t*
+ * @param opaque          - uword
+ * @param sw_if_index     - u32
+ * @param address         - ip6_address_t*
+ * @param address_length  - u32
+ * @param is_delete       - u32
+ */
+void fwabf_locals_ip6_add_del_interface_address_cb (
+                  ip6_main_t *    im,
+				          uword           opaque,
+				          u32             sw_if_index,
+				          ip6_address_t * address,
+				          u32             address_length,
+				          u32             if_address_index,
+                  u32             is_delete)
+{
+  ip46_address_t addr;
+
+  addr.ip6 = *address;
+
+  if (is_delete)
+    {
+      fwabf_locals_del(&addr);
+    }
+  else
+    {
+      fwabf_locals_add(&addr);
+    }
+}
+
 static
 clib_error_t * fwabf_locals_init (vlib_main_t * vm)
 {
@@ -229,13 +295,33 @@ clib_error_t * fwabf_locals_init (vlib_main_t * vm)
   uword           memory_size       = FWABF_LOCALS_MAX_ADDRESSES << 4; /* provide enough memory for records every of which is 4 bytes (aligned to 8 bytes :) - the smallest hash we have in clib - << 3) and take in account collisions (<< 1) */
   ip46_address_t  addr_broadcast;
   ip4_address_t   ip4_broadcast;
+  ip4_main_t*     im4 = &ip4_main;
+  ip6_main_t*     im6 = &ip6_main;
+  ip4_add_del_interface_address_callback_t cb4;
+  ip6_add_del_interface_address_callback_t cb6;
 
   clib_bihash_init_8_8 (&fwabf_locals_ip4,  "fwabf_locals_ip4", number_of_buckets, memory_size);
   clib_bihash_init_16_8 (&fwabf_locals_ip6, "fwabf_locals_ip6", number_of_buckets, memory_size * 2);  /*ip6 size is twice as 8 bytes used for ip4 */
 
+  /*
+   * Add broadcast address to list of addresses that should not be handled
+   * by policies.
+   */
   ip4_broadcast.as_u32 = 0xFFFFFFFF;
   ip46_address_set_ip4(&addr_broadcast, &ip4_broadcast);
   fwabf_locals_add(&addr_broadcast);
+
+  /*
+   * Register to add/del interface address callback to add/del local addresses
+   * automatically to our database.
+   */
+  cb4.function        = fwabf_locals_ip4_add_del_interface_address_cb;
+  cb4.function_opaque = 0;
+  vec_add1 (im4->add_del_interface_address_callbacks, cb4);
+
+  cb6.function        = fwabf_locals_ip6_add_del_interface_address_cb;
+  cb6.function_opaque = 0;
+  vec_add1 (im6->add_del_interface_address_callbacks, cb6);
 
   return (NULL);
 }
