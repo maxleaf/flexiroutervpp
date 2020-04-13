@@ -162,7 +162,7 @@ u32 fwabf_links_add_interface (
 
   fib_node_init (&aif->fnode, fwabf_sw_interface_fib_node_type);
   aif->pathlist = fib_path_list_create (
-          (FIB_PATH_LIST_FLAG_SHARED | FIB_PATH_LIST_FLAG_NO_URPF), rpath);
+          (FIB_PATH_LIST_FLAG_SHARED), rpath);
 
   /*
    * Become a child of the path list so we get poked when the forwarding changes.
