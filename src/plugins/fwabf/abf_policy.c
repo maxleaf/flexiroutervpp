@@ -31,31 +31,51 @@
 #include <vnet/dpo/dpo.h>
 #include <vnet/dpo/drop_dpo.h>
 
+// nnoww - TODO !!! - NOT DECIDED YET - Use label with mutlitple tunnels and choose by distance
+//   +
+// nnoww - fetch all possible routes from FIB and cross them with labels
+//         Assumption: there is static default routes that turn ABR case into usual routing case,
+//                     so destination IP will be matches in FIB and in labels always!
 
-// nnoww - TODO - hash flow to make random selection for flow, and not for packet
-// nnoww - TODO - check if policy -> labels <-> interface showed be optimized (add policy to fib???)
+
+// nnoww - DONE - hash flow to make random selection for flow, and not for packet
+// nnoww - TODO !!! - Solution:  idx = flow_hash & 0xFF;
+//                               if (idx >= ap->action.n_link_groups)
+//                                  idx = idx & (ap->action.n_link_groups-1);
+
+// nnoww - CANCELLED - NOT NEEDED - check if policy -> labels <-> interface showed be optimized (add policy to fib???)
+
 // nnoww - DONE - enable "all traffic" class (by Denys :))
+
 // nnoww - TODO - move format functions to separate file
-// nnoww - TODO - take care of IPv6
+
+// nnoww - POSTPONED - take care of IPv6
+
 // nnoww - DONE - fallback of drop
-// nnoww - TODO - add counters to labels and show them by CLI (see vlib_node_increment_counter() in abf_itf_attach.c)
+
+// nnoww - POSTPONED - add counters to labels and show them by CLI (see vlib_node_increment_counter() in abf_itf_attach.c)
+
 // nnoww - TODO - clean all nnoww-s :)
+
 // nnoww - TODO - add validation on delete policy that no attachment objects exist!
-// nnoww - TODO - check trace of FWABF node and add missing info if needed
 
-// nnoww - ASK Nir - should we separate IPv4 and IPv6 links, so IPv4 packet is not forwarded into IPv6 labels!
+// nnoww - POSTPONED - check trace of FWABF node and add missing info if needed
+
+// nnoww - CANCELLED - ASK Nir - should we separate IPv4 and IPv6 links, so IPv4 packet is not forwarded into IPv6 labels!
 
 
-// nnoww - TODO - check if quad and dual loops & prefetch (see ip4_lookup_inline) should be addded in nodes! (once we can measure benchmarking with the new feature)
-// nnoww - TODO - check if separation of ip4 and ip6 nodes should be done! (once we can measure benchmarking with the new feature)
+// nnoww - POSTPONED - check if quad and dual loops & prefetch (see ip4_lookup_inline) should be addded in nodes! (once we can measure benchmarking with the new feature)
+// nnoww - POSTPONED - check if separation of ip4 and ip6 nodes should be done! (once we can measure benchmarking with the new feature)
 
 
 // nnoww - TEST - test POLICY CLI thoroughly
 
-// nnoww - LIMITATION - for now (March 2020) we don't enable more than one labels per interface
-// nnoww - LIMITATION - for now (March 2020) we don't enable labels with mixed IPv4/6 tunnels and WAN-s - see fwabf_sw_interface_t::dpo_proto field.
+// nnoww - TODO !!! - Multiple interfaces per label !!!
 
-// nnoww - ASK Nir - if should support LAN Broadcast addresses - 192.168.1.255 - that requires refcounter (the 255.255.255.255 I already added)?
+// nnoww - LIMITATION - OK - for now (March 2020) we don't enable labels with mixed IPv4/6 tunnels and WAN-s - see fwabf_sw_interface_t::dpo_proto field.
+// nnoww - LIMITATION - OK - no ABF on WAN-to-LAN packets, as it does not work with NAT today! (see Denys fixes in NAT branch)
+
+// nnoww - ASK Nir - DO SAME AS VPP - check VPP FIB for X.255 entries - if should support LAN Broadcast addresses - 192.168.1.255 - that requires refcounter (the 255.255.255.255 I already added)?
 
 // nnoww - TODO - ensure that endianity of IP6 address stored in fwabf_locals matches that of packet in vlib_buffer
 
@@ -65,7 +85,6 @@
 //                  3. Reassembled packets go through FWABF
 //                  4. ICMP packet go FWABF ???
 //
-// nnoww - LIMITATION - no ABF on WAN-to-LAN packets, as it does not work with NAT today! (see Denys fixes in NAT branch)
 
 // nnoww - TEST - DONE - remove policy restore original flow / add again recreates new flow!
 // nnoww - TEST - DONE - remove tunnel restore original flow / add again (and new fwabf link) - recreates new flow!
@@ -202,9 +221,9 @@ inline dpo_id_t fwabf_policy_get_dpo_ip4 (index_t index, ip4_header_t* ip4)
   fwabf_label_t              label;
   u32                        flow_hash;
 
-  // nnoww - Ask Nir - do you want me to store flow hash result in metadata and implement it reuse in ip4_forward/op4_lookup etc?
+  // nnoww - Ask Nir - CANCELLED - (DANGEROUS)do you want me to store flow hash result in metadata and implement it reuse in ip4_forward/op4_lookup etc?
 
-  // nnoww - TODO - fix logic: today if we choose random group/link and it has no suitable DPO we fallback into ordered search!
+  // nnoww - CANCELLED - fix logic: today if we choose random group/link and it has no suitable DPO we fallback into ordered search!
   //                What should be done is choose out of other group/links!
   //                This will be not needed if we implement optimization: keep subset of valid DPO-s only !
 
@@ -306,15 +325,6 @@ inline dpo_id_t fwabf_policy_get_dpo_ip6 (index_t index, ip6_header_t* ip6)
   fwabf_label_t*             fwlabel;
   fwabf_label_t              label;
   u32                        flow_hash;
-
-  // nnoww - Ask Nir - do you want me to store flow hash result in metadata and implement it reuse in ip4_forward/op4_lookup etc?
-
-  // nnoww - Ask Nir - the VPP usage of flow hash: [flow_hash & ap->action.n_link_groups_minus_1] works good for pow 2 number of buckets only!
-  //                   Should we adopt it for any number of buckets (bucket = link groups in action, and labels in link group).
-
-  // nnoww - TODO - fix logic: today if we choose random group/link and it has no suitable DPO we fallback into ordered search!
-  //                What should be done is choose out of other group/links!
-  //                This will be not needed if we implement optimization: keep subset of valid DPO-s only !
 
   /*
    * Take a care of random selection of link group.
@@ -554,7 +564,7 @@ abf_policy_cmd (vlib_main_t * vm,
       ret = abf_policy_delete (policy_id);
     }
   if (ret != 0)
-    return (clib_error_return (0, "abf_policy_%s failed(ret=%d)", ret, (is_del?"delete":"add")));
+    return (clib_error_return (0, "abf_policy_%s failed(ret=%d)", (is_del?"delete":"add"), ret));
 
   unformat_free (line_input);
   return 0;
