@@ -421,7 +421,7 @@ abf_itf_attach_cmd (vlib_main_t * vm,
 VLIB_CLI_COMMAND (abf_itf_attach_cmd_node, static) = {
   .path = "fwabf attach",
   .function = abf_itf_attach_cmd,
-  .short_help = "fwabf attach <ip4|ip6> [del] policy <value> <interface>",
+  .short_help = "fwabf attach <ip4|ip6> [del] policy <value> [priority <value>] <interface>",
   // this is not MP safe
 };
 /* *INDENT-ON* */
