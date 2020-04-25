@@ -41,7 +41,10 @@ extern u32 fwabf_links_add_interface (
 extern u32 fwabf_links_del_interface (const u32 sw_if_index);
 
 // nnoww - document - check C-file
-extern dpo_id_t fwabf_links_get_dpo (fwabf_label_t fwlabel, dpo_proto_t dpo_proto);
+extern dpo_id_t fwabf_links_get_dpo (
+                        fwabf_label_t         fwlabel,
+                        dpo_proto_t           dpo_proto,
+                        const load_balance_t* lb);
 
 /*
  * fd.io coding-style-patch-verification: ON

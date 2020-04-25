@@ -55,7 +55,7 @@
  * as it was provided by user on policy creation, and it identifies the policy
  * by 1:1 relation. Than policy labels are used to find right WAN interface or
  * tunnel to forward packet on, and the correspondent DPO is fetched
- * from the fwabf_sw_interface_db database.
+ * from the fwabf_sw_interface_pool database.
  */
 
 typedef enum fwabf_selection_alg_t_ {
@@ -71,6 +71,7 @@ typedef struct fwabf_policy_link_group_t_ {
      * Below are internally used fields.
      */
     u32                   n_links_minus_1;
+    u32                   n_links_pow2_mask;  /*0xFF...*/
 } fwabf_policy_link_group_t;
 
 typedef enum {
@@ -88,6 +89,7 @@ typedef struct fwabf_policy_action_t_
      * Below are internally used fields.
      */
     u32                        n_link_groups_minus_1;
+    u32                        n_link_groups_pow2_mask;  /*0xFF...*/
 } fwabf_policy_action_t;
 
 typedef struct abf_policy_t_
@@ -136,19 +138,25 @@ extern abf_policy_t *fwabf_policy_get (index_t index);
  * Get DPO to use for packet forwarding according to policy
  *
  * @param index     index of abf_policy_t in pool
- * @param ip4       the IPv4 header to be used for flow hash calculation
- * @return VPP's object index
+ * @param b         the buffer to be forwarded
+ * @return DPO to be used for forwarding. If INVALID - caller function should
+ *         ignore the returned DPO and should use default handling - move packet
+ *         down on the feature arc to the next node. If DROP - caller should
+ *         drop the packet.
  */
-extern dpo_id_t fwabf_policy_get_dpo_ip4 (index_t index, ip4_header_t* ip4);
+extern dpo_id_t fwabf_policy_get_dpo_ip4 (index_t index, vlib_buffer_t *b);
 
 /**
  * Get DPO to use for packet forwarding according to policy
  *
  * @param index     index of abf_policy_t in pool
- * @param ip6       the IPv6 header to be used for flow hash calculation
- * @return VPP's object index
+ * @param b         the buffer to be forwarded
+ * @return DPO to be used for forwarding. If INVALID - caller function should
+ *         ignore the returned DPO and should use default handling - move packet
+ *         down on the feature arc to the next node. If DROP - caller should
+ *         drop the packet.
  */
-extern dpo_id_t fwabf_policy_get_dpo_ip6 (index_t index, ip6_header_t* ip6);
+extern dpo_id_t fwabf_policy_get_dpo_ip6 (index_t index, vlib_buffer_t *b);
 
 /**
  * Find a ABF object from the client's policy ID

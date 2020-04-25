@@ -20,6 +20,8 @@
 
 #include <plugins/fwabf/fwabf_links.h>
 
+#include <vnet/dpo/drop_dpo.h>
+#include <vnet/dpo/load_balance_map.h>
 #include <vnet/fib/fib_path_list.h>
 #include <vnet/fib/fib_walk.h>
 #include <vnet/interface_funcs.h>
@@ -68,6 +70,12 @@ typedef struct fwabf_sw_interface_t_
    * The index of vnet_sw_interface_t interface served by this object.
    */
   u32 sw_if_index;
+
+  /*
+   * The FlexiWAN multilink label.
+   */
+  fwabf_label_t fwlabel;
+
 } fwabf_sw_interface_t;
 
 
@@ -77,17 +85,35 @@ typedef struct fwabf_sw_interface_t_
 fib_node_type_t fwabf_sw_interface_fib_node_type;
 
 /**
- * DB of fwabf_sw_interfaces, where label is index.
- * We use labels as index to implement fast fetch of DPO by label in dataplane.
- * For now (March 2020) label to interface relation is 1:1.
+ * Database of fwabf_sw_interface_t objects. Vector.
+ * sw_if_index is index in this array. The vector is never shrinks.
  */
 static fwabf_sw_interface_t* fwabf_sw_interface_db = NULL;
 
 /**
- * Map of sw_if_index to it's label.
- * For now (March 2020) we assume that interface has no more than one label.
+ * Map of labels to fwabf_sw_interfaces.
+ * Label is index, element is list of sw_if_index-s.
+ * We use labels as index to implement fast fetch of DPO by label in dataplane.
  */
-static fwabf_label_t* fwabf_label_by_sw_if_index_db = NULL;
+static u32** labels_to_interfaces = NULL;
+
+
+/**
+ * Map of adjacencies to labels.
+ * Adjacencies are represented by indexes (as all other object in vpp).
+ * Adjacencies are referenced by DPO-s kept by fwabf_sw_interface_t objects.
+ * As any fwabf_sw_interface_t object stands for one tunnel or WAN interface,
+ * and tunnel / WAN interafce might have one label only, relation between
+ * adjacencies and labels are 1:1.
+ * As adjacencies are identified by interfaces and VLIB graph nodes that use
+ * these adjacencies, like ip4-rewrite, we assume number of adjacency objects
+ * can't overcome the 0xFFFF. Thus 0xFFFF is considered to be a practical limit
+ * for size of {interfaces x vlib graph nodes} set.
+ * The 0xFFFF limit makes it possible to use array for adjacancy->label mapping,
+ * which is best option for dapatplane path.
+ */
+static u32* adj_indexes_to_labels = NULL;
+#define FWABF_MAX_ADJ_INDEX  0xFFFF
 
 /**
  * FWABF nodes.
@@ -97,24 +123,19 @@ static fwabf_label_t* fwabf_label_by_sw_if_index_db = NULL;
 extern vlib_node_registration_t fwabf_ip4_node;
 extern vlib_node_registration_t fwabf_ip6_node;
 
-#define FWABF_SW_INTERFACE_FREE(aif)         ((aif)->sw_if_index = INDEX_INVALID)
-#define FWABF_SW_INTERFACE_IS_VALID(index)   ((index) < vec_len(fwabf_sw_interface_db) && \
-                                              fwabf_sw_interface_db[(index)].sw_if_index != INDEX_INVALID)
-#define FWABF_SW_INTERFACE_IS_INVALID(index) ((index) >= vec_len(fwabf_sw_interface_db) || \
-                                              fwabf_sw_interface_db[(index)].sw_if_index == INDEX_INVALID)
+#define FWABF_SW_INTERFACE_IS_VALID(_sw_if_index) \
+                ((_sw_if_index) < vec_len(fwabf_sw_interface_db) && \
+                fwabf_sw_interface_db[(_sw_if_index)].sw_if_index != INDEX_INVALID)
 
-#define FWABF_SW_IF_INDEX_FREE(sw_if_index)       (fwabf_label_by_sw_if_index_db[(sw_if_index)] = FWABF_INVALID_LABEL)
-#define FWABF_SW_IF_INDEX_IS_INVALID(sw_if_index) ((sw_if_index) >= vec_len(fwabf_label_by_sw_if_index_db) || \
-                                                   fwabf_label_by_sw_if_index_db[(sw_if_index)] == FWABF_INVALID_LABEL)
-
+#define FWABF_SW_INTERFACE_IS_INVALID(_sw_if_index) \
+                ((_sw_if_index) >= vec_len(fwabf_sw_interface_db) || \
+                fwabf_sw_interface_db[(_sw_if_index)].sw_if_index == INDEX_INVALID)
 
 /*
  * Forward declarations
  */
-static void
-fwabf_sw_interface_refresh_dpo(fwabf_sw_interface_t * aif);
-static fwabf_sw_interface_t*
-fwabf_sw_interface_find(u32 sw_if_index);
+static void fwabf_sw_interface_refresh_dpo(fwabf_sw_interface_t* aif);
+static fwabf_sw_interface_t* fwabf_sw_interface_find(u32 sw_if_index);
 
 
 u32 fwabf_links_add_interface (
@@ -124,49 +145,68 @@ u32 fwabf_links_add_interface (
 {
   fwabf_sw_interface_t* aif;
   u32                   old_len;
+  dpo_id_t              dpo_invalid = DPO_INVALID;
 
-  /*
-   * Allocate new element only if there is no entry for fwlabel yet.
-   * Otherwise reuse existing one. For now (March 2020) we permit only one
-   * interface per label, so the fwabf_sw_interface_db[] represents vector of
-   * interfaces instances.
-   * As well the vector is never shrinked. The label type is u8, so no more than
-   * 255 elements are possible.
-   */
   if (fwlabel >= FWABF_INVALID_LABEL)
     {
       clib_warning ("label %d is too big, should be less than %d",
         fwlabel, FWABF_INVALID_LABEL);
       return VNET_API_ERROR_INVALID_ARGUMENT;
     }
-  if (fwlabel >= vec_len(fwabf_sw_interface_db))
+
+  /*
+   * Allocate new fwabf_sw_interface_t and new label only if there is no entry yet.
+   * Otherwise reuse existing one. Pool never shrinks.
+   */
+  if (sw_if_index >= vec_len(fwabf_sw_interface_db))
     {
       old_len = vec_len(fwabf_sw_interface_db);
-      vec_resize(fwabf_sw_interface_db, (fwlabel+1) - old_len);
+      vec_resize(fwabf_sw_interface_db, (sw_if_index+1) - old_len);
       for (u32 i = old_len; i < vec_len(fwabf_sw_interface_db); i++)
         {
-          FWABF_SW_INTERFACE_FREE(&fwabf_sw_interface_db[i]);
+          fwabf_sw_interface_db[i].sw_if_index = INDEX_INVALID;
         }
-      aif = &fwabf_sw_interface_db[fwlabel];
+      aif = &fwabf_sw_interface_db[sw_if_index];
     }
-  else if (FWABF_SW_INTERFACE_IS_INVALID(fwlabel))
+  else if (fwabf_sw_interface_db[sw_if_index].sw_if_index == INDEX_INVALID)
     {
-      aif = &fwabf_sw_interface_db[fwlabel];
+      aif = &fwabf_sw_interface_db[sw_if_index];
     }
   else
     {
-      clib_warning ("label %d is already assigned (sw_if_index=%d)",
-        fwlabel, fwabf_sw_interface_db[fwlabel].sw_if_index);
+      clib_warning ("sw_if_index=%d exists", sw_if_index);
       return VNET_API_ERROR_VALUE_EXIST;
     }
 
-  fib_node_init (&aif->fnode, fwabf_sw_interface_fib_node_type);
-  aif->pathlist = fib_path_list_create (
-          (FIB_PATH_LIST_FLAG_SHARED), rpath);
+  /*
+   * Allocate new label only if there is no entry for it yet.
+   * Otherwise reuse existing one. Database never shrinks.
+   */
+  if (fwlabel >= vec_len(labels_to_interfaces))
+    {
+      old_len = vec_len(labels_to_interfaces);
+      vec_resize(labels_to_interfaces, (fwlabel+1) - old_len);
+      for (u32 i = old_len; i < vec_len(labels_to_interfaces); i++)
+        {
+          labels_to_interfaces[i] = vec_new(u32, 0);
+        }
+    }
+  vec_add1 (labels_to_interfaces[fwlabel], sw_if_index);
 
   /*
-   * Become a child of the path list so we get poked when the forwarding changes.
+   * Initialize new fwabf_sw_interface_t now.
    */
+
+  aif->fwlabel     = fwlabel;
+  aif->sw_if_index = sw_if_index;
+
+  /*
+   * Create pathlist object and become it's child, so we get updates when
+   * forwarding changes. aif->fnode is needed to become a part of FIB tree,
+   * so we could get updates from parent object.
+   */
+  fib_node_init (&aif->fnode, fwabf_sw_interface_fib_node_type);
+  aif->pathlist         = fib_path_list_create (0, rpath);
   aif->pathlist_sibling = fib_path_list_child_add (
           aif->pathlist, fwabf_sw_interface_fib_node_type, fwlabel);
 
@@ -177,34 +217,19 @@ u32 fwabf_links_add_interface (
    */
   ASSERT((rpath->frp_proto==DPO_PROTO_IP4 || rpath->frp_proto==DPO_PROTO_IP6));
   aif->dpo_proto = rpath->frp_proto;
+  aif->dpo       = dpo_invalid;
   fwabf_sw_interface_refresh_dpo(aif);
 
-  /*
-   * Store the sw_if_index -> label mapping.
-   * Resize db if needed.
-   */
-  if (sw_if_index >= vec_len(fwabf_label_by_sw_if_index_db))
-    {
-      old_len = vec_len(fwabf_label_by_sw_if_index_db);
-      vec_resize(fwabf_label_by_sw_if_index_db, (sw_if_index+1) - old_len);
-      for (u32 i = old_len; i < vec_len(fwabf_label_by_sw_if_index_db); i++)
-        {
-          FWABF_SW_IF_INDEX_FREE(i);
-        }
-    }
-  ASSERT(FWABF_SW_IF_INDEX_IS_INVALID(sw_if_index));
-  fwabf_label_by_sw_if_index_db[sw_if_index] = fwlabel;
-
-  aif->sw_if_index = sw_if_index;
   return 0;
 }
 
 u32 fwabf_links_del_interface (const u32 sw_if_index)
 {
   fwabf_sw_interface_t* aif;
+  fwabf_label_t         fwlabel;
+  u32                   index;
 
-  aif = fwabf_sw_interface_find(sw_if_index);
-  if (aif == NULL)
+  if (FWABF_SW_INTERFACE_IS_INVALID(sw_if_index))
     {
       return 0;
     }
@@ -213,12 +238,21 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
    * Free (invalidate) object as soon as possible, so datapath will not use it.
    * nnoww - think of locks . or order for free() and rest resets (use local variables?)!
    */
-  FWABF_SW_INTERFACE_FREE(aif);
-  FWABF_SW_IF_INDEX_FREE(sw_if_index);
+  aif = &fwabf_sw_interface_db[sw_if_index];
+  fwlabel          = aif->fwlabel;
+  aif->sw_if_index = INDEX_INVALID;
+
+  /*
+   * Remove label->interface mapping.
+   */
+  index = vec_search (labels_to_interfaces[fwlabel], sw_if_index);
+  ASSERT (index !=INDEX_INVALID);
+  vec_del1 (labels_to_interfaces[fwlabel], index);
 
   /*
    * Copied from ABF, but do we really need this?
    * Looks like the dpo is not accessable anymore and it has no effect on vlib graph!
+   * nnoww - ensure this!
    */
   dpo_reset (&aif->dpo);
 
@@ -232,22 +266,23 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
   return 0;
 }
 
-dpo_id_t fwabf_links_get_dpo (fwabf_label_t fwlabel, dpo_proto_t dpo_proto)
+dpo_id_t fwabf_links_get_dpo (
+          fwabf_label_t fwlabel, dpo_proto_t dpo_proto, const load_balance_t* lb)
 {
   fwabf_sw_interface_t* aif;
-  dpo_id_t              dpo;
-  dpo_id_t              invalid_dpo = DPO_INVALID;
-
+  const dpo_id_t*       lookup_dpo;
+  const dpo_id_t*       drop_dpo = drop_dpo_get(dpo_proto);
+  u32                   i;
 
   /**
-   * The label might have no assigned interfaces yet.
+   * The label might have no interfaces.
    */
-  if (PREDICT_FALSE(FWABF_SW_INTERFACE_IS_INVALID(fwlabel)))
-    return invalid_dpo;
+  if (PREDICT_FALSE(vec_len(labels_to_interfaces[fwlabel])==0))
+    return *drop_dpo;
 
   aif = &fwabf_sw_interface_db[fwlabel];
 
-  /**
+  /*
    * For now (March 2020) fwabf_sw_interface_t can be either ip4 or ip6,
    * but now both of them. We anticipate only one type of traffic by ACL rule.
    *
@@ -257,33 +292,75 @@ dpo_id_t fwabf_links_get_dpo (fwabf_label_t fwlabel, dpo_proto_t dpo_proto)
    * So PREDICT_FALSE should be used with !<condition that is likely to be true> :)
    */
   if (PREDICT_FALSE(dpo_proto != aif->dpo_proto))
-    return invalid_dpo;
+    return *drop_dpo;
 
-  dpo = fwabf_sw_interface_db[fwlabel].dpo;
 
-  /**
-   * If remote end of tunnel is not on air, the arp will be needed to resolve
-   * adjacency DPO. In this case the interface is not usable.
+  /*
+   * lb - is DPO of Load Balance type. It is the object returned by the FIB
+   * lookup, so it reflects adjacency and correspondent VLIB graph node to be
+   * used for forwarding packet.
+   * Note the FIB lookup result DPO doesn't point to final DPO directly.
+   * Instead it might point to either single final DPO or to multiple mapped DPO-s.
+   * Final DPO is DPO that is bound to adjacency. Mapped DPO-s are used in case
+   * of Equal Cost MultiPath (ECMP). They reflect multiple available paths to
+   * reach destination. Mapped DPO can be of final type in simple case, or it
+   * can be a recursive Load Balalance type, or even other type.
+   * To get final DPO of it, the load_balance_get_fwd_bucket() function should
+   * be used.
    */
-  if (PREDICT_FALSE(dpo.dpoi_type == DPO_ADJACENCY_INCOMPLETE))
-    return invalid_dpo;
 
-  return dpo;
+  if (PREDICT_FALSE (lb->lb_n_buckets == 1))
+    {
+       /*
+        * The 'lb' DPO points to the final one.
+        */
+
+      lookup_dpo = load_balance_get_bucket_i (lb, 0);
+
+      /*
+       * Intersect lookup DPO with labeled DPO-s.
+       * To do that just check if the adjacency pointed by the FIB lookup final
+       * DPO exists in adjacency-to-label map and the map brings the label.
+       * Note the adjacency-to-label map is updated based on labeled DPO-s,
+       * so if lookup DPO has label in the map, it is same DPO that we labeled.
+       * Note labeled DPO-s are kept in correspondent fwabf_sw_interface_t object
+       * and are managed by FWABF module. See fwabf_sw_interface_refresh_dpo()
+       * for details.
+       */
+      ASSERT(lookup_dpo->dpoi_index < FWABF_MAX_ADJ_INDEX);
+      if (PREDICT_TRUE(adj_indexes_to_labels[lookup_dpo->dpoi_index] == fwlabel))
+        {
+          return *lookup_dpo;
+        }
+    }
+  else
+    {
+       /*
+        * The 'lb' DPO points to the mapped DPO-s.
+        * Go over them and find the first one with the provided label.
+        */
+      for (i=0; i<lb->lb_n_buckets; i++)
+        {
+          lookup_dpo = load_balance_get_fwd_bucket (lb, i);
+          ASSERT(lookup_dpo->dpoi_index < FWABF_MAX_ADJ_INDEX);
+          if (PREDICT_TRUE(adj_indexes_to_labels[lookup_dpo->dpoi_index] == fwlabel))
+            return *lookup_dpo;
+        }
+    }
+
+  /*
+   * No match between lookup DPO and labeled DPO-s.
+   */
+  return *drop_dpo;
 }
 
 static fwabf_sw_interface_t * fwabf_sw_interface_find(u32 sw_if_index)
 {
-  fwabf_label_t fwlabel;
-
-  if (FWABF_SW_IF_INDEX_IS_INVALID(sw_if_index))
+  if (FWABF_SW_INTERFACE_IS_INVALID(sw_if_index))
     {
-      clib_warning ("sw_if_index %d not found", sw_if_index);
       return NULL;
     }
-
-  fwlabel = fwabf_label_by_sw_if_index_db[sw_if_index];
-  ASSERT(FWABF_SW_INTERFACE_IS_VALID(fwlabel));
-  return &fwabf_sw_interface_db[fwlabel];
+  return &fwabf_sw_interface_db[sw_if_index];
 }
 
 static
@@ -362,10 +439,12 @@ clib_error_t * fwabf_link_cmd (
         }
     }
 
-  // nnoww - TODO - add validation that interface is WAN or loopback
-
   if (is_add)
     {
+      /*
+       * It was decided not to validate if interface is WAN or loopback.
+       * So just go and add it.
+       */
       fwabf_links_add_interface (sw_if_index, fwlabel, rpath_vec);
     }
   else
@@ -482,10 +561,34 @@ void fwabf_sw_interface_refresh_dpo(fwabf_sw_interface_t * aif)
       fwd_chain_type   = FIB_FORW_CHAIN_TYPE_UNICAST_IP6;
     }
 
+  /*
+   * Befor refreshing DPO remove the current value from a adj_indexes_to_labels map.
+   */
+  if (PREDICT_TRUE(dpo_id_is_valid(&aif->dpo)))
+    {
+      adj_indexes_to_labels[aif->dpo.dpoi_index] = FWABF_INVALID_LABEL;
+    }
+
+  /*
+   * Now refresh the DPO.
+   */
   fib_path_list_contribute_forwarding (
       aif->pathlist, fwd_chain_type, FIB_PATH_LIST_FWD_FLAG_COLLAPSE, &via_dpo);
   dpo_stack_from_node (fwabf_node_index, &aif->dpo, &via_dpo);
   dpo_reset (&via_dpo);
+
+  /*
+   * Update adj_indexes_to_labels map with refreshed DPO.
+   * Note we add only active DPO-s to the map, so ensure that DPO state
+   * is DPO_ADJACENCY and not DPO_ADJACENCY_INCOMPLETE.
+   * The last is set, if the adjacency is not arp-resolved, which means
+   * the tunnel / WAN nexthop is down.
+   */
+  if (PREDICT_TRUE(aif->dpo.dpoi_type == DPO_ADJACENCY))
+    {
+      ASSERT(aif->dpo.dpoi_index < FWABF_MAX_ADJ_INDEX);
+      adj_indexes_to_labels[aif->dpo.dpoi_index] = aif->fwlabel;
+    }
 }
 
 // nnoww - document
@@ -555,7 +658,26 @@ static const fib_node_vft_t fwabf_sw_interface_vft = {
 static
 clib_error_t * fwabf_links_init (vlib_main_t * vm)
 {
+  /*
+   * Register fwabf_sw_interface with FIB graph, so it can be inserted into
+   * the graph in order to get forwarding updates.
+   */
   fwabf_sw_interface_fib_node_type = fib_node_register_new_type (&fwabf_sw_interface_vft);
+
+  /*
+   * Initialize array of labels, elements of which are lists of interfaces
+   * marked with label. We preallocate it as label range is know in advance
+   * and is pretty small: [0-254].
+   */
+  vec_validate(labels_to_interfaces, 0xFF);
+  vec_zero(labels_to_interfaces);
+
+  /*
+   * Initialize array of adjacencies, elements of which are labels.
+   * We preallocate it as number of adjacencies is limited by 0xFFFF.
+   */
+  vec_validate(adj_indexes_to_labels, FWABF_MAX_ADJ_INDEX);
+  vec_set(adj_indexes_to_labels, FWABF_INVALID_LABEL);
 
   return (NULL);
 }

@@ -620,9 +620,9 @@ fwabf_input_inline (vlib_main_t * vm,
                   */
                   aia0 = abf_itf_attach_get (attachments0[match_acl_pos]);
                   if (fproto == FIB_PROTOCOL_IP4)
-                      dpo0 = fwabf_policy_get_dpo_ip4 (aia0->aia_abf, ip40);
+                      dpo0 = fwabf_policy_get_dpo_ip4 (aia0->aia_abf, b0);
                   else
-                      dpo0 = fwabf_policy_get_dpo_ip6 (aia0->aia_abf, ip60);
+                      dpo0 = fwabf_policy_get_dpo_ip6 (aia0->aia_abf, b0);
 
                   if (PREDICT_TRUE(dpo_id_is_valid(&dpo0)))
                     {
