@@ -30,6 +30,7 @@
 typedef u8 fwabf_label_t;	/*flexiwan path label used by policy to choose link*/
 
 #define FWABF_INVALID_LABEL 0xFF
+#define FWABF_MAX_LABEL     0xFE
 
 // nnoww - document - check C-file
 extern u32 fwabf_links_add_interface (

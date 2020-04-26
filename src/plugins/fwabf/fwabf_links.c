@@ -472,13 +472,12 @@ VLIB_CLI_COMMAND (fwabf_link_cmd_node, static) = {
 static u8 *
 format_fwabf_link (u8 * s, va_list * args)
 {
-  fwabf_sw_interface_t* aif     = va_arg (*args, fwabf_sw_interface_t*);
-  vnet_main_t*          vnm     = va_arg (*args, vnet_main_t*);
-  u32                   fwlabel = (aif - fwabf_sw_interface_db);
+  fwabf_sw_interface_t* aif = va_arg (*args, fwabf_sw_interface_t*);
+  vnet_main_t*          vnm = va_arg (*args, vnet_main_t*);
 
   s = format (s, " %U: sw_if_index=%d, label=%d\n",
 	                  format_vnet_sw_if_index_name, vnm, aif->sw_if_index,
-                    aif->sw_if_index, fwlabel);
+                    aif->sw_if_index, aif->fwlabel);
   s = fib_path_list_format(aif->pathlist, s);
   return (s);
 }
@@ -532,6 +531,57 @@ VLIB_CLI_COMMAND (fwabf_link_show_cmd_node, static) = {
   .function = fwabf_link_show_cmd,
   .short_help = "show fwabf link [sw_if_index <sw_if_index> | <if name>]",
   .is_mp_safe = 1,
+};
+/* *INDENT-ON* */
+
+static clib_error_t *
+fwabf_link_show_labels_cmd (
+        vlib_main_t * vm, unformat_input_t * input, vlib_cli_command_t * cmd)
+{
+  u32                   verbose = 0;
+  vnet_main_t*          vnm     = vnet_get_main();
+  fwabf_sw_interface_t* aif;
+  u32                   i;
+  u32*                  sw_if_index;
+
+  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (input, "verbose"))
+        verbose = 1;
+      else
+        return (clib_error_return (0, "unknown input '%U'",
+				                           format_unformat_error, input));
+    }
+
+  for (i=0; i<FWABF_MAX_LABEL; i++)
+    {
+      if (vec_len(labels_to_interfaces[i]) == 0)
+        continue;
+
+      vlib_cli_output(vm, "%d:", i);
+      vec_foreach (sw_if_index, labels_to_interfaces[i])
+        {
+          aif = &fwabf_sw_interface_db[*sw_if_index];
+          if (verbose)
+            {
+              vlib_cli_output(vm, "  %U", format_fwabf_link, aif, vnm);
+            }
+          else
+            {
+              vlib_cli_output(vm, "  %U (sw_if_index=%d)",
+                format_vnet_sw_if_index_name, vnm, aif->sw_if_index,
+                aif->sw_if_index);
+            }
+        }
+    }
+  return (NULL);
+}
+
+/* *INDENT-OFF* */
+VLIB_CLI_COMMAND (fwabf_link_show_labels_cmd_node, static) = {
+  .path = "show fwabf labels",
+  .function = fwabf_link_show_labels_cmd,
+  .short_help = "show fwabf labels [verbose]",
 };
 /* *INDENT-ON* */
 
@@ -669,7 +719,7 @@ clib_error_t * fwabf_links_init (vlib_main_t * vm)
    * marked with label. We preallocate it as label range is know in advance
    * and is pretty small: [0-254].
    */
-  vec_validate(labels_to_interfaces, 0xFF);
+  vec_validate(labels_to_interfaces, FWABF_MAX_LABEL);
   vec_zero(labels_to_interfaces);
 
   /*
