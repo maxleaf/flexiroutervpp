@@ -206,7 +206,7 @@ u32 fwabf_links_add_interface (
    * so we could get updates from parent object.
    */
   fib_node_init (&aif->fnode, fwabf_sw_interface_fib_node_type);
-  aif->pathlist         = fib_path_list_create (0, rpath);
+  aif->pathlist         = fib_path_list_create (FIB_PATH_LIST_FLAG_SHARED, rpath);
   aif->pathlist_sibling = fib_path_list_child_add (
           aif->pathlist, fwabf_sw_interface_fib_node_type, sw_if_index);
 
