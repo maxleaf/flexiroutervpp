@@ -208,7 +208,7 @@ u32 fwabf_links_add_interface (
   fib_node_init (&aif->fnode, fwabf_sw_interface_fib_node_type);
   aif->pathlist         = fib_path_list_create (0, rpath);
   aif->pathlist_sibling = fib_path_list_child_add (
-          aif->pathlist, fwabf_sw_interface_fib_node_type, fwlabel);
+          aif->pathlist, fwabf_sw_interface_fib_node_type, sw_if_index);
 
   /*
    * Update forwarding info of the pathlist, so it will be bound to the right
