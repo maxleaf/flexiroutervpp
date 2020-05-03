@@ -21,9 +21,9 @@
 
 add_vpp_plugin(fwabf
   SOURCES
-  abf_api.c
-  abf_itf_attach.c
-  abf_policy.c
+  fwabf_api.c
+  fwabf_itf_attach.c
+  fwabf_policy.c
   fwabf_links.c
   fwabf_locals.c
 
@@ -31,6 +31,6 @@ add_vpp_plugin(fwabf
   fwabf.api
 
   INSTALL_HEADERS
-  abf_all_api_h.h
-  abf_msg_enum.h
+  fwabf_all_api_h.h
+  fwabf_msg_enum.h
 )

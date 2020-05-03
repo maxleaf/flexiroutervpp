@@ -24,7 +24,7 @@
 
 // nnoww - DOCUMENT
 
-#include <plugins/fwabf/abf_policy.h>
+#include <plugins/fwabf/fwabf_policy.h>
 
 #include <vlib/vlib.h>
 #include <vnet/dpo/dpo.h>
@@ -78,24 +78,24 @@
 /**
  * Pool of ABF objects
  */
-static abf_policy_t *abf_policy_pool;
+static fwabf_policy_t *abf_policy_pool;
 
 /**
   * DB of ABF policy objects
   *  - policy ID to index conversion.
   */
-static abf_policy_t *abf_policy_db;
+static fwabf_policy_t *abf_policy_db;
 
 #define FWABF_GET_INDEX_BY_FLOWHASH(_flowhash, _vec_len_pow2_mask, _vec_len_minus_1, _res) \
       (((_res = (_flowhash & _vec_len_pow2_mask)) <= _vec_len_minus_1) ? _res : (_res & _vec_len_minus_1))
 
-abf_policy_t *
+fwabf_policy_t *
 fwabf_policy_get (u32 index)
 {
   return (pool_elt_at_index (abf_policy_pool, index));
 }
 
-static abf_policy_t *
+static fwabf_policy_t *
 fwabf_policy_find_i (u32 policy_id)
 {
   u32 api;
@@ -123,16 +123,16 @@ fwabf_policy_find (u32 policy_id)
 
 
 u32
-abf_policy_add (u32 policy_id, u32 acl_index, fwabf_policy_action_t * action)
+fwabf_policy_add (u32 policy_id, u32 acl_index, fwabf_policy_action_t * action)
 {
-  abf_policy_t*              ap;
+  fwabf_policy_t*              ap;
   fwabf_policy_link_group_t* group;
   u32 api;
 
   api = fwabf_policy_find (policy_id);
   if (api != INDEX_INVALID)
   {
-    clib_warning ("fawbf: abf_policy_add: policy-id %d exists (index %d)", policy_id, api);
+    clib_warning ("fawbf: fwabf_policy_add: policy-id %d exists (index %d)", policy_id, api);
     return VNET_API_ERROR_VALUE_EXIST;
   }
 
@@ -159,10 +159,10 @@ abf_policy_add (u32 policy_id, u32 acl_index, fwabf_policy_action_t * action)
 }
 
 int
-abf_policy_delete (u32 policy_id)
+fwabf_policy_delete (u32 policy_id)
 {
   fwabf_policy_link_group_t* group;
-  abf_policy_t *ap;
+  fwabf_policy_t *ap;
   u32 api;
 
   api = fwabf_policy_find (policy_id);
@@ -244,7 +244,7 @@ abf_policy_delete (u32 policy_id)
  *    the failed links. The active links are still able to provide load balance.
  *    We are OK with that for now (April 2020).
  *
- * @param index     index of abf_policy_t in pool.
+ * @param index     index of fwabf_policy_t in pool.
  * @param b         the vlib buffer to be forwarded.
  * @param lb        the DPO of Load Balancing type retrieved by FIB lookup.
  * @param dpo       result of the function: the DPO to be used for forwarding.
@@ -258,7 +258,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
                                 const load_balance_t*   lb,
                                 dpo_id_t*               dpo)
 {
-  abf_policy_t*              ap = fwabf_policy_get (index);
+  fwabf_policy_t*              ap = fwabf_policy_get (index);
   fwabf_policy_link_group_t* group;
   fwabf_label_t*             pfwlabel;
   fwabf_label_t              fwlabel;
@@ -368,7 +368,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
 /**
  * Get DPO to be used for packet forwarding according to policy.
  *
- * @param index     index of abf_policy_t in pool
+ * @param index     index of fwabf_policy_t in pool
  * @param b         the buffer to be forwarded
  * @param lb        the DPO of Load Balancing type retrieved by FIB lookup.
  * @param dpo       result of the function: the DPO to be used for forwarding.
@@ -382,7 +382,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
                                 const load_balance_t*   lb,
                                 dpo_id_t*               dpo)
 {
-  abf_policy_t*              ap = fwabf_policy_get (index);
+  fwabf_policy_t*              ap = fwabf_policy_get (index);
   fwabf_policy_link_group_t* group;
   fwabf_label_t*             pfwlabel;
   fwabf_label_t              fwlabel;
@@ -638,11 +638,11 @@ abf_policy_cmd (vlib_main_t * vm,
 
   if (!is_del)
     {
-      ret = abf_policy_add (policy_id, acl_index, &policy_action);
+      ret = fwabf_policy_add (policy_id, acl_index, &policy_action);
     }
   else
     {
-      ret = abf_policy_delete (policy_id);
+      ret = fwabf_policy_delete (policy_id);
     }
   if (ret != 0)
     return (clib_error_return (0, "abf_policy_%s failed(ret=%d)", (is_del?"delete":"add"), ret));
@@ -705,7 +705,7 @@ format_action (u8 * s, va_list * args)
 static u8 *
 format_abf (u8 * s, va_list * args)
 {
-  abf_policy_t *ap = va_arg (*args, abf_policy_t *);
+  fwabf_policy_t *ap = va_arg (*args, fwabf_policy_t *);
 
   s = format (s, "abf:[%d]: policy:%d acl:%d\n%U",
 	      ap - abf_policy_pool, ap->ap_id, ap->ap_acl, format_action, &ap->action);
@@ -717,7 +717,7 @@ abf_show_policy_cmd (vlib_main_t * vm,
 		     unformat_input_t * input, vlib_cli_command_t * cmd)
 {
   u32 policy_id;
-  abf_policy_t *ap;
+  fwabf_policy_t *ap;
 
   policy_id = INDEX_INVALID;
 

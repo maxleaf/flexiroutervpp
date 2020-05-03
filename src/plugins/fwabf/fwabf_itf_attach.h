@@ -24,7 +24,7 @@
 #ifndef __FWABF_ITF_ATTACH_H__
 #define __FWABF_ITF_ATTACH_H__
 
-#include <plugins/fwabf/abf_policy.h>
+#include <plugins/fwabf/fwabf_policy.h>
 //#include <vnet/fib/fib_path_list.h>
 
 /**
@@ -47,7 +47,7 @@ typedef struct abf_itf_attach_t_
    */
   //dpo_id_t aia_dpo;
 
-  // no need - abf_itf_attach_t is not bound to FIB anymore
+  // no need - fwabf_itf_attach_t is not bound to FIB anymore
   //           Instead it fetches DPO to use for forwarding from fwabf_sw_interface_t.
   //           The last is bound to FIB and get forwarding updates.
   /**
@@ -60,7 +60,7 @@ typedef struct abf_itf_attach_t_
    */
   u32 aia_abf;
 
-  // no need - abf_itf_attach_t is not bound to FIB anymore
+  // no need - fwabf_itf_attach_t is not bound to FIB anymore
   /**
    * Sibling index on the policy's path list
    */
@@ -83,16 +83,16 @@ typedef struct abf_itf_attach_t_
    * The higher priority policies are matched first.
    */
   u32 aia_prio;
-} abf_itf_attach_t;
+} fwabf_itf_attach_t;
 
 /**
  * Pool of ABF interface attachment objects
  */
-extern abf_itf_attach_t *abf_itf_attach_pool;
+extern fwabf_itf_attach_t *fwabf_itf_attach_pool;
 
-static inline abf_itf_attach_t * abf_itf_attach_get (u32 index)
+static inline fwabf_itf_attach_t * fwabf_itf_attach_get (u32 index)
 {
-  return (pool_elt_at_index (abf_itf_attach_pool, index));
+  return (pool_elt_at_index (fwabf_itf_attach_pool, index));
 }
 
 extern int fwabf_itf_attach (fib_protocol_t fproto,
@@ -101,10 +101,10 @@ extern int fwabf_itf_attach (fib_protocol_t fproto,
 extern int fwabf_itf_detach (fib_protocol_t fproto,
 			   u32 policy_id, u32 sw_if_index);
 
-// no need - abf_itf_attach_t is not bound to FIB anymore
+// no need - fwabf_itf_attach_t is not bound to FIB anymore
 //typedef int (*abf_itf_attach_walk_cb_t) (index_t aii, void *ctx0);
 
-// no need - abf_itf_attach_t is not bound to FIB anymore
+// no need - fwabf_itf_attach_t is not bound to FIB anymore
 //extern void abf_itf_attach_walk (abf_itf_attach_walk_cb_t cb, void *ctx);
 
 /*

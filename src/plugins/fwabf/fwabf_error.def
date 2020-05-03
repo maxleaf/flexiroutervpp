@@ -1,5 +1,5 @@
 /*
- * abf_error.def: ABF errors
+ * fwabf_error.def: ABF errors
  *
  * Copyright (c) 2012 Cisco and/or its affiliates.
  * Licensed under the Apache License, Version 2.0 (the "License");

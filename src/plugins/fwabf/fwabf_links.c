@@ -236,7 +236,7 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
 
   /*
    * Free (invalidate) object as soon as possible, so datapath will not use it.
-   * nnoww - think of locks . or order for free() and rest resets (use local variables?)!
+   * nnoww - TODO - think of locks . or order for free() and rest resets (use local variables?)!
    */
   aif = &fwabf_sw_interface_db[sw_if_index];
   fwlabel          = aif->fwlabel;
@@ -252,14 +252,14 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
   /*
    * Copied from ABF, but do we really need this?
    * Looks like the dpo is not accessable anymore and it has no effect on vlib graph!
-   * nnoww - ensure this!
+   * nnoww - TODO - ensure this!
    */
   dpo_reset (&aif->dpo);
 
   /*
    * No explict call to fib_path_list_destroy!
    * It will be destroyed automatically on no more children!
-   * nnoww - ensure this!
+   * nnoww - TODO - ensure this!
    */
   fib_path_list_child_remove(aif->pathlist, aif->pathlist_sibling);
 
@@ -282,17 +282,18 @@ dpo_id_t fwabf_links_get_dpo (
 
   aif = &fwabf_sw_interface_db[fwlabel];
 
+
+  // NNOWW - check if I should use multiple interfaces under same label here!
   /*
    * For now (March 2020) fwabf_sw_interface_t can be either ip4 or ip6,
-   * but now both of them. We anticipate only one type of traffic by ACL rule.
-   *
-   * To crack correct usage of PREDICT_X optimization just keep in mind that
-   *    PREDICT_TRUE(<condition that is likely to be true>)
-   * enters into 'if' block if condition is true.
-   * So PREDICT_FALSE should be used with !<condition that is likely to be true> :)
+   * but not both of them. We anticipate only one type of traffic by ACL rule.
+   * That means label can't be bound to interface that has both ip4 and ip6
+   * address -> NNOWW - expoainimpact on policy logic - what wil lnt work.
    */
   if (PREDICT_FALSE(dpo_proto != aif->dpo_proto))
     return *drop_dpo;
+
+  // nnoww - TODO - explain that DROP_DPO doesn't drop actually but indicates somytheing to the caller
 
 
   /*
@@ -663,8 +664,7 @@ fib_node_t * fwabf_sw_interface_fnv_get_node (fib_node_index_t index)
 static
 void fwabf_sw_interface_fnv_last_lock_gone (fib_node_t * node)
 {
-  // nnoww - not in use for now, as no one is attached to the fwabf_sw_inteface object by FIB graph
-  // abf_policy_destroy (fwabf_policy_get_from_node (node));
+  /*not in use, as no one is attached to fwabf_sw_inteface object in FIB graph*/
 }
 
 /*

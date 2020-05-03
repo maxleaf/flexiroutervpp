@@ -127,17 +127,17 @@ typedef struct abf_policy_t_
    */
   u32 ap_id;
 
-} abf_policy_t;
+} fwabf_policy_t;
 
 /**
  * Get an ABF object from its VPP index
  */
-extern abf_policy_t *fwabf_policy_get (index_t index);
+extern fwabf_policy_t *fwabf_policy_get (index_t index);
 
 /**
  * Get DPO to use for packet forwarding according to policy
  *
- * @param index     index of abf_policy_t in pool.
+ * @param index     index of fwabf_policy_t in pool.
  * @param b         the vlib buffer to be forwarded.
  * @param lb        the DPO of Load Balancing type retrieved by FIB lookup.
  * @param dpo       result of the function: the DPO to be used for forwarding.
@@ -154,7 +154,7 @@ extern u32 fwabf_policy_get_dpo_ip4 (
 /**
  * Get DPO to be used for packet forwarding according to policy.
  *
- * @param index     index of abf_policy_t in pool.
+ * @param index     index of fwabf_policy_t in pool.
  * @param b         the vlib buffer to be forwarded.
  * @param lb        the DPO of Load Balancing type retrieved by FIB lookup.
  * @param dpo       result of the function: the DPO to be used for forwarding.
@@ -189,8 +189,8 @@ extern index_t fwabf_policy_find (u32 policy_id);
  * @param acl_index The ACL the policy with match on (packet class)
  * @param action The action to be made in case of match
  */
-extern u32 abf_policy_add (
-              u32                     policy_id,
+extern u32 fwabf_policy_add (
+                    u32                     policy_id,
 			        u32                     acl_index,
 			        fwabf_policy_action_t * action);
 
@@ -199,7 +199,7 @@ extern u32 abf_policy_add (
  *
  * @param policy_id User defined Policy ID
  */
-extern int abf_policy_delete (u32 policy_id);
+extern int fwabf_policy_delete (u32 policy_id);
 
 /*
  * fd.io coding-style-patch-verification: ON

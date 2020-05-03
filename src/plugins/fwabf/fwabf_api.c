@@ -25,8 +25,8 @@
 
 #include <vnet/vnet.h>
 #include <vnet/plugin/plugin.h>
-#include <fwabf/abf_policy.h>
-#include <fwabf/abf_itf_attach.h>
+#include <fwabf/fwabf_policy.h>
+#include <fwabf/fwabf_itf_attach.h>
 #include <vnet/mpls/mpls_types.h>
 #include <vnet/fib/fib_path_list.h>
 #include <vnet/fib/fib_api.h>
@@ -40,27 +40,27 @@
 #ifdef FWABF_API_MESSAGES_ARE_SUPPORTED  /* python bindings are not supported yet */
 
 /* define message IDs */
-#include <fwabf/abf_msg_enum.h>
+#include <fwabf/fwabf_msg_enum.h>
 
 /* define message structures */
 #define vl_typedefs
-#include <fwabf/abf_all_api_h.h>
+#include <fwabf/fwabf_all_api_h.h>
 #undef vl_typedefs
 
 /* define generated endian-swappers */
 #define vl_endianfun
-#include <fwabf/abf_all_api_h.h>
+#include <fwabf/fwabf_all_api_h.h>
 #undef vl_endianfun
 
 /* instantiate all the print functions we know about */
 #define vl_print(handle, ...) vlib_cli_output (handle, __VA_ARGS__)
 #define vl_printfun
-#include <fwabf/abf_all_api_h.h>
+#include <fwabf/fwabf_all_api_h.h>
 #undef vl_printfun
 
 /* Get the API version number */
 #define vl_api_version(n,v) static u32 api_version=(v);
-#include <fwabf/abf_all_api_h.h>
+#include <fwabf/fwabf_all_api_h.h>
 #undef vl_api_version
 
 
@@ -132,7 +132,7 @@ vl_api_fwabf_policy_add_del_t_handler (vl_api_fwabf_policy_add_del_t * mp)
     }
   else
     {
-      abf_policy_delete (ntohl (mp->policy.policy_id), paths);
+      fwabf_policy_delete (ntohl (mp->policy.policy_id), paths);
     }
 done:
   vec_free (paths);
@@ -179,7 +179,7 @@ abf_policy_send_details (u32 api, void *args)
   abf_dump_walk_ctx_t *ctx;
   vl_api_fib_path_t *fp;
   size_t msg_size;
-  abf_policy_t *ap;
+  fwabf_policy_t *ap;
   u8 n_paths;
 
   ctx = args;
@@ -235,11 +235,11 @@ abf_itf_attach_send_details (u32 aiai, void *args)
 {
   vl_api_fwabf_itf_attach_details_t *mp;
   abf_dump_walk_ctx_t *ctx;
-  abf_itf_attach_t *aia;
-  abf_policy_t *ap;
+  fwabf_itf_attach_t *aia;
+  fwabf_policy_t *ap;
 
   ctx = args;
-  aia = abf_itf_attach_get (aiai);
+  aia = fwabf_itf_attach_get (aiai);
   ap = fwabf_policy_get (aia->aia_abf);
 
   mp = vl_msg_api_alloc (sizeof (*mp));
@@ -276,7 +276,7 @@ vl_api_fwabf_itf_attach_dump_t_handler (vl_api_fwabf_itf_attach_dump_t * mp)
 }
 
 #define vl_msg_name_crc_list
-#include <fwabf/abf_all_api_h.h>
+#include <fwabf/fwabf_all_api_h.h>
 #undef vl_msg_name_crc_list
 
 /* Set up the API message handling tables */
