@@ -137,26 +137,36 @@ extern abf_policy_t *fwabf_policy_get (index_t index);
 /**
  * Get DPO to use for packet forwarding according to policy
  *
- * @param index     index of abf_policy_t in pool
- * @param b         the buffer to be forwarded
- * @return DPO to be used for forwarding. If INVALID - caller function should
- *         ignore the returned DPO and should use default handling - move packet
- *         down on the feature arc to the next node. If DROP - caller should
- *         drop the packet.
+ * @param index     index of abf_policy_t in pool.
+ * @param b         the vlib buffer to be forwarded.
+ * @param lb        the DPO of Load Balancing type retrieved by FIB lookup.
+ * @param dpo       result of the function: the DPO to be used for forwarding.
+ *                  If return value is not 0, this parameter has no effect.
+ * @return 0 if the policy DPO provided within 'dpo' parameter should be used for forwarding,
+ *         1 otherwise which effectively means the FIB lookup result DPO should be used.
  */
-extern dpo_id_t fwabf_policy_get_dpo_ip4 (index_t index, vlib_buffer_t *b);
+extern u32 fwabf_policy_get_dpo_ip4 (
+                                index_t                 index,
+                                vlib_buffer_t*          b,
+                                const load_balance_t*   lb,
+                                dpo_id_t*               dpo);
 
 /**
- * Get DPO to use for packet forwarding according to policy
+ * Get DPO to be used for packet forwarding according to policy.
  *
- * @param index     index of abf_policy_t in pool
- * @param b         the buffer to be forwarded
- * @return DPO to be used for forwarding. If INVALID - caller function should
- *         ignore the returned DPO and should use default handling - move packet
- *         down on the feature arc to the next node. If DROP - caller should
- *         drop the packet.
+ * @param index     index of abf_policy_t in pool.
+ * @param b         the vlib buffer to be forwarded.
+ * @param lb        the DPO of Load Balancing type retrieved by FIB lookup.
+ * @param dpo       result of the function: the DPO to be used for forwarding.
+ *                  If return value is not 0, this parameter has no effect.
+ * @return 0 if the policy DPO provided within 'dpo' parameter should be used for forwarding,
+ *         1 otherwise which effectively means the FIB lookup result DPO should be used.
  */
-extern dpo_id_t fwabf_policy_get_dpo_ip6 (index_t index, vlib_buffer_t *b);
+extern u32 fwabf_policy_get_dpo_ip6 (
+                                index_t                 index,
+                                vlib_buffer_t*          b,
+                                const load_balance_t*   lb,
+                                dpo_id_t*               dpo);
 
 /**
  * Find a ABF object from the client's policy ID

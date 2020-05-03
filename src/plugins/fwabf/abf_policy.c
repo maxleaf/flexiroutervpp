@@ -29,38 +29,26 @@
 #include <vlib/vlib.h>
 #include <vnet/dpo/dpo.h>
 #include <vnet/dpo/drop_dpo.h>
-#include <vnet/fib/ip4_fib.h>
-#include <vnet/ip/ip4_mtrie.h>
-#include <vnet/fib/ip6_fib.h>
 #include <vnet/plugin/plugin.h>
 
-// nnoww - DONE - hash flow to make random selection for flow, and not for packet
+
+// nnoww - TODO - rename files towith fwabf_ prefix
+
+// nnoww - TODO - Nir last comment in mail
+//                     Can we find the intersection every time there's a change in the fib/interface status and not per packet?
+//                     In the case of LB, return a list of dpos and select between them
+
 
 // nnoww - TODO - move format functions to separate file
-
-// nnoww - POSTPONED - take care of IPv6
-
-// nnoww - DONE - fallback of drop
-
-// nnoww - POSTPONED - add counters to labels and show them by CLI (see vlib_node_increment_counter() in abf_itf_attach.c)
 
 // nnoww - TODO - clean all nnoww-s :)
 
 // nnoww - TODO - add validation on delete policy that no attachment objects exist!
 
-// nnoww - POSTPONED - check trace of FWABF node and add missing info if needed
-// nnoww - POSTPONED - check if quad and dual loops & prefetch (see ip4_lookup_inline) should be addded in nodes! (once we can measure benchmarking with the new feature)
-// nnoww - POSTPONED - check if separation of ip4 and ip6 nodes should be done! (once we can measure benchmarking with the new feature)
-
 
 // nnoww - TEST - test POLICY CLI thoroughly
 
-// nnoww - TODO !!! - Multiple interfaces per label !!!
-
-// nnoww - LIMITATION - OK - for now (March 2020) we don't enable labels with mixed IPv4/6 tunnels and WAN-s - see fwabf_sw_interface_t::dpo_proto field.
-// nnoww - LIMITATION - OK - no ABF on WAN-to-LAN packets, as it does not work with NAT today! (see Denys fixes in NAT branch)
-
-// nnoww - ASK Nir - DO SAME AS VPP - check VPP FIB for X.255 entries - if should support LAN Broadcast addresses - 192.168.1.255 - that requires refcounter (the 255.255.255.255 I already added)?
+// nnoww - TODO - check VPP FIB for X.255 entries - if should support LAN Broadcast addresses - 192.168.1.255 - that requires refcounter (the 255.255.255.255 I already added)?
 
 // nnoww - TODO - ensure that endianity of IP6 address stored in fwabf_locals matches that of packet in vlib_buffer
 
@@ -71,10 +59,6 @@
 //                  4. ICMP packet go FWABF ???
 //
 
-// nnoww - TEST - DONE - remove policy restore original flow / add again recreates new flow!
-// nnoww - TEST - DONE - remove tunnel restore original flow / add again (and new fwabf link) - recreates new flow!
-// nnoww - TEST - DONE - stop VPP-3 restore original flow / start again recreates new flow!
-
 // nnoww - TEST - ???? -  flowhash algorithm
 //                        i = FWABF_GET_INDEX_BY_FLOWHASH(
 //                              flow_hash, ap->action.n_link_groups_pow2_mask,
@@ -82,11 +66,14 @@
 
 // nnoww - TEST - ???? - Incoming DHCP Server packets should be not shadled by policy!
 
-// nnoww - moved to fwabf_sw_interface_t
-/**
- * FIB node type the attachment is registered
- */
-//fib_node_type_t abf_policy_fib_node_type;
+// nnoww - TEST - perfroemace hit by double FIB lookup for packets that are not subject by policy
+
+// nnoww - TODO - implement counters and trace!!!
+// if (node->flags & VLIB_NODE_FLAG_TRACE)
+//   ip4_forward_next_trace (vm, node, frame, VLIB_TX);
+// vlib_increment_combined_counter (cm, thread_index, lbi0, 1,
+// 				   vlib_buffer_length_in_chain (vm,
+// 								p0));
 
 /**
  * Pool of ABF objects
@@ -107,12 +94,6 @@ fwabf_policy_get (u32 index)
 {
   return (pool_elt_at_index (abf_policy_pool, index));
 }
-
-// static u32
-// fwabf_policy_get_index (const abf_policy_t * abf)
-// {
-//   return (abf - abf_policy_pool);
-// }
 
 static abf_policy_t *
 fwabf_policy_find_i (u32 policy_id)
@@ -199,14 +180,15 @@ abf_policy_delete (u32 policy_id)
   return (0);
 }
 
+// nnoww - TODO - desxcribe exact algoruthm here
 /**
  * Get DPO to use for packet forwarding according to policy.
  * The algorithm is as follows:
  *  1. Lookup FIB for adjacencies to be used for forwarding.
  *  2. Intersect found adjacencies with adjacencies that belong
  *     to the interfaces marked with policy labels.
- *     The result set should be ordered by order of policy labels.
- *  3. If intersection result is empty, ignore policy and go to the default
+ *     The result is ordered by high priority labels.
+ *  3. If intersection result is empty, ignore policy and go to the vpp lookup
  *     packet handling.
  *  4. If intersection result is not empty, choose one of intersected adjacencies
  *     according policy selection algorithm:
@@ -219,7 +201,7 @@ abf_policy_delete (u32 policy_id)
  *
  *  o As FIB lookup brings only shortest paths, the policy labels that match
  *    longest paths has no effect: they are simply not counted!
- *    This is known limitation. It was accepted by CTO in April 2020 :)
+ *    This is known limitation.
  *
  *  o Light optimization is possible: if no intersection was found, we can apply
  *    FIB lookup result to forwardind, just as ip4-lookup node does this.
@@ -262,43 +244,27 @@ abf_policy_delete (u32 policy_id)
  *    the failed links. The active links are still able to provide load balance.
  *    We are OK with that for now (April 2020).
  *
- * @param index     index of abf_policy_t in pool
- * @param b         the vlib buffer to be forwarded
- * @return DPO to be used for forwarding. If INVALID - caller function should
- *         ignore the returned DPO and should use default handling - move packet
- *         down on the feature arc to the next node. If DROP - caller should
- *         drop the packet.
+ * @param index     index of abf_policy_t in pool.
+ * @param b         the vlib buffer to be forwarded.
+ * @param lb        the DPO of Load Balancing type retrieved by FIB lookup.
+ * @param dpo       result of the function: the DPO to be used for forwarding.
+ *                  If return value is not 0, this parameter has no effect.
+ * @return 0 if the policy DPO provided within 'dpo' parameter should be used for forwarding,
+ *         1 otherwise which effectively means the FIB lookup result DPO should be used.
  */
-inline dpo_id_t fwabf_policy_get_dpo_ip4 (index_t index, vlib_buffer_t *b)
+inline u32 fwabf_policy_get_dpo_ip4 (
+                                index_t                 index,
+                                vlib_buffer_t*          b,
+                                const load_balance_t*   lb,
+                                dpo_id_t*               dpo)
 {
-  abf_policy_t*              ap          = fwabf_policy_get (index);
-  dpo_id_t                   dpo         = DPO_INVALID;
-  dpo_id_t                   dpo_invalid = DPO_INVALID;
+  abf_policy_t*              ap = fwabf_policy_get (index);
   fwabf_policy_link_group_t* group;
   fwabf_label_t*             pfwlabel;
   fwabf_label_t              fwlabel;
   u32                        i;
   u32                        flow_hash;
-  u32                        lbi;
-  const load_balance_t*      lb;
-	ip4_fib_mtrie_t*           mtrie;
-	ip4_fib_mtrie_leaf_t       leaf;
   ip4_header_t*              ip = vlib_buffer_get_current (b);
-  ip4_main_t*                im = &ip4_main;
-
-  /*
-   * Firstly lookup FIB mtrie for the DPO/adjacency to be used for forwarding.
-   */
-  ip_lookup_set_buffer_fib_index (im->fib_index_by_sw_if_index, b);
-  mtrie = &ip4_fib_get (vnet_buffer (b)->ip.fib_index)->mtrie;
-  leaf = ip4_fib_mtrie_lookup_step_one (mtrie, &ip->dst_address);
-  leaf = ip4_fib_mtrie_lookup_step (mtrie, leaf, &ip->dst_address, 2);
-  leaf = ip4_fib_mtrie_lookup_step (mtrie, leaf, &ip->dst_address, 3);
-
-  lbi  = ip4_fib_mtrie_leaf_get_adj_index (leaf);
-  ASSERT (lbi);
-	lb = load_balance_get(lbi);
-  ASSERT (lb->lb_n_buckets > 0);
 
   /*
    * lb - is DPO of Load Balance type. It doesn't point to adjacency directly.
@@ -340,9 +306,9 @@ inline dpo_id_t fwabf_policy_get_dpo_ip4 (index_t index, vlib_buffer_t *b)
           i = FWABF_GET_INDEX_BY_FLOWHASH(
                 flow_hash, group->n_links_pow2_mask, group->n_links_minus_1, i);
           fwlabel = group->links[i];
-          dpo   = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP4, lb);
-          if (dpo.dpoi_type != DPO_DROP)
-            return dpo;
+          *dpo    = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP4, lb);
+          if (dpo->dpoi_type != DPO_DROP)
+            return 0;
         }
 
       /*
@@ -352,9 +318,9 @@ inline dpo_id_t fwabf_policy_get_dpo_ip4 (index_t index, vlib_buffer_t *b)
        */
       vec_foreach (pfwlabel, group->links)
         {
-          dpo = fwabf_links_get_dpo (*pfwlabel, DPO_PROTO_IP4, lb);
-          if (dpo.dpoi_type != DPO_DROP)
-            return dpo;
+          *dpo = fwabf_links_get_dpo (*pfwlabel, DPO_PROTO_IP4, lb);
+          if (dpo->dpoi_type != DPO_DROP)
+            return 0;
         }
     } /*if (ap->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(ap->action.link_groups) > 1)*/
 
@@ -373,69 +339,56 @@ inline dpo_id_t fwabf_policy_get_dpo_ip4 (index_t index, vlib_buffer_t *b)
       if (group->alg == FWABF_SELECTION_RANDOM  &&  vec_len(group->links) > 1)
         {
           fwlabel = group->links[flow_hash & group->n_links_minus_1];
-          dpo = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP4, lb);
-          if (dpo.dpoi_type != DPO_DROP)
-            return dpo;
+          *dpo = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP4, lb);
+          if (dpo->dpoi_type != DPO_DROP)
+            return 0;
         }
       vec_foreach (pfwlabel, group->links)
         {
-          dpo = fwabf_links_get_dpo (*pfwlabel, DPO_PROTO_IP4, lb);
-          if (dpo.dpoi_type != DPO_DROP)
-            return dpo;
+          *dpo = fwabf_links_get_dpo (*pfwlabel, DPO_PROTO_IP4, lb);
+          if (dpo->dpoi_type != DPO_DROP)
+            return 0;
         }
     }
 
   /*
    * At this point no active DPO was found.
-   * If fallback is default route, indicate that to caller by DPO_INVALID.
-   * If fallback is to drop packets, use the last found DPO, which should be DPO_DROP.
+   * If fallback is default route, just go and indicate the caller function
+   * to use DPO found by FIB lookup.
+   * If fallback is to drop packets, return DPO_DROP.
    */
   if (PREDICT_TRUE(ap->action.fallback==FWABF_FALLBACK_DEFAULT_ROUTE))
-    return dpo_invalid;
-
-  /*
-   * If no DPO was found due to absence of interfaces with policy labels,
-   * simulate the dropping DPO.
-   */
-  if (PREDICT_FALSE(!dpo_id_is_valid(&dpo)))
     {
-    	dpo_copy(&dpo, drop_dpo_get(DPO_PROTO_IP4));
+      return 1;
     }
-  return dpo;
+  dpo_copy(dpo, drop_dpo_get(DPO_PROTO_IP4));
+  return 0;
 }
 
 /**
- * Get DPO to use for packet forwarding according to policy
+ * Get DPO to be used for packet forwarding according to policy.
  *
  * @param index     index of abf_policy_t in pool
- * @param b         the vlib buffer to forward
- * @return DPO to be used for forwarding. If INVALID - caller function should
- *         ignore the returned DPO and should use default handling - move packet
- *         down on the feature arc to the next node. If DROP - caller should
- *         drop the packet.
+ * @param b         the buffer to be forwarded
+ * @param lb        the DPO of Load Balancing type retrieved by FIB lookup.
+ * @param dpo       result of the function: the DPO to be used for forwarding.
+ *                  If return value is not 0, this parameter has no effect.
+ * @return 0 if the policy DPO provided within 'dpo' parameter should be used for forwarding,
+ *         1 otherwise which effectively means the FIB lookup result DPO should be used.
  */
-inline dpo_id_t fwabf_policy_get_dpo_ip6 (index_t index, vlib_buffer_t *b)
+inline u32 fwabf_policy_get_dpo_ip6 (
+                                index_t                 index,
+                                vlib_buffer_t*          b,
+                                const load_balance_t*   lb,
+                                dpo_id_t*               dpo)
 {
-  abf_policy_t*              ap          = fwabf_policy_get (index);
-  dpo_id_t                   dpo         = DPO_INVALID;
-  dpo_id_t                   dpo_invalid = DPO_INVALID;
+  abf_policy_t*              ap = fwabf_policy_get (index);
   fwabf_policy_link_group_t* group;
   fwabf_label_t*             pfwlabel;
   fwabf_label_t              fwlabel;
   u32                        i;
   u32                        flow_hash;
-  u32                        lbi;
-  const load_balance_t*      lb;
   ip6_header_t*              ip = vlib_buffer_get_current (b);
-  ip6_main_t*                im = &ip6_main;
-
-  /*
-   * Firstly lookup FIB for the DPO/adjacency to be used for forwarding.
-   */
-  lbi = ip6_fib_table_fwding_lookup (im, vnet_buffer(b)->ip.fib_index, &ip->dst_address);
-  ASSERT (lbi);
-	lb = load_balance_get(lbi);
-  ASSERT (lb->lb_n_buckets > 0);
 
   /*
    * lb - is DPO of Load Balance type. It doesn't point to adjacency directly.
@@ -477,9 +430,9 @@ inline dpo_id_t fwabf_policy_get_dpo_ip6 (index_t index, vlib_buffer_t *b)
           i = FWABF_GET_INDEX_BY_FLOWHASH(
                 flow_hash, group->n_links_pow2_mask, group->n_links_minus_1, i);
           fwlabel = group->links[i];
-          dpo     = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP6, lb);
-          if (dpo.dpoi_type != DPO_DROP)
-            return dpo;
+          *dpo    = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP6, lb);
+          if (dpo->dpoi_type != DPO_DROP)
+            return 0;
         }
 
       /*
@@ -489,9 +442,9 @@ inline dpo_id_t fwabf_policy_get_dpo_ip6 (index_t index, vlib_buffer_t *b)
        */
       vec_foreach (pfwlabel, group->links)
         {
-          dpo = fwabf_links_get_dpo (*pfwlabel, DPO_PROTO_IP6, lb);
-          if (dpo.dpoi_type != DPO_DROP)
-            return dpo;
+          *dpo = fwabf_links_get_dpo (*pfwlabel, DPO_PROTO_IP6, lb);
+          if (dpo->dpoi_type != DPO_DROP)
+            return 0;
         }
     } /*if (ap->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(ap->action.link_groups) > 1)*/
 
@@ -510,35 +463,30 @@ inline dpo_id_t fwabf_policy_get_dpo_ip6 (index_t index, vlib_buffer_t *b)
       if (group->alg == FWABF_SELECTION_RANDOM  &&  vec_len(group->links) > 1)
         {
           fwlabel = group->links[flow_hash & group->n_links_minus_1];
-          dpo = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP6, lb);
-          if (dpo.dpoi_type != DPO_DROP)
-            return dpo;
+          *dpo = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP6, lb);
+          if (dpo->dpoi_type != DPO_DROP)
+            return 0;
         }
       vec_foreach (pfwlabel, group->links)
         {
-          dpo = fwabf_links_get_dpo (*pfwlabel, DPO_PROTO_IP6, lb);
-          if (dpo.dpoi_type != DPO_DROP)
-            return dpo;
+          *dpo = fwabf_links_get_dpo (*pfwlabel, DPO_PROTO_IP6, lb);
+          if (dpo->dpoi_type != DPO_DROP)
+            return 0;
         }
     }
 
   /*
    * At this point no active DPO was found.
-   * If fallback is default route, indicate that to caller by DPO_INVALID.
-   * If fallback is to drop packets, use the last found DPO, which should be DPO_DROP.
+   * If fallback is default route, just go and indicate the caller function
+   * to use DPO found by FIB lookup.
+   * If fallback is to drop packets, return DPO_DROP.
    */
   if (PREDICT_TRUE(ap->action.fallback==FWABF_FALLBACK_DEFAULT_ROUTE))
-    return dpo_invalid;
-
-  /*
-   * If no DPO was found due to absence of interfaces with policy labels,
-   * simulate the dropping DPO.
-   */
-  if (PREDICT_FALSE(!dpo_id_is_valid(&dpo)))
     {
-    	dpo_copy(&dpo, drop_dpo_get(DPO_PROTO_IP6));
+      return 1;
     }
-  return dpo;
+  dpo_copy(dpo, drop_dpo_get(DPO_PROTO_IP4));
+  return 0;
 }
 
 uword

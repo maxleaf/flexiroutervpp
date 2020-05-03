@@ -25,7 +25,12 @@
 
 #include <plugins/fwabf/abf_itf_attach.h>
 #include <plugins/fwabf/fwabf_locals.h>
+
+#include <vnet/dpo/load_balance_map.h>
 #include <vnet/fib/fib_path_list.h>
+#include <vnet/fib/ip4_fib.h>
+#include <vnet/ip/ip4_mtrie.h>
+#include <vnet/fib/ip6_fib.h>
 #include <plugins/acl/exports.h>
 
 /**
@@ -34,6 +39,7 @@
 extern vlib_node_registration_t fwabf_ip4_node;
 extern vlib_node_registration_t fwabf_ip6_node;
 
+// nnoww - TODO - remove this finally
 // no need - abf_itf_attach_t is not bound to FIB anymore
 /**
  * FIB node registered type for the bonds
@@ -118,6 +124,7 @@ abf_itf_attach_db_del (u32 abf_index, u32 sw_if_index)
   hash_unset (abf_itf_attach_db, key);
 }
 
+// nnoww - TODO - remove this finally
 // no need - abf_itf_attach_t is not bound to FIB anymore
 // static void
 // abf_itf_attach_stack (abf_itf_attach_t * aia)
@@ -201,6 +208,7 @@ fwabf_itf_attach (fib_protocol_t fproto,
    */
   pool_get (abf_itf_attach_pool, aia);
 
+// nnoww - TODO - remove this finally
 // no need - abf_itf_attach_t is not bound to FIB anymore
 //  fib_node_init (&aia->aia_node, abf_itf_attach_fib_node_type);
   aia->aia_prio = priority;
@@ -211,6 +219,7 @@ fwabf_itf_attach (fib_protocol_t fproto,
 //  aiai = aia - abf_itf_attach_pool;
   abf_itf_attach_db_add (policy_id, sw_if_index, aia);
 
+// nnoww - TODO - remove this finally
   // no need - abf_itf_attach_t is not bound to FIB anymore
   // /*
   //  * stack the DPO on the forwarding contributed by the path-list
@@ -250,6 +259,7 @@ fwabf_itf_attach (fib_protocol_t fproto,
   /* Prepare and set the list of ACLs for lookup within the context */
   abf_setup_acl_lc (fproto, sw_if_index);
 
+// nnoww - TODO - remove this finally
   // no need - abf_itf_attach_t is not bound to FIB anymore
   // /*
   //  * become a child of the ABF policy so we are notified when
@@ -316,6 +326,7 @@ fwabf_itf_detach (fib_protocol_t fproto, u32 policy_id, u32 sw_if_index)
   /* Prepare and set the list of ACLs for lookup within the context */
   abf_setup_acl_lc (fproto, sw_if_index);
 
+// nnoww - TODO - remove this finally
   // no need - abf_itf_attach_t is not bound to FIB anymore
   // /*
   //  * remove the dependency on the policy
@@ -328,6 +339,7 @@ fwabf_itf_detach (fib_protocol_t fproto, u32 policy_id, u32 sw_if_index)
    */
   abf_itf_attach_db_del (policy_id, sw_if_index);
 
+// nnoww - TODO - remove this finally
   // /*
   //  * release our locks on FIB forwarding data
   //  */
@@ -481,6 +493,7 @@ VLIB_CLI_COMMAND (abf_show_attach_cmd_node, static) = {
 };
 /* *INDENT-ON* */
 
+// nnoww - TODO - remove this finally
 // no need - abf_itf_attach_t is not bound to FIB anymore
 // void
 // abf_itf_attach_walk (abf_itf_attach_walk_cb_t cb, void *ctx)
@@ -516,10 +529,8 @@ typedef enum
   ABF_N_ERROR,
 } abf_error_t;
 
-always_inline uword
-fwabf_input_inline (vlib_main_t * vm,
-		  vlib_node_runtime_t * node,
-		  vlib_frame_t * frame, fib_protocol_t fproto)
+static uword
+fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * frame)
 {
   u32 n_left_from, *from, *to_next, next_index, matches;
 
@@ -536,21 +547,30 @@ fwabf_input_inline (vlib_main_t * vm,
 
       while (n_left_from > 0 && n_left_to_next > 0)
         {
-          const u32 *attachments0;
-          const abf_itf_attach_t *aia0;
-          abf_next_t next0 = ABF_NEXT_DROP;
-          vlib_buffer_t *b0;
-          u32 bi0, sw_if_index0;
-          fa_5tuple_opaque_t fa_5tuple0;
-          dpo_id_t dpo0;
-          u32 match_acl_index = ~0;
-          u32 match_acl_pos = ~0;
-          u32 match_rule_index = ~0;
-          u32 trace_bitmap = 0;
+          const u32*            attachments0;
+          const abf_itf_attach_t* aia0;
+          abf_next_t            next0 = ABF_NEXT_DROP;
+          vlib_buffer_t*        b0;
+          fa_5tuple_opaque_t    fa_5tuple0;
+          const dpo_id_t*       dpo0;
+          dpo_id_t              dpo0_policy;
+          u32 bi0;
+          u32 sw_if_index0;
+          u32 match_acl_index   = ~0;
+          u32 match_acl_pos     = ~0;
+          u32 match_rule_index  = ~0;
+          u32 trace_bitmap      = 0;
+          u32 use_fib0          = 0;
           u8 action;
-          ip4_header_t* ip40;
-          ip6_header_t* ip60;
-          int           local;
+          ip4_header_t*         ip40;
+          int                   local0;
+          u32                   hash_c0;
+          u32                   lbi0;
+          const load_balance_t* lb0;
+          flow_hash_config_t    flow_hash_config0;
+          ip4_main_t*           im = &ip4_main;
+          ip4_fib_mtrie_t*      mtrie0;
+          ip4_fib_mtrie_leaf_t  leaf0;
 
           bi0 = from[0];
           to_next[0] = bi0;
@@ -562,37 +582,55 @@ fwabf_input_inline (vlib_main_t * vm,
           b0 = vlib_get_buffer (vm, bi0);
 
           /*
-           * Check if the packet is designated to local node.
-           * In that case no policy should be applied, as policy might
-           * enforce it to go out. In that case move down on the feature arc.
-           * Otherwise go and find policy.
+           * The fwabf_input_inline node replaces the ip4_lookup_inline node.
+           * This is done to avoid FIB lookup twice in case, when packet does
+           * not match policy classification (ACL lookup failure).
+           * Therefore we have to resuse the ip4_lookup_inline code.
+           * The last is consist of two parts - lookup in FIB and fetching
+           * DPO out of found DPO.
+           * Below the first part is placed - FIB lookup.
            */
-          if (fproto == FIB_PROTOCOL_IP4)
+          ip_lookup_set_buffer_fib_index (im->fib_index_by_sw_if_index, b0);
+          mtrie0 = &ip4_fib_get (vnet_buffer (b0)->ip.fib_index)->mtrie;
+          leaf0 = ip4_fib_mtrie_lookup_step_one (mtrie0, &ip40->dst_address);
+          leaf0 = ip4_fib_mtrie_lookup_step (mtrie0, leaf0, &ip40->dst_address, 2);
+          leaf0 = ip4_fib_mtrie_lookup_step (mtrie0, leaf0, &ip40->dst_address, 3);
+
+          lbi0  = ip4_fib_mtrie_leaf_get_adj_index (leaf0);
+          ASSERT (lb0);
+          lb0 = load_balance_get(lbi0);
+          ASSERT (lb0->lb_n_buckets > 0);
+          ASSERT (is_pow2 (lb0->lb_n_buckets));
+
+          /*
+           * Check if the packet is designated to local node.
+           * In that case we should not check for policy, as 'all packets' rule
+           * might send it out of VPP! Just go right to the ip4_lookup_inline
+           * finish: use FIB lookup result to forward packet to next node.
+           */
+          ip40   = vlib_buffer_get_current (b0);
+          local0 = fwabf_locals_ip4_exists (&ip40->dst_address);
+
+          if (local0)
             {
-              ip40  = vlib_buffer_get_current (b0);
-              local = fwabf_locals_ip4_exists (&ip40->dst_address);
+              use_fib0 = 1;
             }
           else
-          {
-              ip60  = vlib_buffer_get_current (b0);
-              local = fwabf_locals_ip6_exists (&ip60->dst_address);
-          }
-          if (local)
             {
-              vnet_feature_next (&next0, b0);
-            }
-          else
-            {
+              /*
+               * Perform ACL lookup and if found - apply policy.
+               */
+
               sw_if_index0 = vnet_buffer (b0)->sw_if_index[VLIB_RX];
 
-              ASSERT (vec_len (abf_per_itf[fproto]) > sw_if_index0);
-              attachments0 = abf_per_itf[fproto][sw_if_index0];
+              ASSERT (vec_len (abf_per_itf[FIB_PROTOCOL_IP4]) > sw_if_index0);
+              attachments0 = abf_per_itf[FIB_PROTOCOL_IP4][sw_if_index0];
 
-              ASSERT (vec_len (abf_alctx_per_itf[fproto]) > sw_if_index0);
+              ASSERT (vec_len (abf_alctx_per_itf[FIB_PROTOCOL_IP4]) > sw_if_index0);
               /*
               * check if any of the policies attached to this interface matches.
               */
-              u32 lc_index = abf_alctx_per_itf[fproto][sw_if_index0];
+              u32 lc_index = abf_alctx_per_itf[FIB_PROTOCOL_IP4][sw_if_index0];
 
               /*
                 A non-inline version looks like this:
@@ -606,12 +644,11 @@ fwabf_input_inline (vlib_main_t * vm,
                 . . .
               */
               acl_plugin_fill_5tuple_inline (acl_plugin.p_acl_main, lc_index, b0,
-                    (FIB_PROTOCOL_IP6 == fproto), 1, 0,
-                    &fa_5tuple0);
+                    0, 1, 0, &fa_5tuple0);
 
               if (acl_plugin_match_5tuple_inline
                   (acl_plugin.p_acl_main, lc_index, &fa_5tuple0,
-                  (FIB_PROTOCOL_IP6 == fproto), &action, &match_acl_pos,
+                  0, &action, &match_acl_pos,
                   &match_acl_index, &match_rule_index, &trace_bitmap))
                 {
                   /*
@@ -619,31 +656,42 @@ fwabf_input_inline (vlib_main_t * vm,
                   *  follow the DPO chain if available. Otherwise fallback to feature arc.
                   */
                   aia0 = abf_itf_attach_get (attachments0[match_acl_pos]);
-                  if (fproto == FIB_PROTOCOL_IP4)
-                      dpo0 = fwabf_policy_get_dpo_ip4 (aia0->aia_abf, b0);
-                  else
-                      dpo0 = fwabf_policy_get_dpo_ip6 (aia0->aia_abf, b0);
-
-                  if (PREDICT_TRUE(dpo_id_is_valid(&dpo0)))
+                  use_fib0 = fwabf_policy_get_dpo_ip4 (aia0->aia_abf, b0, lb0, &dpo0_policy);
+                  if (PREDICT_TRUE(use_fib0==0))
                     {
-                      next0 = dpo0.dpoi_next_node;
-                      vnet_buffer (b0)->ip.adj_index[VLIB_TX] = dpo0.dpoi_index;
-                    }
-                  else
-                    {
-                      vnet_feature_next (&next0, b0);
+                      next0 = dpo0_policy.dpoi_next_node;
+                      vnet_buffer (b0)->ip.adj_index[VLIB_TX] = dpo0_policy.dpoi_index;
                     }
                   matches++;
                 }
+            } /*if (local) else*/
+
+          /*
+           * If packet is locally designated or if policy was not applied,
+           * finish the ip4_lookup_inline logic - part two of ip4_lookup_inline
+           * code - use DPO found by FIB lookup.
+           */
+          if (use_fib0)
+            {
+              hash_c0 = vnet_buffer (b0)->ip.flow_hash = 0;
+              if (PREDICT_FALSE (lb0->lb_n_buckets > 1))
+                {
+                  /* Use flow hash to compute multipath adjacency. */
+                  flow_hash_config0 = lb0->lb_hash_config;
+                  hash_c0 = vnet_buffer (b0)->ip.flow_hash =
+                            ip4_compute_flow_hash (ip40, flow_hash_config0);
+                  dpo0 = load_balance_get_fwd_bucket (lb0,
+                                  (hash_c0 & (lb0->lb_n_buckets_minus_1)));
+                }
               else
                 {
-                  /*
-                  * miss:
-                  *  move on down the feature arc
-                  */
-                  vnet_feature_next (&next0, b0);
+                  dpo0 = load_balance_get_bucket_i (lb0, 0);
                 }
-            } /*if (local) else*/
+
+              next0 = dpo0->dpoi_next_node;
+              vnet_buffer (b0)->ip.adj_index[VLIB_TX] = dpo0->dpoi_index;
+            }
+
 
           if (PREDICT_FALSE (b0->flags & VLIB_BUFFER_IS_TRACED))
             {
@@ -656,39 +704,196 @@ fwabf_input_inline (vlib_main_t * vm,
 
           /* verify speculative enqueue, maybe switch current next frame */
           vlib_validate_buffer_enqueue_x1 (vm, node, next_index,
-                  to_next, n_left_to_next, bi0,
-                  next0);
+                  to_next, n_left_to_next, bi0, next0);
         }
 
       vlib_put_next_frame (vm, node, next_index, n_left_to_next);
     }
 
-  vlib_node_increment_counter (vm,
-             (fproto = FIB_PROTOCOL_IP6 ?
-        fwabf_ip4_node.index :
-        fwabf_ip6_node.index),
-             ABF_ERROR_MATCHED, matches);
+  vlib_node_increment_counter (vm, fwabf_ip4_node.index, ABF_ERROR_MATCHED, matches);
 
   return frame->n_vectors;
 }
 
 static uword
-abf_input_ip4 (vlib_main_t * vm,
-	       vlib_node_runtime_t * node, vlib_frame_t * frame)
+fwabf_input_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * frame)
 {
-  return fwabf_input_inline (vm, node, frame, FIB_PROTOCOL_IP4);
-}
+  u32 n_left_from, *from, *to_next, next_index, matches;
 
-static uword
-abf_input_ip6 (vlib_main_t * vm,
-	       vlib_node_runtime_t * node, vlib_frame_t * frame)
-{
-  return fwabf_input_inline (vm, node, frame, FIB_PROTOCOL_IP6);
+  from = vlib_frame_vector_args (frame);
+  n_left_from = frame->n_vectors;
+  next_index = node->cached_next_index;
+  matches = 0;
+
+  while (n_left_from > 0)
+    {
+      u32 n_left_to_next;
+
+      vlib_get_next_frame (vm, node, next_index, to_next, n_left_to_next);
+
+      while (n_left_from > 0 && n_left_to_next > 0)
+        {
+          const u32*            attachments0;
+          const abf_itf_attach_t* aia0;
+          abf_next_t            next0 = ABF_NEXT_DROP;
+          vlib_buffer_t*        b0;
+          fa_5tuple_opaque_t    fa_5tuple0;
+          const dpo_id_t*       dpo0;
+          dpo_id_t              dpo0_policy;
+          u32 bi0;
+          u32 sw_if_index0;
+          u32 match_acl_index   = ~0;
+          u32 match_acl_pos     = ~0;
+          u32 match_rule_index  = ~0;
+          u32 trace_bitmap      = 0;
+          u32 use_fib0          = 0;
+          u8 action;
+          ip6_header_t*         ip60;
+          int                   local0;
+          u32                   hash_c0;
+          u32                   lbi0;
+          const load_balance_t* lb0;
+          flow_hash_config_t    flow_hash_config0;
+          ip6_main_t* im        = &ip6_main;
+
+          bi0 = from[0];
+          to_next[0] = bi0;
+          from += 1;
+          to_next += 1;
+          n_left_from -= 1;
+          n_left_to_next -= 1;
+
+          b0 = vlib_get_buffer (vm, bi0);
+
+          /*
+           * The fwabf_input_inline node replaces the ip6_lookup_inline node.
+           * This is done to avoid FIB lookup twice in case, when packet does
+           * not match policy classification (ACL lookup failure).
+           * Therefore we have to resuse the ip6_lookup_inline code.
+           * The last is consist of two parts - lookup in FIB and fetching
+           * DPO out of found DPO.
+           * Below the first part is placed - FIB lookup.
+           */
+          ip_lookup_set_buffer_fib_index (im->fib_index_by_sw_if_index, b0);
+          ip60 = vlib_buffer_get_current (b0);
+          lbi0 = ip6_fib_table_fwding_lookup (
+                    im, vnet_buffer (b0)->ip.fib_index, &ip60->dst_address);
+          ASSERT (lbi0);
+          lb0 = load_balance_get(lbi0);
+          ASSERT (lb0->lb_n_buckets > 0);
+          ASSERT (is_pow2 (lb0->lb_n_buckets));
+
+          /*
+           * Check if the packet is designated to local node.
+           * In that case we should not check for policy, as 'all packets' rule
+           * might send it out of VPP! Just go right to the ip6_lookup_inline
+           * finish: use FIB lookup result to forward packet to next node.
+           */
+          local0 = fwabf_locals_ip6_exists (&ip60->dst_address);
+
+          if (local0)
+            {
+              use_fib0 = 1;
+            }
+          else
+            {
+              /*
+               * Perform ACL lookup and if found - apply policy.
+               */
+
+              sw_if_index0 = vnet_buffer (b0)->sw_if_index[VLIB_RX];
+
+              ASSERT (vec_len (abf_per_itf[FIB_PROTOCOL_IP6]) > sw_if_index0);
+              attachments0 = abf_per_itf[FIB_PROTOCOL_IP6][sw_if_index0];
+
+              ASSERT (vec_len (abf_alctx_per_itf[FIB_PROTOCOL_IP6]) > sw_if_index0);
+              /*
+              * check if any of the policies attached to this interface matches.
+              */
+              u32 lc_index = abf_alctx_per_itf[FIB_PROTOCOL_IP6][sw_if_index0];
+
+              acl_plugin_fill_5tuple_inline (acl_plugin.p_acl_main, lc_index, b0,
+                    1, 1, 0, &fa_5tuple0);
+
+              if (acl_plugin_match_5tuple_inline
+                  (acl_plugin.p_acl_main, lc_index, &fa_5tuple0,
+                  1, &action, &match_acl_pos,
+                  &match_acl_index, &match_rule_index, &trace_bitmap))
+                {
+                  /*
+                  * match:
+                  *  follow the DPO chain if available. Otherwise fallback to feature arc.
+                  */
+                  aia0 = abf_itf_attach_get (attachments0[match_acl_pos]);
+                  use_fib0 = fwabf_policy_get_dpo_ip6 (aia0->aia_abf, b0, lb0, &dpo0_policy);
+                  if (PREDICT_TRUE(use_fib0==0))
+                    {
+                      next0 = dpo0_policy.dpoi_next_node;
+                      vnet_buffer (b0)->ip.adj_index[VLIB_TX] = dpo0_policy.dpoi_index;
+                    }
+                  matches++;
+                }
+            } /*if (local) else*/
+
+          /*
+           * If packet is locally designated or if policy was not applied,
+           * finish the ip4_lookup_inline logic - part two of ip4_lookup_inline
+           * code - use DPO found by FIB lookup.
+           */
+          if (use_fib0)
+            {
+              hash_c0 = vnet_buffer (b0)->ip.flow_hash = 0;
+              if (PREDICT_FALSE (lb0->lb_n_buckets > 1))
+                {
+                  /* Use flow hash to compute multipath adjacency. */
+                  flow_hash_config0 = lb0->lb_hash_config;
+                  hash_c0 = vnet_buffer (b0)->ip.flow_hash =
+                            ip6_compute_flow_hash (ip60, flow_hash_config0);
+                  dpo0 = load_balance_get_fwd_bucket (lb0,
+                                  (hash_c0 & (lb0->lb_n_buckets_minus_1)));
+                }
+              else
+                {
+                  dpo0 = load_balance_get_bucket_i (lb0, 0);
+                }
+
+              next0 = dpo0->dpoi_next_node;
+              vnet_buffer (b0)->ip.adj_index[VLIB_TX] = dpo0->dpoi_index;
+
+              /* Only process the HBH Option Header if explicitly configured to do so */
+              if (PREDICT_FALSE(ip60->protocol == IP_PROTOCOL_IP6_HOP_BY_HOP_OPTIONS))
+                {
+                  next0 = (dpo_is_adj (dpo0) && im->hbh_enabled) ?
+                          (ip_lookup_next_t) IP6_LOOKUP_NEXT_HOP_BY_HOP : next0;
+                }
+            }
+
+          if (PREDICT_FALSE (b0->flags & VLIB_BUFFER_IS_TRACED))
+            {
+              abf_input_trace_t *tr;
+
+              tr = vlib_add_trace (vm, node, b0, sizeof (*tr));
+              tr->next = next0;
+              tr->index = vnet_buffer (b0)->ip.adj_index[VLIB_TX];
+            }
+
+          /* verify speculative enqueue, maybe switch current next frame */
+          vlib_validate_buffer_enqueue_x1 (vm, node, next_index,
+                  to_next, n_left_to_next, bi0, next0);
+        }
+
+      vlib_put_next_frame (vm, node, next_index, n_left_to_next);
+    }
+
+  vlib_node_increment_counter (vm, fwabf_ip6_node.index, ABF_ERROR_MATCHED, matches);
+
+  return frame->n_vectors;
 }
 
 static u8 *
 format_abf_input_trace (u8 * s, va_list * args)
 {
+  // nnoww - TODO - modify that!
   CLIB_UNUSED (vlib_main_t * vm) = va_arg (*args, vlib_main_t *);
   CLIB_UNUSED (vlib_node_t * node) = va_arg (*args, vlib_node_t *);
   abf_input_trace_t *t = va_arg (*args, abf_input_trace_t *);
@@ -706,7 +911,7 @@ static char *abf_error_strings[] = {
 /* *INDENT-OFF* */
 VLIB_REGISTER_NODE (fwabf_ip4_node) =
 {
-  .function = abf_input_ip4,
+  .function = fwabf_input_ip4,
   .name = "fwabf-input-ip4",
   .vector_size = sizeof (u32),
   .format_trace = format_abf_input_trace,
@@ -722,7 +927,7 @@ VLIB_REGISTER_NODE (fwabf_ip4_node) =
 
 VLIB_REGISTER_NODE (fwabf_ip6_node) =
 {
-  .function = abf_input_ip6,
+  .function = fwabf_input_ip6,
   .name = "fwabf-input-ip6",
   .vector_size = sizeof (u32),
   .format_trace = format_abf_input_trace,
@@ -751,6 +956,7 @@ VNET_FEATURE_INIT (abf_ip6_feat, static) =
 };
 /* *INDENT-ON* */
 
+// nnoww - TODO - remove this finally
 // no need - abf_itf_attach_t is not bound to FIB anymore
 // static fib_node_t *
 // abf_itf_attach_get_node (fib_node_index_t index)
