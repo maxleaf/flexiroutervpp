@@ -27,16 +27,16 @@
 #include <vnet/interface_funcs.h>
 
 /**
- * An extension of the 'vnet_sw_interface_t' interface for FWABF needs:
+ * An extension of the 'vnet_sw_interface_t' interface:
  * binds tunnel or WAN interface into FIB.
  * The 'via' of tunnel is remote peer address, e.g. 10.100.0.4,
  * the 'via' of WAN interface is default GW, e.g. 192.168.1.1.
  *
  * The FWABF uses path labels to route packets. User can assign labels to WAN
  * interfaces or to tunnel loopback interfaces. Than he can add FWABF policy
- * that choose interface for forwarding by label.
- * For now (March 2020) relation between labels and interfaces is 1:1.
- * WAN interfaces can be labeled for Direct Internet Access (DIA) only.
+ * rule with packet classification and labels. The FWABF will check if packet
+ * matches the policy classification. If there is match, it will choose
+ * interface for packet forwarding by policy label.
  */
 typedef struct fwabf_sw_interface_t_
 {
@@ -269,32 +269,9 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
 dpo_id_t fwabf_links_get_dpo (
           fwabf_label_t fwlabel, dpo_proto_t dpo_proto, const load_balance_t* lb)
 {
-  fwabf_sw_interface_t* aif;
-  const dpo_id_t*       lookup_dpo;
-  const dpo_id_t*       drop_dpo = drop_dpo_get(dpo_proto);
-  u32                   i;
-
-  /**
-   * The label might have no interfaces.
-   */
-  if (PREDICT_FALSE(vec_len(labels_to_interfaces[fwlabel])==0))
-    return *drop_dpo;
-
-  aif = &fwabf_sw_interface_db[fwlabel];
-
-
-  // NNOWW - check if I should use multiple interfaces under same label here!
-  /*
-   * For now (March 2020) fwabf_sw_interface_t can be either ip4 or ip6,
-   * but not both of them. We anticipate only one type of traffic by ACL rule.
-   * That means label can't be bound to interface that has both ip4 and ip6
-   * address -> NNOWW - expoainimpact on policy logic - what wil lnt work.
-   */
-  if (PREDICT_FALSE(dpo_proto != aif->dpo_proto))
-    return *drop_dpo;
-
-  // nnoww - TODO - explain that DROP_DPO doesn't drop actually but indicates somytheing to the caller
-
+  const dpo_id_t* lookup_dpo;
+  dpo_id_t        invalid_dpo = DPO_INVALID;
+  u32             i;
 
   /*
    * lb - is DPO of Load Balance type. It is the object returned by the FIB
@@ -352,7 +329,7 @@ dpo_id_t fwabf_links_get_dpo (
   /*
    * No match between lookup DPO and labeled DPO-s.
    */
-  return *drop_dpo;
+  return invalid_dpo;
 }
 
 static fwabf_sw_interface_t * fwabf_sw_interface_find(u32 sw_if_index)
@@ -684,13 +661,6 @@ fib_node_back_walk_rc_t fwabf_sw_interface_fnv_back_walk_notify (
    * Update DPO with the new current forwarding info.
    */
   fwabf_sw_interface_refresh_dpo(aif);
-
-  // nnoww - not in use for now, as no one is attached to the fwabf_sw_inteface object by FIB graph
-  /*
-   * propagate further up the graph.
-   * we can do this synchronously since the fan out is small.
-   */
-  // fib_walk_sync (abf_policy_fib_node_type, fwabf_policy_get_index (abf), ctx);
 
   return (FIB_NODE_BACK_WALK_CONTINUE);
 }

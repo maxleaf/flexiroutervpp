@@ -95,11 +95,6 @@ typedef struct fwabf_policy_action_t_
 typedef struct abf_policy_t_
 {
   /**
-   * Linkage into the FIB graph
-   */
-  //fib_node_t ap_node;       // moved to fwabf_sw_interface_t
-
-  /**
    * ACL index to match.
    * The ACL rule implements policy packet class.
    */
@@ -109,18 +104,6 @@ typedef struct abf_policy_t_
    * Policy action - what link to use for packet forwarding.
    */
   fwabf_policy_action_t action;
-
-  // nnoww - moved to fwabf_sw_interface_t
-  /**
-   * The path-list describing how to forward in case of a match
-   */
-  //fib_node_index_t ap_pl;
-
-  // nnoww - moved to fwabf_sw_interface_t
-  /**
-   * Sibling index on the path-list
-   */
-  //u32 ap_sibling;
 
   /**
    * The policy ID - as configured by the client
@@ -142,8 +125,8 @@ extern fwabf_policy_t *fwabf_policy_get (index_t index);
  * @param lb        the DPO of Load Balancing type retrieved by FIB lookup.
  * @param dpo       result of the function: the DPO to be used for forwarding.
  *                  If return value is not 0, this parameter has no effect.
- * @return 0 if the policy DPO provided within 'dpo' parameter should be used for forwarding,
- *         1 otherwise which effectively means the FIB lookup result DPO should be used.
+ * @return 1 if the policy DPO provided within 'dpo' parameter should be used for forwarding,
+ *         0 otherwise which effectively means the FIB lookup result DPO should be used.
  */
 extern u32 fwabf_policy_get_dpo_ip4 (
                                 index_t                 index,
@@ -159,8 +142,8 @@ extern u32 fwabf_policy_get_dpo_ip4 (
  * @param lb        the DPO of Load Balancing type retrieved by FIB lookup.
  * @param dpo       result of the function: the DPO to be used for forwarding.
  *                  If return value is not 0, this parameter has no effect.
- * @return 0 if the policy DPO provided within 'dpo' parameter should be used for forwarding,
- *         1 otherwise which effectively means the FIB lookup result DPO should be used.
+ * @return 1 if the policy DPO provided within 'dpo' parameter should be used for forwarding,
+ *         0 otherwise which effectively means the FIB lookup result DPO should be used.
  */
 extern u32 fwabf_policy_get_dpo_ip6 (
                                 index_t                 index,
@@ -175,12 +158,6 @@ extern u32 fwabf_policy_get_dpo_ip6 (
  * @return VPP's object index
  */
 extern index_t fwabf_policy_find (u32 policy_id);
-
-// nnoww - moved to fwabf_sw_interface_t
-/**
- * The FIB node type for ABF policies
- */
-//extern fib_node_type_t abf_policy_fib_node_type;
 
 /**
  * Create an ABF Policy

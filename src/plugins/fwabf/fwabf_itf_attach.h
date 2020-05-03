@@ -25,7 +25,6 @@
 #define __FWABF_ITF_ATTACH_H__
 
 #include <plugins/fwabf/fwabf_policy.h>
-//#include <vnet/fib/fib_path_list.h>
 
 /**
  * Attachment data for an ABF policy to an interface
@@ -41,30 +40,10 @@ typedef struct abf_itf_attach_t_
    */
   u32 aia_acl;
 
-  // nnoww - moved to fwabf_sw_interface_t
-  /**
-   * The DPO actually used for forwarding
-   */
-  //dpo_id_t aia_dpo;
-
-  // no need - fwabf_itf_attach_t is not bound to FIB anymore
-  //           Instead it fetches DPO to use for forwarding from fwabf_sw_interface_t.
-  //           The last is bound to FIB and get forwarding updates.
-  /**
-   * Linkage into the FIB graph
-   */
-  //fib_node_t aia_node;
-
   /**
    * The VPP index of the ABF policy
    */
   u32 aia_abf;
-
-  // no need - fwabf_itf_attach_t is not bound to FIB anymore
-  /**
-   * Sibling index on the policy's path list
-   */
-  //u32 aia_sibling;
 
   /**
    * The protocol for the attachment. i.e. the protocol
@@ -100,12 +79,6 @@ extern int fwabf_itf_attach (fib_protocol_t fproto,
 
 extern int fwabf_itf_detach (fib_protocol_t fproto,
 			   u32 policy_id, u32 sw_if_index);
-
-// no need - fwabf_itf_attach_t is not bound to FIB anymore
-//typedef int (*abf_itf_attach_walk_cb_t) (index_t aii, void *ctx0);
-
-// no need - fwabf_itf_attach_t is not bound to FIB anymore
-//extern void abf_itf_attach_walk (abf_itf_attach_walk_cb_t cb, void *ctx);
 
 /*
  * fd.io coding-style-patch-verification: ON

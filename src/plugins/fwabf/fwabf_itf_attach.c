@@ -21,7 +21,7 @@
  *  For more details see official documentation on the Flexiwan Multi-Link.
  */
 
-// nnoww - DOCUMENT
+// nnoww - document
 
 #include <plugins/fwabf/fwabf_itf_attach.h>
 #include <plugins/fwabf/fwabf_locals.h>
@@ -38,13 +38,6 @@
  */
 extern vlib_node_registration_t fwabf_ip4_node;
 extern vlib_node_registration_t fwabf_ip6_node;
-
-// nnoww - TODO - remove this finally
-// no need - fwabf_itf_attach_t is not bound to FIB anymore
-/**
- * FIB node registered type for the bonds
- */
-//static fib_node_type_t abf_itf_attach_fib_node_type;
 
 /**
  * Pool of ABF interface attachment objects
@@ -124,32 +117,6 @@ abf_itf_attach_db_del (u32 abf_index, u32 sw_if_index)
   hash_unset (abf_itf_attach_db, key);
 }
 
-// nnoww - TODO - remove this finally
-// no need - fwabf_itf_attach_t is not bound to FIB anymore
-// static void
-// abf_itf_attach_stack (fwabf_itf_attach_t * aia)
-// {
-//   /*
-//    * stack the DPO on the forwarding contributed by the path-list
-//    */
-//   dpo_id_t via_dpo = DPO_INVALID;
-//   fwabf_policy_t *ap;
-
-//   ap = fwabf_policy_get (aia->aia_abf);
-
-//   fib_path_list_contribute_forwarding (ap->ap_pl,
-// 				       (FIB_PROTOCOL_IP4 == aia->aia_proto ?
-// 					FIB_FORW_CHAIN_TYPE_UNICAST_IP4 :
-// 					FIB_FORW_CHAIN_TYPE_UNICAST_IP6),
-// 				       FIB_PATH_LIST_FWD_FLAG_COLLAPSE,
-// 				       &via_dpo);
-
-//   dpo_stack_from_node ((FIB_PROTOCOL_IP4 == aia->aia_proto ?
-// 			fwabf_ip4_node.index :
-// 			fwabf_ip6_node.index), &aia->aia_dpo, &via_dpo);
-//   dpo_reset (&via_dpo);
-// }
-
 static int
 abf_cmp_attach_for_sort (void *v1, void *v2)
 {
@@ -208,23 +175,12 @@ fwabf_itf_attach (fib_protocol_t fproto,
    */
   pool_get (fwabf_itf_attach_pool, aia);
 
-// nnoww - TODO - remove this finally
-// no need - fwabf_itf_attach_t is not bound to FIB anymore
-//  fib_node_init (&aia->aia_node, abf_itf_attach_fib_node_type);
   aia->aia_prio = priority;
-//  aia->aia_proto = fproto;
   aia->aia_acl = ap->ap_acl;
   aia->aia_abf = api;
   aia->aia_sw_if_index = sw_if_index;
-//  aiai = aia - fwabf_itf_attach_pool;
-  abf_itf_attach_db_add (policy_id, sw_if_index, aia);
 
-// nnoww - TODO - remove this finally
-  // no need - fwabf_itf_attach_t is not bound to FIB anymore
-  // /*
-  //  * stack the DPO on the forwarding contributed by the path-list
-  //  */
-  // abf_itf_attach_stack (aia);
+  abf_itf_attach_db_add (policy_id, sw_if_index, aia);
 
   /*
    * Insert the policy on the interfaces list.
@@ -258,16 +214,6 @@ fwabf_itf_attach (fib_protocol_t fproto,
 
   /* Prepare and set the list of ACLs for lookup within the context */
   abf_setup_acl_lc (fproto, sw_if_index);
-
-// nnoww - TODO - remove this finally
-  // no need - fwabf_itf_attach_t is not bound to FIB anymore
-  // /*
-  //  * become a child of the ABF policy so we are notified when
-  //  * its forwarding changes.
-  //  */
-  // aia->aia_sibling = fib_node_child_add (abf_policy_fib_node_type,
-	// 				 api,
-	// 				 abf_itf_attach_fib_node_type, aiai);
 
   return (0);
 }
@@ -326,24 +272,10 @@ fwabf_itf_detach (fib_protocol_t fproto, u32 policy_id, u32 sw_if_index)
   /* Prepare and set the list of ACLs for lookup within the context */
   abf_setup_acl_lc (fproto, sw_if_index);
 
-// nnoww - TODO - remove this finally
-  // no need - fwabf_itf_attach_t is not bound to FIB anymore
-  // /*
-  //  * remove the dependency on the policy
-  //  */
-  // fib_node_child_remove (abf_policy_fib_node_type,
-	// 		 aia->aia_abf, aia->aia_sibling);
-
   /*
    * remove the attachment from the DB
    */
   abf_itf_attach_db_del (policy_id, sw_if_index);
-
-// nnoww - TODO - remove this finally
-  // /*
-  //  * release our locks on FIB forwarding data
-  //  */
-  // dpo_reset (&aia->aia_dpo);
 
   /*
    * return the object
@@ -434,7 +366,6 @@ VLIB_CLI_COMMAND (abf_itf_attach_cmd_node, static) = {
   .path = "fwabf attach",
   .function = abf_itf_attach_cmd,
   .short_help = "fwabf attach <ip4|ip6> [del] policy <value> [priority <value>] <interface>",
-  // this is not MP safe
 };
 /* *INDENT-ON* */
 
@@ -493,22 +424,6 @@ VLIB_CLI_COMMAND (abf_show_attach_cmd_node, static) = {
 };
 /* *INDENT-ON* */
 
-// nnoww - TODO - remove this finally
-// no need - fwabf_itf_attach_t is not bound to FIB anymore
-// void
-// abf_itf_attach_walk (abf_itf_attach_walk_cb_t cb, void *ctx)
-// {
-//   u32 aii;
-
-//   /* *INDENT-OFF* */
-//   pool_foreach_index(aii, fwabf_itf_attach_pool,
-//   ({
-//     if (!cb(aii, ctx))
-//       break;
-//   }));
-//   /* *INDENT-ON* */
-// }
-
 typedef enum abf_next_t_
 {
   ABF_NEXT_DROP,
@@ -560,7 +475,7 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
           u32 match_acl_pos     = ~0;
           u32 match_rule_index  = ~0;
           u32 trace_bitmap      = 0;
-          u32 use_fib0          = 0;
+          u32 match0            = 0;
           u8 action;
           ip4_header_t*         ip40;
           int                   local0;
@@ -611,11 +526,7 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
           ip40   = vlib_buffer_get_current (b0);
           local0 = fwabf_locals_ip4_exists (&ip40->dst_address);
 
-          if (local0)
-            {
-              use_fib0 = 1;
-            }
-          else
+          if (!local0)
             {
               /*
                * Perform ACL lookup and if found - apply policy.
@@ -656,8 +567,8 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
                   *  follow the DPO chain if available. Otherwise fallback to feature arc.
                   */
                   aia0 = fwabf_itf_attach_get (attachments0[match_acl_pos]);
-                  use_fib0 = fwabf_policy_get_dpo_ip4 (aia0->aia_abf, b0, lb0, &dpo0_policy);
-                  if (PREDICT_TRUE(use_fib0==0))
+                  match0 = fwabf_policy_get_dpo_ip4 (aia0->aia_abf, b0, lb0, &dpo0_policy);
+                  if (PREDICT_TRUE(match0))
                     {
                       next0 = dpo0_policy.dpoi_next_node;
                       vnet_buffer (b0)->ip.adj_index[VLIB_TX] = dpo0_policy.dpoi_index;
@@ -671,7 +582,7 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
            * finish the ip4_lookup_inline logic - part two of ip4_lookup_inline
            * code - use DPO found by FIB lookup.
            */
-          if (use_fib0)
+          if (match0==0)
             {
               hash_c0 = vnet_buffer (b0)->ip.flow_hash = 0;
               if (PREDICT_FALSE (lb0->lb_n_buckets > 1))
@@ -746,7 +657,7 @@ fwabf_input_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
           u32 match_acl_pos     = ~0;
           u32 match_rule_index  = ~0;
           u32 trace_bitmap      = 0;
-          u32 use_fib0          = 0;
+          u32 match0            = 0;
           u8 action;
           ip6_header_t*         ip60;
           int                   local0;
@@ -791,11 +702,7 @@ fwabf_input_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
            */
           local0 = fwabf_locals_ip6_exists (&ip60->dst_address);
 
-          if (local0)
-            {
-              use_fib0 = 1;
-            }
-          else
+          if (!local0)
             {
               /*
                * Perform ACL lookup and if found - apply policy.
@@ -825,8 +732,8 @@ fwabf_input_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
                   *  follow the DPO chain if available. Otherwise fallback to feature arc.
                   */
                   aia0 = fwabf_itf_attach_get (attachments0[match_acl_pos]);
-                  use_fib0 = fwabf_policy_get_dpo_ip6 (aia0->aia_abf, b0, lb0, &dpo0_policy);
-                  if (PREDICT_TRUE(use_fib0==0))
+                  match0 = fwabf_policy_get_dpo_ip6 (aia0->aia_abf, b0, lb0, &dpo0_policy);
+                  if (PREDICT_TRUE(match0))
                     {
                       next0 = dpo0_policy.dpoi_next_node;
                       vnet_buffer (b0)->ip.adj_index[VLIB_TX] = dpo0_policy.dpoi_index;
@@ -840,7 +747,7 @@ fwabf_input_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
            * finish the ip4_lookup_inline logic - part two of ip4_lookup_inline
            * code - use DPO found by FIB lookup.
            */
-          if (use_fib0)
+          if (match0 == 0)
             {
               hash_c0 = vnet_buffer (b0)->ip.flow_hash = 0;
               if (PREDICT_FALSE (lb0->lb_n_buckets > 1))
@@ -893,7 +800,7 @@ fwabf_input_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
 static u8 *
 format_abf_input_trace (u8 * s, va_list * args)
 {
-  // nnoww - TODO - modify that!
+  // nnoww - TODO - check if we can add some usefull info here!
   CLIB_UNUSED (vlib_main_t * vm) = va_arg (*args, vlib_main_t *);
   CLIB_UNUSED (vlib_node_t * node) = va_arg (*args, vlib_node_t *);
   abf_input_trace_t *t = va_arg (*args, abf_input_trace_t *);
@@ -956,67 +863,9 @@ VNET_FEATURE_INIT (abf_ip6_feat, static) =
 };
 /* *INDENT-ON* */
 
-// nnoww - TODO - remove this finally
-// no need - fwabf_itf_attach_t is not bound to FIB anymore
-// static fib_node_t *
-// abf_itf_attach_get_node (fib_node_index_t index)
-// {
-//   fwabf_itf_attach_t *aia = fwabf_itf_attach_get (index);
-//   return (&(aia->aia_node));
-// }
-
-// static fwabf_itf_attach_t *
-// abf_itf_attach_get_from_node (fib_node_t * node)
-// {
-//   return ((fwabf_itf_attach_t *) (((char *) node) -
-// 				STRUCT_OFFSET_OF (fwabf_itf_attach_t,
-// 						  aia_node)));
-// }
-
-// static void
-// abf_itf_attach_last_lock_gone (fib_node_t * node)
-// {
-//   /*
-//    * ABF interface attachments are leaves on the graph.
-//    * we do not manage locks from children.
-//    */
-// }
-
-// /*
-//  * abf_itf_attach_back_walk_notify
-//  *
-//  * A back walk has reached this BIER fmask
-//  */
-// static fib_node_back_walk_rc_t
-// abf_itf_attach_back_walk_notify (fib_node_t * node,
-// 				 fib_node_back_walk_ctx_t * ctx)
-// {
-//   /*
-//    * re-stack the fmask on the n-eos of the via
-//    */
-//   fwabf_itf_attach_t *aia = abf_itf_attach_get_from_node (node);
-
-//   abf_itf_attach_stack (aia);
-
-//   return (FIB_NODE_BACK_WALK_CONTINUE);
-// }
-
-// /*
-//  * The BIER fmask's graph node virtual function table
-//  */
-// static const fib_node_vft_t abf_itf_attach_vft = {
-//   .fnv_get = abf_itf_attach_get_node,
-//   .fnv_last_lock = abf_itf_attach_last_lock_gone,
-//   .fnv_back_walk = abf_itf_attach_back_walk_notify,
-// };
-
 static clib_error_t *
 abf_itf_bond_init (vlib_main_t * vm)
 {
-  // no need - fwabf_itf_attach_t is not bound to FIB anymore
-  // abf_itf_attach_fib_node_type =
-  //   fib_node_register_new_type (&abf_itf_attach_vft);
-
   clib_error_t *acl_init_res = acl_plugin_exports_init (&acl_plugin);
   if (acl_init_res)
     return (acl_init_res);
