@@ -144,6 +144,7 @@ static void vl_api_vxlan_add_del_tunnel_t_handler
     .vni = ntohl (mp->vni),
     .dst = to_ip46 (mp->is_ipv6, mp->dst_address),
     .src = to_ip46 (mp->is_ipv6, mp->src_address),
+    .next_hop_sw_if_index = ntohl (mp->next_hop_sw_if_index),
   };
 
   /* Check src & dst are different */
