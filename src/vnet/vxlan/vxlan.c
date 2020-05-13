@@ -12,6 +12,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - enable enforcement of interface, where VXLAN tunnel should send unicast
+ *     packets from. This is need for the FlexiWAN Multi-link feature.
+ */
+
 #include <vnet/vxlan/vxlan.h>
 #include <vnet/ip/format.h>
 #include <vnet/fib/fib_entry.h>
@@ -60,7 +68,7 @@ format_vxlan_tunnel (u8 * s, va_list * args)
   vxlan_tunnel_t *t = va_arg (*args, vxlan_tunnel_t *);
 
   s = format (s,
-	      "[%d] instance %d src %U dst %U vni %d fib-idx %d sw-if-idx %d ",
+	      "[%d] instance %d src %U dst %U vni %d fib-idx %d sw-if-idx %d",
 	      t->dev_instance, t->user_instance,
 	      format_ip46_address, &t->src, IP46_TYPE_ANY,
 	      format_ip46_address, &t->dst, IP46_TYPE_ANY,
@@ -77,6 +85,14 @@ format_vxlan_tunnel (u8 * s, va_list * args)
   if (t->flow_index != ~0)
     s = format (s, "flow-index %d [%U]", t->flow_index,
 		format_flow_enabled_hw, t->flow_index);
+
+#ifdef FLEXIWAN_FEATURE
+  if (t->fib_pl_index != INDEX_INVALID)
+  {
+    s = format (s, "next hope: pathlist-index %d", t->fib_pl_index);
+    s = format (s, "%U", format_fib_path_list, t->fib_pl_index, 4);
+  }
+#endif
 
   return s;
 }
@@ -142,19 +158,37 @@ vxlan_tunnel_restack_dpo (vxlan_tunnel_t * t)
   fib_forward_chain_type_t forw_type = is_ip4 ?
     FIB_FORW_CHAIN_TYPE_UNICAST_IP4 : FIB_FORW_CHAIN_TYPE_UNICAST_IP6;
 
-  fib_entry_contribute_forwarding (t->fib_entry_index, forw_type, &dpo);
+#ifdef FLEXIWAN_FEATURE
+  if (t->fib_pl_index != INDEX_INVALID)
+  {
+    fib_path_list_contribute_forwarding (
+        t->fib_pl_index, forw_type, FIB_PATH_LIST_FWD_FLAG_COLLAPSE, &dpo);
+    /*
+     * Path-list  should brings DPO attached to next-hope. It is supposed to be
+     * of DPO_LOAD_BALANCE with one DPO in list of DPO_ADJACENCY /
+     * DPO_ADJACENCY_INCOMPLETE type.
+     * Therefor there is no need for games with load balance.
+     * Just use FIB_PATH_LIST_FWD_FLAG_COLLAPSE to get the final DPO_ADJACENCY
+     * DPO.
+     */
+  }
+  else
+#endif
+  {
+    fib_entry_contribute_forwarding (t->fib_entry_index, forw_type, &dpo);
 
-  /* vxlan uses the payload hash as the udp source port
-   * hence the packet's hash is unknown
-   * skip single bucket load balance dpo's */
-  while (DPO_LOAD_BALANCE == dpo.dpoi_type)
-    {
-      load_balance_t *lb = load_balance_get (dpo.dpoi_index);
-      if (lb->lb_n_buckets > 1)
-	break;
+    /* vxlan uses the payload hash as the udp source port
+    * hence the packet's hash is unknown
+    * skip single bucket load balance dpo's */
+    while (DPO_LOAD_BALANCE == dpo.dpoi_type)
+      {
+        load_balance_t *lb = load_balance_get (dpo.dpoi_index);
+        if (lb->lb_n_buckets > 1)
+    break;
 
-      dpo_copy (&dpo, load_balance_get_bucket_i (lb, 0));
-    }
+        dpo_copy (&dpo, load_balance_get_bucket_i (lb, 0));
+      }
+  }
 
   u32 encap_index = is_ip4 ?
     vxlan4_encap_node.index : vxlan6_encap_node.index;
@@ -513,12 +547,32 @@ int vnet_vxlan_add_del_tunnel
 	   * re-stack accordingly
 	   */
 	  vtep_addr_ref (&t->src);
-	  t->fib_entry_index = fib_table_entry_special_add
-	    (t->encap_fib_index, &tun_dst_pfx, FIB_SOURCE_RR,
-	     FIB_ENTRY_FLAG_NONE);
-	  t->sibling_index = fib_entry_child_add
-	    (t->fib_entry_index, FIB_NODE_TYPE_VXLAN_TUNNEL, dev_instance);
-	  vxlan_tunnel_restack_dpo (t);
+#ifdef FLEXIWAN_FEATURE
+    /*
+     * If tunnel packets should be sent out of specific interface,
+     * as in case of Flexiwan Multi-link feature, don't use FIB LOOKUP results.
+     * Instead use DPO of that interface directly.
+     */
+    t->fib_pl_index = INDEX_INVALID;
+    if (!(ip46_address_is_zero(&a->next_hop.frp_addr)))
+    {
+      memcpy(&t->rpath, &a->next_hop, sizeof(a->next_hop));
+      t->pl_flags      = FIB_PATH_LIST_FLAG_SHARED;
+      t->fib_pl_index  = fib_path_list_create (t->pl_flags, &t->rpath);
+      t->sibling_index = fib_path_list_child_add (
+                              t->fib_pl_index, FIB_NODE_TYPE_VXLAN_TUNNEL, dev_instance);
+      vxlan_tunnel_restack_dpo (t);
+    }
+    else
+#endif
+    {
+      t->fib_entry_index = fib_table_entry_special_add
+        (t->encap_fib_index, &tun_dst_pfx, FIB_SOURCE_RR,
+        FIB_ENTRY_FLAG_NONE);
+      t->sibling_index = fib_entry_child_add
+        (t->fib_entry_index, FIB_NODE_TYPE_VXLAN_TUNNEL, dev_instance);
+      vxlan_tunnel_restack_dpo (t);
+    }
 	}
       else
 	{
@@ -621,8 +675,20 @@ int vnet_vxlan_add_del_tunnel
 	    vnet_flow_del (vnm, t->flow_index);
 
 	  vtep_addr_unref (&t->src);
-	  fib_entry_child_remove (t->fib_entry_index, t->sibling_index);
-	  fib_table_entry_delete_index (t->fib_entry_index, FIB_SOURCE_RR);
+#ifdef FLEXIWAN_FEATURE
+    if (t->fib_pl_index != INDEX_INVALID)
+    {
+      fib_path_list_child_remove (t->fib_pl_index, t->sibling_index);
+      t->fib_pl_index =
+      fib_path_list_copy_and_path_remove(t->fib_pl_index, t->pl_flags, &t->rpath);
+      ASSERT(t->fib_pl_index==INDEX_INVALID);
+    }
+    else
+#endif
+    {
+      fib_entry_child_remove (t->fib_entry_index, t->sibling_index);
+      fib_table_entry_delete_index (t->fib_entry_index, FIB_SOURCE_RR);
+    }
 	}
       else if (vtep_addr_unref (&t->dst) == 0)
 	{
