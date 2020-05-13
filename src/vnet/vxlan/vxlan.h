@@ -208,7 +208,7 @@ typedef struct
   u32 encap_fib_index;
   u32 decap_next_index;
   u32 vni;
-  u32 next_hop_sw_if_index;
+  fib_route_path_t next_hop;
 } vnet_vxlan_add_del_tunnel_args_t;
 
 int vnet_vxlan_add_del_tunnel
