@@ -17,6 +17,16 @@
  *------------------------------------------------------------------
  */
 
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - next hop parameters in vxlan API.
+ */
+
+#ifndef FLEXIWAN_FIX
+#define FLEXIWAN_FIX
+#endif
+
 #include <vnet/vnet.h>
 #include <vlibmemory/api.h>
 
@@ -144,9 +154,11 @@ static void vl_api_vxlan_add_del_tunnel_t_handler
     .vni = ntohl (mp->vni),
     .dst = to_ip46 (mp->is_ipv6, mp->dst_address),
     .src = to_ip46 (mp->is_ipv6, mp->src_address),
+#ifdef FLEXIWAN_FIX
     .next_hop.frp_proto = mp->is_ipv6 ? DPO_PROTO_IP6 : DPO_PROTO_IP4,
     .next_hop.frp_sw_if_index = ntohl (mp->next_hop_sw_if_index),
     .next_hop.frp_addr = to_ip46 (mp->is_ipv6, mp->next_hop_ip),
+#endif
   };
 
   /* Check src & dst are different */

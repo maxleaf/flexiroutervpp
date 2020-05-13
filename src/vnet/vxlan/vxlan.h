@@ -12,8 +12,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - next hop parameters in vxlan API.
+ */
+
 #ifndef included_vnet_vxlan_h
 #define included_vnet_vxlan_h
+
+#ifndef FLEXIWAN_FIX
+#define FLEXIWAN_FIX
+#endif
 
 #include <vppinfra/error.h>
 #include <vppinfra/hash.h>
@@ -208,7 +219,9 @@ typedef struct
   u32 encap_fib_index;
   u32 decap_next_index;
   u32 vni;
+#ifdef FLEXIWAN_FIX
   fib_route_path_t next_hop;
+#endif
 } vnet_vxlan_add_del_tunnel_args_t;
 
 int vnet_vxlan_add_del_tunnel
