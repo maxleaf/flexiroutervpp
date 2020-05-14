@@ -477,7 +477,7 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
           u32 trace_bitmap      = 0;
           u32 match0            = 0;
           u8 action;
-          ip4_header_t*         ip40;
+          ip4_header_t*         ip40 = NULL;
           int                   local0;
           u32                   hash_c0;
           u32                   lbi0;
@@ -495,6 +495,7 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
           n_left_to_next -= 1;
 
           b0 = vlib_get_buffer (vm, bi0);
+          ip40 = vlib_buffer_get_current (b0);
 
           /*
            * The fwabf_input_inline node replaces the ip4_lookup_inline node.
@@ -523,7 +524,6 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
            * might send it out of VPP! Just go right to the ip4_lookup_inline
            * finish: use FIB lookup result to forward packet to next node.
            */
-          ip40   = vlib_buffer_get_current (b0);
           local0 = fwabf_locals_ip4_exists (&ip40->dst_address);
 
           if (!local0)
