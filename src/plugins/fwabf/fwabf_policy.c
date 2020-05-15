@@ -240,7 +240,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
   fwabf_label_t*             pfwlabel;
   fwabf_label_t              fwlabel;
   u32                        i;
-  u32                        flow_hash;
+  u32                        flow_hash = 0;
   ip4_header_t*              ip = vlib_buffer_get_current (b);
 
   /*
@@ -361,7 +361,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
   fwabf_label_t*             pfwlabel;
   fwabf_label_t              fwlabel;
   u32                        i;
-  u32                        flow_hash;
+  u32                        flow_hash = 0;
   ip6_header_t*              ip = vlib_buffer_get_current (b);
 
   /*
