@@ -312,6 +312,10 @@ inline u32 fwabf_policy_get_dpo_ip4 (
        */
       if (group->alg == FWABF_SELECTION_RANDOM  &&  vec_len(group->links) > 1)
         {
+          if (!flow_hash)
+          {
+            flow_hash = ip4_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
+          }
           fwlabel = group->links[flow_hash & group->n_links_minus_1];
           *dpo = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP4, lb);
           if (dpo_id_is_valid (dpo))
@@ -433,6 +437,10 @@ inline u32 fwabf_policy_get_dpo_ip6 (
        */
       if (group->alg == FWABF_SELECTION_RANDOM  &&  vec_len(group->links) > 1)
         {
+          if (!flow_hash)
+          {
+            flow_hash = ip6_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
+          }
           fwlabel = group->links[flow_hash & group->n_links_minus_1];
           *dpo = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP6, lb);
           if (dpo_id_is_valid (dpo))
