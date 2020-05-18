@@ -59,7 +59,9 @@ typedef struct fwabf_sw_interface_t_
   /**
    * The path-list describing how to forward using this interface
    */
-  fib_node_index_t pathlist;
+  fib_node_index_t      pathlist_index;
+  fib_path_list_flags_t pathlist_flags;
+  fib_route_path_t      pathlist_rpath;
 
   /**
    * Sibling index on the path-list
@@ -206,9 +208,11 @@ u32 fwabf_links_add_interface (
    * so we could get updates from parent object.
    */
   fib_node_init (&aif->fnode, fwabf_sw_interface_fib_node_type);
-  aif->pathlist         = fib_path_list_create (FIB_PATH_LIST_FLAG_SHARED, rpath);
+  aif->pathlist_flags   = FIB_PATH_LIST_FLAG_SHARED;
+  aif->pathlist_rpath   = *rpath;
+  aif->pathlist_index   = fib_path_list_create (aif->pathlist_flags, &aif->pathlist_rpath);
   aif->pathlist_sibling = fib_path_list_child_add (
-          aif->pathlist, fwabf_sw_interface_fib_node_type, sw_if_index);
+          aif->pathlist_index, fwabf_sw_interface_fib_node_type, sw_if_index);
 
   /*
    * Update forwarding info of the pathlist, so it will be bound to the right
@@ -258,10 +262,14 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
 
   /*
    * No explict call to fib_path_list_destroy!
-   * It will be destroyed automatically on no more children!
-   * nnoww - TODO - ensure this!
+   * It is destroyed by fib_path_list_copy_and_path_remove() on removal last path.
+   * As we have only one path - path to remote tunnel end or to wan gateway,
+   * the path removal should cause list destroy.
    */
-  fib_path_list_child_remove(aif->pathlist, aif->pathlist_sibling);
+  fib_path_list_child_remove(aif->pathlist_index, aif->pathlist_sibling);
+  aif->pathlist_index =
+  fib_path_list_copy_and_path_remove(aif->pathlist_index, aif->pathlist_flags, &aif->pathlist_rpath);
+  ASSERT(aif->pathlist_index==INDEX_INVALID);
 
   return 0;
 }
@@ -456,7 +464,7 @@ format_fwabf_link (u8 * s, va_list * args)
   s = format (s, " %U: sw_if_index=%d, label=%d\n",
 	                  format_vnet_sw_if_index_name, vnm, aif->sw_if_index,
                     aif->sw_if_index, aif->fwlabel);
-  s = fib_path_list_format(aif->pathlist, s);
+  s = fib_path_list_format(aif->pathlist_index, s);
   return (s);
 }
 
@@ -601,7 +609,7 @@ void fwabf_sw_interface_refresh_dpo(fwabf_sw_interface_t * aif)
    * Now refresh the DPO.
    */
   fib_path_list_contribute_forwarding (
-      aif->pathlist, fwd_chain_type, FIB_PATH_LIST_FWD_FLAG_COLLAPSE, &via_dpo);
+      aif->pathlist_index, fwd_chain_type, FIB_PATH_LIST_FWD_FLAG_COLLAPSE, &via_dpo);
   dpo_stack_from_node (fwabf_node_index, &aif->dpo, &via_dpo);
   dpo_reset (&via_dpo);
 
