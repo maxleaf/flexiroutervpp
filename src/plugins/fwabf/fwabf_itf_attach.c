@@ -513,7 +513,7 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
           leaf0 = ip4_fib_mtrie_lookup_step (mtrie0, leaf0, &ip40->dst_address, 3);
 
           lbi0  = ip4_fib_mtrie_leaf_get_adj_index (leaf0);
-          ASSERT (lb0);
+          ASSERT (lbi0);
           lb0 = load_balance_get(lbi0);
           ASSERT (lb0->lb_n_buckets > 0);
           ASSERT (is_pow2 (lb0->lb_n_buckets));
