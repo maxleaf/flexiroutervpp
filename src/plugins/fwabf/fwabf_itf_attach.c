@@ -804,11 +804,8 @@ VLIB_REGISTER_NODE (fwabf_ip4_node) =
   .type = VLIB_NODE_TYPE_INTERNAL,
   .n_errors = ABF_N_ERROR,
   .error_strings = abf_error_strings,
-  .n_next_nodes = ABF_N_NEXT,
-  .next_nodes =
-  {
-    [ABF_NEXT_DROP] = "error-drop",
-  }
+  .n_next_nodes = IP_LOOKUP_N_NEXT,
+  .next_nodes = IP4_LOOKUP_NEXT_NODES,
 };
 
 VLIB_REGISTER_NODE (fwabf_ip6_node) =
@@ -819,12 +816,8 @@ VLIB_REGISTER_NODE (fwabf_ip6_node) =
   .format_trace = format_abf_input_trace,
   .type = VLIB_NODE_TYPE_INTERNAL,
   .n_errors = 0,
-  .n_next_nodes = ABF_N_NEXT,
-
-  .next_nodes =
-  {
-    [ABF_NEXT_DROP] = "error-drop",
-  }
+  .n_next_nodes = IP6_LOOKUP_N_NEXT,
+  .next_nodes = IP6_LOOKUP_NEXT_NODES,
 };
 
 VNET_FEATURE_INIT (abf_ip4_feat, static) =
