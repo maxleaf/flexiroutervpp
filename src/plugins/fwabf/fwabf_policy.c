@@ -32,13 +32,7 @@
 #include <vnet/plugin/plugin.h>
 
 
-// nnoww - TODO - clean all nnoww-s :)
-
 // nnoww - TODO - add validation on delete policy that no attachment objects exist!
-
-// nnoww - TODO - check VPP FIB for X.255 entries - if should support LAN Broadcast addresses - 192.168.1.255 - that requires refcounter (the 255.255.255.255 I already added)?
-
-// nnoww - TODO - ensure that endianity of IP6 address stored in fwabf_locals matches that of packet in vlib_buffer
 
 // nnoww - TEST - ???? - NAT & ABF coexistence:
 //                  1. Modified by NAT packets go through FWABF
