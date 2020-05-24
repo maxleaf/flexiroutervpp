@@ -291,7 +291,7 @@ format_abf_intf_attach (u8 * s, va_list * args)
   fwabf_policy_t *ap;
 
   ap = fwabf_policy_get (aia->aia_abf);
-  s = format (s, "abf-interface-attach: policy:%d priority:%d",
+  s = format (s, "fabf-interface-attach: policy:%d priority:%d",
 	      ap->ap_id, aia->aia_prio);
   return (s);
 }

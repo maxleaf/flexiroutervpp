@@ -82,6 +82,17 @@ typedef struct fwabf_sw_interface_t_
 
 
 /**
+ * An auxiliary structure that unites various data related to label,
+ * like list of interfaces with same label, label usage statistics, etc.
+ */
+typedef struct fwabf_label_data_t_
+{
+  u32* interfaces;
+  u32  counter_hits;
+  u32  counter_misses;
+} fwabf_label_data_t;
+
+/**
  * FIB node type for the fwabf_sw_interface object.
  */
 fib_node_type_t fwabf_sw_interface_fib_node_type;
@@ -94,11 +105,9 @@ static fwabf_sw_interface_t* fwabf_sw_interface_db = NULL;
 
 /**
  * Map of labels to fwabf_sw_interfaces.
- * Label is index, element is list of sw_if_index-s.
- * We use labels as index to implement fast fetch of DPO by label in dataplane.
+ * Label is index, element is structure with list of sw_if_index-s.
  */
-static u32** labels_to_interfaces = NULL;
-
+static fwabf_label_data_t* fwabf_labels = NULL;
 
 /**
  * Map of adjacencies to labels.
@@ -181,19 +190,10 @@ u32 fwabf_links_add_interface (
     }
 
   /*
-   * Allocate new label only if there is no entry for it yet.
-   * Otherwise reuse existing one. Database never shrinks.
+   * Labels are preallocated on bootup. No need to allocate now.
+   * Just go and update label>->interface mapping.
    */
-  if (fwlabel >= vec_len(labels_to_interfaces))
-    {
-      old_len = vec_len(labels_to_interfaces);
-      vec_resize(labels_to_interfaces, (fwlabel+1) - old_len);
-      for (u32 i = old_len; i < vec_len(labels_to_interfaces); i++)
-        {
-          labels_to_interfaces[i] = vec_new(u32, 0);
-        }
-    }
-  vec_add1 (labels_to_interfaces[fwlabel], sw_if_index);
+  vec_add1 (fwabf_labels[fwlabel].interfaces, sw_if_index);
 
   /*
    * Initialize new fwabf_sw_interface_t now.
@@ -249,9 +249,9 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
   /*
    * Remove label->interface mapping.
    */
-  index = vec_search (labels_to_interfaces[fwlabel], sw_if_index);
+  index = vec_search (fwabf_labels[fwlabel].interfaces, sw_if_index);
   ASSERT (index !=INDEX_INVALID);
-  vec_del1 (labels_to_interfaces[fwlabel], index);
+  vec_del1 (fwabf_labels[fwlabel].interfaces, index);
 
   /*
    * Copied from ABF, but do we really need this?
@@ -316,6 +316,7 @@ dpo_id_t fwabf_links_get_dpo (
       ASSERT(lookup_dpo->dpoi_index < FWABF_MAX_ADJ_INDEX);
       if (PREDICT_TRUE(adj_indexes_to_labels[lookup_dpo->dpoi_index] == fwlabel))
         {
+          fwabf_labels[fwlabel].counter_hits++;
           return *lookup_dpo;
         }
     }
@@ -330,13 +331,17 @@ dpo_id_t fwabf_links_get_dpo (
           lookup_dpo = load_balance_get_fwd_bucket (lb, i);
           ASSERT(lookup_dpo->dpoi_index < FWABF_MAX_ADJ_INDEX);
           if (PREDICT_TRUE(adj_indexes_to_labels[lookup_dpo->dpoi_index] == fwlabel))
-            return *lookup_dpo;
+            {
+              fwabf_labels[fwlabel].counter_hits++;
+              return *lookup_dpo;
+            }
         }
     }
 
   /*
    * No match between lookup DPO and labeled DPO-s.
    */
+  fwabf_labels[fwlabel].counter_misses++;
   return invalid_dpo;
 }
 
@@ -541,11 +546,12 @@ fwabf_link_show_labels_cmd (
 
   for (i=0; i<FWABF_MAX_LABEL; i++)
     {
-      if (vec_len(labels_to_interfaces[i]) == 0)
+      if (vec_len(fwabf_labels[i].interfaces) == 0)
         continue;
 
-      vlib_cli_output(vm, "%d:", i);
-      vec_foreach (sw_if_index, labels_to_interfaces[i])
+      vlib_cli_output(vm, "%d (hits:%d misses:%d):",
+          i, fwabf_labels[i].counter_hits, fwabf_labels[i].counter_misses);
+      vec_foreach (sw_if_index, fwabf_labels[i].interfaces)
         {
           aif = &fwabf_sw_interface_db[*sw_if_index];
           if (verbose)
@@ -697,8 +703,12 @@ clib_error_t * fwabf_links_init (vlib_main_t * vm)
    * marked with label. We preallocate it as label range is know in advance
    * and is pretty small: [0-254].
    */
-  vec_validate(labels_to_interfaces, FWABF_MAX_LABEL);
-  vec_zero(labels_to_interfaces);
+  vec_validate(fwabf_labels, FWABF_MAX_LABEL);
+  for (u32 i = 0; i < vec_len(fwabf_labels); i++)
+  {
+    memset(&fwabf_labels[i], 0, sizeof(fwabf_labels[i]));
+    fwabf_labels[i].interfaces = vec_new(u32, 0);
+  }
 
   /*
    * Initialize array of adjacencies, elements of which are labels.

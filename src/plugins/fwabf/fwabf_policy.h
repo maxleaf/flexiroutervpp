@@ -110,6 +110,15 @@ typedef struct abf_policy_t_
    */
   u32 ap_id;
 
+  /**
+   * Counters.
+   */
+  u32 counter_matched;      /*ACL lookup hit*/
+  u32 counter_applied;      /*Policy applied successfully*/
+  u32 counter_fallback;     /*Policy failed so fallback to default routing*/
+  u32 counter_dropped;      /*Policy failed so drop the packet*/
+  
+
 } fwabf_policy_t;
 
 /**

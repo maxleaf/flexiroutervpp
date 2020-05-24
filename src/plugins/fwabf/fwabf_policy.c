@@ -46,8 +46,6 @@
 //                              flow_hash, ap->action.n_link_groups_pow2_mask,
 //                              ap->action.n_link_groups_minus_1, i);
 
-// nnoww - TEST - ???? - Incoming DHCP Server packets should be not shadled by policy!
-
 /**
  * Pool of ABF objects
  */
@@ -123,6 +121,11 @@ fwabf_policy_add (u32 policy_id, u32 acl_index, fwabf_policy_action_t * action)
       group->n_links_minus_1   = vec_len(group->links) - 1;
       group->n_links_pow2_mask = (vec_len(group->links) <= 0xF) ? 0xF : 0xFF; /* Maximum number of labels is 255 */
     }
+
+  ap->counter_matched  = 0;
+  ap->counter_applied  = 0;
+  ap->counter_fallback = 0;
+  ap->counter_dropped  = 0;
 
   /*
     * add this new policy to the DB
@@ -237,6 +240,8 @@ inline u32 fwabf_policy_get_dpo_ip4 (
   u32                        flow_hash = 0;
   ip4_header_t*              ip = vlib_buffer_get_current (b);
 
+  ap->counter_matched++;  /*This function is called on ACL lookup hit only*/
+
   /*
    * lb - is DPO of Load Balance type. It doesn't point to adjacency directly.
    * Instead it might point to one kinda "final" DPO or to multiple "mapped"
@@ -276,7 +281,10 @@ inline u32 fwabf_policy_get_dpo_ip4 (
           fwlabel = group->links[i];
           *dpo    = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP4, lb);
           if (dpo_id_is_valid (dpo))
-            return 1;
+            {
+              ap->counter_applied++;
+              return 1;
+            }
         }
 
       /*
@@ -288,7 +296,10 @@ inline u32 fwabf_policy_get_dpo_ip4 (
         {
           *dpo = fwabf_links_get_dpo (*pfwlabel, DPO_PROTO_IP4, lb);
           if (dpo_id_is_valid (dpo))
-            return 1;
+            {
+              ap->counter_applied++;
+              return 1;
+            }
         }
     } /*if (ap->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(ap->action.link_groups) > 1)*/
 
@@ -313,13 +324,19 @@ inline u32 fwabf_policy_get_dpo_ip4 (
           fwlabel = group->links[flow_hash & group->n_links_minus_1];
           *dpo = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP4, lb);
           if (dpo_id_is_valid (dpo))
-            return 1;
+            {
+              ap->counter_applied++;
+              return 1;
+            }
         }
       vec_foreach (pfwlabel, group->links)
         {
           *dpo = fwabf_links_get_dpo (*pfwlabel, DPO_PROTO_IP4, lb);
           if (dpo_id_is_valid (dpo))
-            return 1;
+            {
+              ap->counter_applied++;
+              return 1;
+            }
         }
     }
 
@@ -331,9 +348,11 @@ inline u32 fwabf_policy_get_dpo_ip4 (
    */
   if (PREDICT_TRUE(ap->action.fallback==FWABF_FALLBACK_DEFAULT_ROUTE))
     {
+      ap->counter_fallback++;
       return 0;
     }
   dpo_copy(dpo, drop_dpo_get(DPO_PROTO_IP4));
+  ap->counter_dropped++;
   return 1;
 }
 
@@ -361,6 +380,8 @@ inline u32 fwabf_policy_get_dpo_ip6 (
   u32                        i;
   u32                        flow_hash = 0;
   ip6_header_t*              ip = vlib_buffer_get_current (b);
+
+  ap->counter_matched++;  /*This function is called on ACL lookup hit only*/
 
   /*
    * lb - is DPO of Load Balance type. It doesn't point to adjacency directly.
@@ -401,7 +422,10 @@ inline u32 fwabf_policy_get_dpo_ip6 (
           fwlabel = group->links[i];
           *dpo    = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP6, lb);
           if (dpo_id_is_valid (dpo))
-            return 1;
+            {
+              ap->counter_applied++;
+              return 1;
+            }
         }
 
       /*
@@ -413,7 +437,10 @@ inline u32 fwabf_policy_get_dpo_ip6 (
         {
           *dpo = fwabf_links_get_dpo (*pfwlabel, DPO_PROTO_IP6, lb);
           if (dpo_id_is_valid (dpo))
-            return 1;
+            {
+              ap->counter_applied++;
+              return 1;
+            }
         }
     } /*if (ap->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(ap->action.link_groups) > 1)*/
 
@@ -438,13 +465,19 @@ inline u32 fwabf_policy_get_dpo_ip6 (
           fwlabel = group->links[flow_hash & group->n_links_minus_1];
           *dpo = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP6, lb);
           if (dpo_id_is_valid (dpo))
-            return 1;
+            {
+              ap->counter_applied++;
+              return 1;
+            }
         }
       vec_foreach (pfwlabel, group->links)
         {
           *dpo = fwabf_links_get_dpo (*pfwlabel, DPO_PROTO_IP6, lb);
           if (dpo_id_is_valid (dpo))
-            return 1;
+            {
+              ap->counter_applied++;
+              return 1;
+            }
         }
     }
 
@@ -456,9 +489,11 @@ inline u32 fwabf_policy_get_dpo_ip6 (
    */
   if (PREDICT_TRUE(ap->action.fallback==FWABF_FALLBACK_DEFAULT_ROUTE))
     {
+      ap->counter_fallback++;
       return 0;
     }
   dpo_copy(dpo, drop_dpo_get(DPO_PROTO_IP6));
+  ap->counter_dropped++;
   return 1;
 }
 
@@ -680,8 +715,11 @@ format_abf (u8 * s, va_list * args)
 {
   fwabf_policy_t *ap = va_arg (*args, fwabf_policy_t *);
 
-  s = format (s, "abf:[%d]: policy:%d acl:%d\n%U",
-	      ap - abf_policy_pool, ap->ap_id, ap->ap_acl, format_action, &ap->action);
+  s = format (s, "fwabf:[%d]: policy:%d acl:%d\n",
+	      ap - abf_policy_pool, ap->ap_id, ap->ap_acl);
+  s = format (s, " counters: matched:%d applied:%d fallback:%d dropped:%d\n",
+	      ap->counter_matched, ap->counter_applied, ap->counter_fallback, ap->counter_dropped);
+  s = format (s, "%U", format_action, &ap->action);
   return s;
 }
 
