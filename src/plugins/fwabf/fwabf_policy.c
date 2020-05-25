@@ -679,7 +679,7 @@ format_link_group (u8 * s, va_list * args)
   char*                      s_alg;
 
   s_alg = group->alg==FWABF_SELECTION_RANDOM ? "random" : "priority";
-  s = format (s, "order=%s labels=", s_alg);
+  s = format (s, "order:%s labels:", s_alg);
   if (n_links > 1)
     {
       for (i32 i=0; i<n_links-1; i++)
@@ -697,15 +697,23 @@ format_action (u8 * s, va_list * args)
   fwabf_policy_action_t*     action   = va_arg (*args, fwabf_policy_action_t *);
   u32                        n_groups = vec_len(action->link_groups);
   char*                      s_alg;
+  char*                      s_fallback;
 
+  s = format (s, " action:\n");
+  s_fallback = action->fallback==FWABF_FALLBACK_DROP ? "drop" : "default_routing";
+  s = format (s, "  fallback:%s", s_fallback);
   if (n_groups > 1)
     {
       s_alg = action->alg==FWABF_SELECTION_RANDOM ? "random" : "priority";
-      s = format (s, " select_group: %s\n", s_alg);
+      s = format (s, "  select_group:%s\n", s_alg);
+    }
+  else
+    {
+      s = format (s, "\n");
     }
   for (u32 i=0; i<n_groups; i++)
     {
-      s = format (s, " group %d: %U\n", i, format_link_group, &action->link_groups[i]);
+      s = format (s, "  group[%d]: %U\n", i, format_link_group, &action->link_groups[i]);
     }
   return s;
 }
