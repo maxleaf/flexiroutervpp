@@ -22,7 +22,49 @@
  */
 
 
-// nnoww - document
+/**
+ * FWABF Policy principals:
+ *
+ *  1. User assigns labels to tunnels.
+ *     Tunnel might have only one label.
+ *     Same label can be assigned to a number of tunnels.
+ *
+ *  2. User creates policy object that holds labels to be used for tunnel selection.
+ *     The tunnel to be used for forwarding is found by the label stored
+ *     in the policy object. In addition this tunnel should be the shortest path
+ *     to destination. To ensure that we intersect results of default FIB lookup
+ *     with labeled tunnels.
+ *     If there are a number of tunnels with same label and equal cost, the load
+ *     balancing is used based on packet flow hash.
+ *
+ *  3. To track tunnel state (up/down) and to keep tunnel<->labels binding and
+ *     other stuff we use FWABF Link object. It represents extension of the VPP
+ *     software interface object. See the fwabf_sw_interface_t structure.
+ *     Every Link registers itself with FIB to get continuous updates on reachability
+ *     of the tunnel remote end. This is done using the FIB PathList objects.
+ *     Each Link creates the PathList object with single Path to the remote end
+ *     of tunnel. Than the Link attaches to it's PathList as a FIB child.
+ *     As a result, it is updated by FIB backwalk mechanism every time,
+ *     when state of adjacency to remote end is changed. On every update Link
+ *     fetches the updated DPO out of the PathList. The DPO provides information
+ *     for forwarding - next VLIB graph node and index of adjacency that holds
+ *     MAC headers. If tunnel is up, the DPO will point to the ip4-rewrite
+ *     node and adjacency that reflects the remote end. If tunnel is down,
+ *     the DPO will point to the ip4-drop node.
+ *
+ *  4. ACL lookup is used to match received packets to policy.
+ *     It is done in the fwabf_itf_attach file. If ACL lookup succeeds,
+ *     the Attachment object is used to get the right Policy object.
+ *     The Attachment object is implemented by the fwabf_itf_attach_t structure.
+ *     It is intermediary between RX interface and the Policy. User creates
+ *     it explicitly to enable policy on specific RX interface.
+ *
+ *  5. User should create rule in the ACL database before Policy creation.
+ *     This rule represents packet classification for Policy. The ID of this
+ *     rule should be provided as input for Policy creation API.
+ *     If packet matches the ACL rule, the packet is subject for Policy.
+ */
+
 
 #include <plugins/fwabf/fwabf_policy.h>
 
@@ -33,18 +75,6 @@
 
 
 // nnoww - TODO - add validation on delete policy that no attachment objects exist!
-
-// nnoww - TEST - ???? - NAT & ABF coexistence:
-//                  1. Modified by NAT packets go through FWABF
-//                  2. NOT Modified by NAT packets go through FWABF
-//                  3. Reassembled packets go through FWABF
-//                  4. ICMP packet go FWABF ???
-//
-
-// nnoww - TEST - ???? -  flowhash algorithm
-//                        i = FWABF_GET_INDEX_BY_FLOWHASH(
-//                              flow_hash, ap->action.n_link_groups_pow2_mask,
-//                              ap->action.n_link_groups_minus_1, i);
 
 /**
  * Pool of ABF objects
@@ -279,7 +309,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
           i = FWABF_GET_INDEX_BY_FLOWHASH(
                 flow_hash, group->n_links_pow2_mask, group->n_links_minus_1, i);
           fwlabel = group->links[i];
-          *dpo    = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP4, lb);
+          *dpo    = fwabf_links_get_dpo (fwlabel, lb);
           if (dpo_id_is_valid (dpo))
             {
               ap->counter_applied++;
@@ -294,7 +324,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
        */
       vec_foreach (pfwlabel, group->links)
         {
-          *dpo = fwabf_links_get_dpo (*pfwlabel, DPO_PROTO_IP4, lb);
+          *dpo = fwabf_links_get_dpo (*pfwlabel, lb);
           if (dpo_id_is_valid (dpo))
             {
               ap->counter_applied++;
@@ -322,7 +352,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
             flow_hash = ip4_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
           }
           fwlabel = group->links[flow_hash & group->n_links_minus_1];
-          *dpo = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP4, lb);
+          *dpo = fwabf_links_get_dpo (fwlabel, lb);
           if (dpo_id_is_valid (dpo))
             {
               ap->counter_applied++;
@@ -331,7 +361,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
         }
       vec_foreach (pfwlabel, group->links)
         {
-          *dpo = fwabf_links_get_dpo (*pfwlabel, DPO_PROTO_IP4, lb);
+          *dpo = fwabf_links_get_dpo (*pfwlabel, lb);
           if (dpo_id_is_valid (dpo))
             {
               ap->counter_applied++;
@@ -420,7 +450,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
           i = FWABF_GET_INDEX_BY_FLOWHASH(
                 flow_hash, group->n_links_pow2_mask, group->n_links_minus_1, i);
           fwlabel = group->links[i];
-          *dpo    = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP6, lb);
+          *dpo    = fwabf_links_get_dpo (fwlabel, lb);
           if (dpo_id_is_valid (dpo))
             {
               ap->counter_applied++;
@@ -435,7 +465,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
        */
       vec_foreach (pfwlabel, group->links)
         {
-          *dpo = fwabf_links_get_dpo (*pfwlabel, DPO_PROTO_IP6, lb);
+          *dpo = fwabf_links_get_dpo (*pfwlabel, lb);
           if (dpo_id_is_valid (dpo))
             {
               ap->counter_applied++;
@@ -463,7 +493,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
             flow_hash = ip6_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
           }
           fwlabel = group->links[flow_hash & group->n_links_minus_1];
-          *dpo = fwabf_links_get_dpo (fwlabel, DPO_PROTO_IP6, lb);
+          *dpo = fwabf_links_get_dpo (fwlabel, lb);
           if (dpo_id_is_valid (dpo))
             {
               ap->counter_applied++;
@@ -472,7 +502,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
         }
       vec_foreach (pfwlabel, group->links)
         {
-          *dpo = fwabf_links_get_dpo (*pfwlabel, DPO_PROTO_IP6, lb);
+          *dpo = fwabf_links_get_dpo (*pfwlabel, lb);
           if (dpo_id_is_valid (dpo))
             {
               ap->counter_applied++;
@@ -705,7 +735,7 @@ format_action (u8 * s, va_list * args)
   if (n_groups > 1)
     {
       s_alg = action->alg==FWABF_SELECTION_RANDOM ? "random" : "priority";
-      s = format (s, "  select_group:%s\n", s_alg);
+      s = format (s, " select_group:%s\n", s_alg);
     }
   else
     {

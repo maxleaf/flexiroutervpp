@@ -21,7 +21,45 @@
  *  For more details see official documentation on the Flexiwan Multi-Link.
  */
 
-// nnoww - document
+/**
+ * This file includes implemenation of the Attachment part of the Flexiwan ACL Based
+ * Forwarding Policy object.
+ * The Attachment binds poolicy to RX interface, thus activating it.
+ *
+ * Every Policy object has as much Attachment objects as a number of interfaces
+ * on which packets that might be a subject for policy are received.
+ * Currently every LAN interface and every tunnel interface has Attachment.
+ * Attachment to tunnel is needed to apply policy on intermediate VPPs on the way
+ * to tunnel remote end.
+ *
+ * The Attachment module implements fwabf-input-ip4/fwabf-input-ip6 node.
+ * This node is placed on ip4-unicast/ip6-unicast arc. Once the Attachment
+ * feature is activated, the node starts to receive buffers from ip4-input/
+ * ip4-input-nochecksum/NAT/ACL nodes and instead of ip4-lookup node.
+ * The node logic performs following:
+ *    1. Make FIB lookup (copied from ip4-lookup/ip6-lookup nodes)
+ *    2. Make ACL lookup (copied from ABF plugin)
+ *    3. If ACL lookup fails, hence policy should NOT be applied to packet,
+ *       than:
+ *          Forward packet according ip4-lookup/ip6-lookup logic:
+ *          peek DPO from children of lookup Load Balancing DPO and use
+ *          it for next node and for adjacency metadata.
+ *          If there are multiple children, the flow hash is used to choose.
+ *          This code was copied from ip4-lookup/ip6-lookup nodes.
+ *       else:
+ *          Forward packet according FWABF policy:
+ *          find Attachment object based on ACL lookup output and fetch the DPO
+ *          to be used for forwarding out of it's parent Policy object.
+ *          If Policy fails for some reason, the ip4-lookup/ip6-lookup logic
+ *          will take a place.
+ *
+ * In comparison to original abf_itf_attach file, where the FWABF Attachment was
+ * forked of, the FWABF Attachment fetches DPO to be used from Policy object.
+ * In addition the Attachment logic completely replaces ip4_lookup/ip6_lookup
+ * node. The ip4_lookup/ip6_lookup code is simply copied here. It is needed
+ * to avoid lookup twice for packets that are not subject for policy,
+ * as policy algorithm requires lookup to choose path out of available pathes.
+ */
 
 #include <plugins/fwabf/fwabf_itf_attach.h>
 

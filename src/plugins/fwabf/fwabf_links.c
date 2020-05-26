@@ -274,8 +274,7 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
   return 0;
 }
 
-dpo_id_t fwabf_links_get_dpo (
-          fwabf_label_t fwlabel, dpo_proto_t dpo_proto, const load_balance_t* lb)
+dpo_id_t fwabf_links_get_dpo (fwabf_label_t fwlabel, const load_balance_t* lb)
 {
   const dpo_id_t* lookup_dpo;
   dpo_id_t        invalid_dpo = DPO_INVALID;
@@ -633,7 +632,15 @@ void fwabf_sw_interface_refresh_dpo(fwabf_sw_interface_t * aif)
     }
 }
 
-// nnoww - document
+
+/**
+ * This function is a part of FIB graph logic.
+ * See virtual function table fwabf_sw_interface_vft below.
+ * It is used when FIB framework back walks on graph to inform nodes of
+ * forwarding information update.
+ * It gets the FWABF Link (fwabf_sw_interface_t object) out of embedded into it
+ * fib_node_t object.
+ */
 static
 fwabf_sw_interface_t * fwabf_sw_interface_get_from_node (fib_node_t * node)
 {
@@ -641,7 +648,14 @@ fwabf_sw_interface_t * fwabf_sw_interface_get_from_node (fib_node_t * node)
     (((char *) node) - STRUCT_OFFSET_OF (fwabf_sw_interface_t, fnode)));
 }
 
-// nnoww - document
+/**
+ * This function is a part of FIB graph logic.
+ * See virtual function table fwabf_sw_interface_vft below.
+ * It is used when FIB framework back walks on graph to inform nodes of
+ * forwarding information update.
+ * It returns the fib_node_t object that is embedded into the FWABF Link
+ * (fwabf_sw_interface_t object) by index of link in pool of links.
+ */
 static
 fib_node_t * fwabf_sw_interface_fnv_get_node (fib_node_index_t index)
 {
@@ -651,7 +665,13 @@ fib_node_t * fwabf_sw_interface_fnv_get_node (fib_node_index_t index)
   return (&(aif->fnode));
 }
 
-// nnoww - document
+/**
+ * This function is a part of FIB graph logic.
+ * See virtual function table fwabf_sw_interface_vft below.
+ * FIB framework invokes it when the node (FWABF Link) has no more children,
+ * so it can be safely destructed.
+ * The children mechanism is used to propagate forwarding informantion updates.
+ */
 static
 void fwabf_sw_interface_fnv_last_lock_gone (fib_node_t * node)
 {

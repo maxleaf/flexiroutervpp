@@ -42,20 +42,15 @@
  * To use flexiwan path labels user has to label Tunnel and WAN interfaces.
  * The links might be groupped, so user can prioritize groups of links to choose
  * link from.
- * FWABF policy consist of paclet class agains which packet should be matched,
+ * FWABF policy consist of packet class against which packet should be matched,
  * and action to be performed on match. The packet class is implemented by ACL
  * rule and is referenced by ACL index. The action is specified in this module.
  *
  * ABF policies are then 'attached' to interfaces onto unicast-ip4/6 arcs.
  * When vlib buffer is received by FWABF vlib graph node, it is matched against
  * ACL database. If match was found, the packet will be routed by policy.
- * If no match was found, the vlib buffer will continue down to the interface's
- * feature arc.
- * In case of match, the policy is fetched using the matched ACL rule-id,
- * as it was provided by user on policy creation, and it identifies the policy
- * by 1:1 relation. Than policy labels are used to find right WAN interface or
- * tunnel to forward packet on, and the correspondent DPO is fetched
- * from the fwabf_sw_interface_pool database.
+ * If no match was found, the buffer will be routed according original
+ * ip4-lookup/ip6-lookup logic.
  */
 
 typedef enum fwabf_selection_alg_t_ {
