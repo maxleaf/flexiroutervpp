@@ -198,6 +198,7 @@ fwabf_itf_attach (fib_protocol_t fproto,
 
   ASSERT (INDEX_INVALID != pi);
   p = fwabf_policy_get (pi);
+  p->refCounter++;
 
   /*
    * check this is not a duplicate
@@ -258,7 +259,8 @@ fwabf_itf_attach (fib_protocol_t fproto,
 int
 fwabf_itf_detach (fib_protocol_t fproto, u32 policy_id, u32 sw_if_index)
 {
-  fwabf_itf_attach_t *fia;
+  fwabf_itf_attach_t* fia;
+  fwabf_policy_t*     p;
   u32 index;
 
   /*
@@ -268,6 +270,9 @@ fwabf_itf_detach (fib_protocol_t fproto, u32 policy_id, u32 sw_if_index)
 
   if (NULL == fia)
     return (VNET_API_ERROR_ENTRY_ALREADY_EXISTS);
+
+  p = fwabf_policy_get (fwabf_policy_find(policy_id));
+  p->refCounter--;
 
   /*
    * first remove from the interface's vector

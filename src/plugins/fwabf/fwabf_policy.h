@@ -106,6 +106,11 @@ typedef struct fwabf_policy_t_
   u32 id;
 
   /**
+   * Track Attachment objects that reference this Policy.
+   */
+  u32 refCounter;
+
+  /**
    * Counters.
    */
   u32 counter_matched;      /*ACL lookup hit*/

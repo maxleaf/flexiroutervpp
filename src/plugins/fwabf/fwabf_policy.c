@@ -74,8 +74,6 @@
 #include <vnet/plugin/plugin.h>
 
 
-// nnoww - TODO - add validation on delete policy that no attachment objects exist!
-
 /**
  * Pool of ABF objects
  */
@@ -152,6 +150,8 @@ fwabf_policy_add (u32 policy_id, u32 acl_index, fwabf_policy_action_t * action)
       group->n_links_pow2_mask = (vec_len(group->links) <= 0xF) ? 0xF : 0xFF; /* Maximum number of labels is 255 */
     }
 
+  p->refCounter = 0;
+
   p->counter_matched  = 0;
   p->counter_applied  = 0;
   p->counter_fallback = 0;
@@ -176,6 +176,8 @@ fwabf_policy_delete (u32 policy_id)
     return VNET_API_ERROR_INVALID_VALUE;
 
   p = fwabf_policy_get (pi);
+  if (p->refCounter > 0)
+    return VNET_API_ERROR_INSTANCE_IN_USE;
 
   vec_foreach (group, p->action.link_groups)
     {
