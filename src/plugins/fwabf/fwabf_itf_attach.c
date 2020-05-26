@@ -466,25 +466,21 @@ VLIB_CLI_COMMAND (abf_show_attach_cmd_node, static) = {
 };
 /* *INDENT-ON* */
 
-typedef enum abf_next_t_
+typedef struct fwabf_input_trace_t_
 {
-  ABF_NEXT_DROP,
-  ABF_N_NEXT,
-} abf_next_t;
-
-typedef struct abf_input_trace_t_
-{
-  abf_next_t next;
-  index_t index;
-} abf_input_trace_t;
+  ip_lookup_next_t  next;     /* next node */
+  index_t           adj;      /* resolved adjacency index */
+  u32               match;    /* ACL match & Resolved by Policy */
+  index_t           policy;   /* Policy index or UNDEFINED */
+} fwabf_input_trace_t;
 
 typedef enum
 {
-#define abf_error(n,s) ABF_ERROR_##n,
+#define fwabf_error(n,s) FWABF_ERROR_##n,
 #include "fwabf_error.def"
-#undef abf_error
-  ABF_N_ERROR,
-} abf_error_t;
+#undef fwabf_error
+  FWABF_N_ERROR,
+} fwabf_error_t;
 
 static uword
 fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * frame)
@@ -505,8 +501,8 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
       while (n_left_from > 0 && n_left_to_next > 0)
         {
           const u32*            attachments0;
-          const fwabf_itf_attach_t* aia0;
-          abf_next_t            next0 = ABF_NEXT_DROP;
+          const fwabf_itf_attach_t* fia0 = 0;
+          ip_lookup_next_t      next0 = IP_LOOKUP_NEXT_DROP;
           vlib_buffer_t*        b0;
           fa_5tuple_opaque_t    fa_5tuple0;
           const dpo_id_t*       dpo0;
@@ -595,8 +591,8 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
               * match:
               *  follow the DPO chain if available. Otherwise fallback to feature arc.
               */
-              aia0 = fwabf_itf_attach_get (attachments0[match_acl_pos]);
-              match0 = fwabf_policy_get_dpo_ip4 (aia0->fia_policy, b0, lb0, &dpo0_policy);
+              fia0 = fwabf_itf_attach_get (attachments0[match_acl_pos]);
+              match0 = fwabf_policy_get_dpo_ip4 (fia0->fia_policy, b0, lb0, &dpo0_policy);
               if (PREDICT_TRUE(match0))
                 {
                   next0 = dpo0_policy.dpoi_next_node;
@@ -606,7 +602,7 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
             }
           else
             {
-              match0 =  0;
+              match0 = 0;
             }
 
           /*
@@ -638,11 +634,13 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
 
           if (PREDICT_FALSE (b0->flags & VLIB_BUFFER_IS_TRACED))
             {
-              abf_input_trace_t *tr;
+              fwabf_input_trace_t *tr;
 
               tr = vlib_add_trace (vm, node, b0, sizeof (*tr));
-              tr->next = next0;
-              tr->index = vnet_buffer (b0)->ip.adj_index[VLIB_TX];
+              tr->next   = next0;
+              tr->adj    = vnet_buffer (b0)->ip.adj_index[VLIB_TX];
+              tr->match  = match0;
+              tr->policy = fia0 ? fia0->fia_policy : -1;
             }
 
           /* verify speculative enqueue, maybe switch current next frame */
@@ -653,7 +651,7 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
       vlib_put_next_frame (vm, node, next_index, n_left_to_next);
     }
 
-  vlib_node_increment_counter (vm, fwabf_ip4_node.index, ABF_ERROR_MATCHED, matches);
+  vlib_node_increment_counter (vm, fwabf_ip4_node.index, FWABF_ERROR_MATCHED, matches);
 
   return frame->n_vectors;
 }
@@ -677,8 +675,8 @@ fwabf_input_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
       while (n_left_from > 0 && n_left_to_next > 0)
         {
           const u32*            attachments0;
-          const fwabf_itf_attach_t* aia0;
-          abf_next_t            next0 = ABF_NEXT_DROP;
+          const fwabf_itf_attach_t* fia0;
+          ip_lookup_next_t      next0 = IP_LOOKUP_NEXT_DROP;
           vlib_buffer_t*        b0;
           fa_5tuple_opaque_t    fa_5tuple0;
           const dpo_id_t*       dpo0;
@@ -750,8 +748,8 @@ fwabf_input_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
               * match:
               *  follow the DPO chain if available. Otherwise fallback to feature arc.
               */
-              aia0 = fwabf_itf_attach_get (attachments0[match_acl_pos]);
-              match0 = fwabf_policy_get_dpo_ip6 (aia0->fia_policy, b0, lb0, &dpo0_policy);
+              fia0 = fwabf_itf_attach_get (attachments0[match_acl_pos]);
+              match0 = fwabf_policy_get_dpo_ip6 (fia0->fia_policy, b0, lb0, &dpo0_policy);
               if (PREDICT_TRUE(match0))
                 {
                   next0 = dpo0_policy.dpoi_next_node;
@@ -799,11 +797,13 @@ fwabf_input_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
 
           if (PREDICT_FALSE (b0->flags & VLIB_BUFFER_IS_TRACED))
             {
-              abf_input_trace_t *tr;
+              fwabf_input_trace_t *tr;
 
               tr = vlib_add_trace (vm, node, b0, sizeof (*tr));
-              tr->next = next0;
-              tr->index = vnet_buffer (b0)->ip.adj_index[VLIB_TX];
+              tr->next   = next0;
+              tr->adj    = vnet_buffer (b0)->ip.adj_index[VLIB_TX];
+              tr->match  = match0;
+              tr->policy = fia0 ? fia0->fia_policy : -1;
             }
 
           /* verify speculative enqueue, maybe switch current next frame */
@@ -814,27 +814,27 @@ fwabf_input_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
       vlib_put_next_frame (vm, node, next_index, n_left_to_next);
     }
 
-  vlib_node_increment_counter (vm, fwabf_ip6_node.index, ABF_ERROR_MATCHED, matches);
+  vlib_node_increment_counter (vm, fwabf_ip6_node.index, FWABF_ERROR_MATCHED, matches);
 
   return frame->n_vectors;
 }
 
 static u8 *
-format_abf_input_trace (u8 * s, va_list * args)
+format_fwabf_input_trace (u8 * s, va_list * args)
 {
-  // nnoww - TODO - check if we can add some usefull info here!
   CLIB_UNUSED (vlib_main_t * vm) = va_arg (*args, vlib_main_t *);
   CLIB_UNUSED (vlib_node_t * node) = va_arg (*args, vlib_node_t *);
-  abf_input_trace_t *t = va_arg (*args, abf_input_trace_t *);
+  fwabf_input_trace_t *t = va_arg (*args, fwabf_input_trace_t *);
 
-  s = format (s, " next %d index %d", t->next, t->index);
+  s = format (s, " next %d adj %d match %d policy %d",
+                t->next, t->adj, t->match, t->policy);
   return s;
 }
 
-static char *abf_error_strings[] = {
-#define abf_error(n,s) s,
+static char *fwabf_error_strings[] = {
+#define fwabf_error(n,s) s,
 #include "fwabf_error.def"
-#undef abf_error
+#undef fwabf_error
 };
 
 /* *INDENT-OFF* */
@@ -843,10 +843,10 @@ VLIB_REGISTER_NODE (fwabf_ip4_node) =
   .function = fwabf_input_ip4,
   .name = "fwabf-input-ip4",
   .vector_size = sizeof (u32),
-  .format_trace = format_abf_input_trace,
+  .format_trace = format_fwabf_input_trace,
   .type = VLIB_NODE_TYPE_INTERNAL,
-  .n_errors = ABF_N_ERROR,
-  .error_strings = abf_error_strings,
+  .n_errors = FWABF_N_ERROR,
+  .error_strings = fwabf_error_strings,
   .n_next_nodes = IP_LOOKUP_N_NEXT,
   .next_nodes = IP4_LOOKUP_NEXT_NODES,
 };
@@ -856,7 +856,7 @@ VLIB_REGISTER_NODE (fwabf_ip6_node) =
   .function = fwabf_input_ip6,
   .name = "fwabf-input-ip6",
   .vector_size = sizeof (u32),
-  .format_trace = format_abf_input_trace,
+  .format_trace = format_fwabf_input_trace,
   .type = VLIB_NODE_TYPE_INTERNAL,
   .n_errors = 0,
   .n_next_nodes = IP6_LOOKUP_N_NEXT,

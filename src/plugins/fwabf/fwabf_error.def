@@ -23,5 +23,5 @@
  *  For more details see official documentation on the Flexiwan Multi-Link.
  */
 
-abf_error (NONE, "no match")
-abf_error (MATCHED, "matched")
+fwabf_error (NONE, "no match")
+fwabf_error (MATCHED, "matched")
