@@ -99,12 +99,12 @@ fwabf_policy_get (u32 index)
 static fwabf_policy_t *
 fwabf_policy_find_i (u32 policy_id)
 {
-  u32 api;
+  u32 pi;
 
-  api = fwabf_policy_find (policy_id);
+  pi = fwabf_policy_find (policy_id);
 
-  if (INDEX_INVALID != api)
-    return (fwabf_policy_get (api));
+  if (INDEX_INVALID != pi)
+    return (fwabf_policy_get (pi));
 
   return (NULL);
 }
@@ -126,41 +126,41 @@ fwabf_policy_find (u32 policy_id)
 u32
 fwabf_policy_add (u32 policy_id, u32 acl_index, fwabf_policy_action_t * action)
 {
-  fwabf_policy_t*              ap;
+  fwabf_policy_t*            p;
   fwabf_policy_link_group_t* group;
-  u32 api;
+  u32 pi;
 
-  api = fwabf_policy_find (policy_id);
-  if (api != INDEX_INVALID)
+  pi = fwabf_policy_find (policy_id);
+  if (pi != INDEX_INVALID)
   {
-    clib_warning ("fawbf: fwabf_policy_add: policy-id %d exists (index %d)", policy_id, api);
+    clib_warning ("fawbf: fwabf_policy_add: policy-id %d exists (index %d)", policy_id, pi);
     return VNET_API_ERROR_VALUE_EXIST;
   }
 
-  pool_get (abf_policy_pool, ap);
-  api = ap - abf_policy_pool;
+  pool_get (abf_policy_pool, p);
+  pi = p - abf_policy_pool;
 
-  ap->ap_acl = acl_index;
-  ap->ap_id  = policy_id;
-  ap->action = *action;
+  p->acl = acl_index;
+  p->id  = policy_id;
+  p->action = *action;
 
-  ap->action.n_link_groups_minus_1   = vec_len(action->link_groups) - 1;
-  ap->action.n_link_groups_pow2_mask = (vec_len(action->link_groups) <= 0xF) ? 0xF : 0xFF; /* More than 255 groups is impractical*/
-  vec_foreach (group, ap->action.link_groups)
+  p->action.n_link_groups_minus_1   = vec_len(action->link_groups) - 1;
+  p->action.n_link_groups_pow2_mask = (vec_len(action->link_groups) <= 0xF) ? 0xF : 0xFF; /* More than 255 groups is impractical*/
+  vec_foreach (group, p->action.link_groups)
     {
       group->n_links_minus_1   = vec_len(group->links) - 1;
       group->n_links_pow2_mask = (vec_len(group->links) <= 0xF) ? 0xF : 0xFF; /* Maximum number of labels is 255 */
     }
 
-  ap->counter_matched  = 0;
-  ap->counter_applied  = 0;
-  ap->counter_fallback = 0;
-  ap->counter_dropped  = 0;
+  p->counter_matched  = 0;
+  p->counter_applied  = 0;
+  p->counter_fallback = 0;
+  p->counter_dropped  = 0;
 
   /*
     * add this new policy to the DB
     */
-  hash_set (abf_policy_db, policy_id, api);
+  hash_set (abf_policy_db, policy_id, pi);
   return 0;
 }
 
@@ -168,23 +168,23 @@ int
 fwabf_policy_delete (u32 policy_id)
 {
   fwabf_policy_link_group_t* group;
-  fwabf_policy_t *ap;
-  u32 api;
+  fwabf_policy_t*            p;
+  u32                        pi;
 
-  api = fwabf_policy_find (policy_id);
-  if (INDEX_INVALID == api)
+  pi = fwabf_policy_find (policy_id);
+  if (INDEX_INVALID == pi)
     return VNET_API_ERROR_INVALID_VALUE;
 
-  ap = fwabf_policy_get (api);
+  p = fwabf_policy_get (pi);
 
-  vec_foreach (group, ap->action.link_groups)
+  vec_foreach (group, p->action.link_groups)
     {
       vec_free (group->links);
     }
-  vec_free (ap->action.link_groups);
+  vec_free (p->action.link_groups);
 
   hash_unset (abf_policy_db, policy_id);
-  pool_put (abf_policy_pool, ap);
+  pool_put (abf_policy_pool, p);
   return (0);
 }
 
@@ -237,11 +237,11 @@ fwabf_policy_delete (u32 policy_id)
  *    ones that can't be use for forwarding right now (e.g. due to temporary
  *    tunnel down). As a result, the random selection might fall on not active
  *    interface, causing mismatch, so search will be switched to priority order.
- *    See item above. The 'randomality' will be lost.
+ *    See item above. The randomness will be lost.
  *    To avoid that we might implement optimization: keep two sets of links -
  *    full set and active set. The active set should be updated every time when
  *    any link goes down/up.
- *    It was decided not to deal with this optimization, as randomality is not
+ *    It was decided not to deal with this optimization, as randomness is not
  *    really random, but it uses flow hash to pick link. That means the 'bad'
  *    case just maps 'bad' flowhash into the first available link in group
  *    instead of the 'bad' link. That causes the first link to take over load of
@@ -262,7 +262,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
                                 const load_balance_t*   lb,
                                 dpo_id_t*               dpo)
 {
-  fwabf_policy_t*            ap = fwabf_policy_get (index);
+  fwabf_policy_t*            p = fwabf_policy_get (index);
   fwabf_policy_link_group_t* group;
   fwabf_label_t*             pfwlabel;
   fwabf_label_t              fwlabel;
@@ -270,7 +270,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
   u32                        flow_hash = 0;
   ip4_header_t*              ip = vlib_buffer_get_current (b);
 
-  ap->counter_matched++;  /*This function is called on ACL lookup hit only*/
+  p->counter_matched++;  /*This function is called on ACL lookup hit only*/
 
   /*
    * lb - is DPO of Load Balance type. It doesn't point to adjacency directly.
@@ -290,13 +290,13 @@ inline u32 fwabf_policy_get_dpo_ip4 (
    * Optimization is possible here, but it complicates code a lot,
    * so we decided not to implement it for now (April 2020).
    */
-  if (ap->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(ap->action.link_groups) > 1)
+  if (p->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(p->action.link_groups) > 1)
     {
       flow_hash = ip4_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
       i = FWABF_GET_INDEX_BY_FLOWHASH(
-                        flow_hash, ap->action.n_link_groups_pow2_mask,
-                        ap->action.n_link_groups_minus_1, i);
-      group = &ap->action.link_groups[i];
+                        flow_hash, p->action.n_link_groups_pow2_mask,
+                        p->action.n_link_groups_minus_1, i);
+      group = &p->action.link_groups[i];
 
       /*
        * The randomly selected group might have multiple links/labels/interfaces.
@@ -312,7 +312,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
           *dpo    = fwabf_links_get_dpo (fwlabel, lb);
           if (dpo_id_is_valid (dpo))
             {
-              ap->counter_applied++;
+              p->counter_applied++;
               return 1;
             }
         }
@@ -327,18 +327,18 @@ inline u32 fwabf_policy_get_dpo_ip4 (
           *dpo = fwabf_links_get_dpo (*pfwlabel, lb);
           if (dpo_id_is_valid (dpo))
             {
-              ap->counter_applied++;
+              p->counter_applied++;
               return 1;
             }
         }
-    } /*if (ap->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(ap->action.link_groups) > 1)*/
+    } /*if (p->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(p->action.link_groups) > 1)*/
 
 
   /*
    * No random selection - just iterate over list of groups and use the first
    * one with valid DPO.
    */
-  vec_foreach (group, ap->action.link_groups)
+  vec_foreach (group, p->action.link_groups)
     {
       /*
        * Take a care of random selection of link within selected group.
@@ -355,7 +355,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
           *dpo = fwabf_links_get_dpo (fwlabel, lb);
           if (dpo_id_is_valid (dpo))
             {
-              ap->counter_applied++;
+              p->counter_applied++;
               return 1;
             }
         }
@@ -364,7 +364,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
           *dpo = fwabf_links_get_dpo (*pfwlabel, lb);
           if (dpo_id_is_valid (dpo))
             {
-              ap->counter_applied++;
+              p->counter_applied++;
               return 1;
             }
         }
@@ -376,13 +376,13 @@ inline u32 fwabf_policy_get_dpo_ip4 (
    * to use DPO found by FIB lookup.
    * If fallback is to drop packets, return DPO_DROP.
    */
-  if (PREDICT_TRUE(ap->action.fallback==FWABF_FALLBACK_DEFAULT_ROUTE))
+  if (PREDICT_TRUE(p->action.fallback==FWABF_FALLBACK_DEFAULT_ROUTE))
     {
-      ap->counter_fallback++;
+      p->counter_fallback++;
       return 0;
     }
   dpo_copy(dpo, drop_dpo_get(DPO_PROTO_IP4));
-  ap->counter_dropped++;
+  p->counter_dropped++;
   return 1;
 }
 
@@ -403,7 +403,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
                                 const load_balance_t*   lb,
                                 dpo_id_t*               dpo)
 {
-  fwabf_policy_t*              ap = fwabf_policy_get (index);
+  fwabf_policy_t*            p = fwabf_policy_get (index);
   fwabf_policy_link_group_t* group;
   fwabf_label_t*             pfwlabel;
   fwabf_label_t              fwlabel;
@@ -411,7 +411,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
   u32                        flow_hash = 0;
   ip6_header_t*              ip = vlib_buffer_get_current (b);
 
-  ap->counter_matched++;  /*This function is called on ACL lookup hit only*/
+  p->counter_matched++;  /*This function is called on ACL lookup hit only*/
 
   /*
    * lb - is DPO of Load Balance type. It doesn't point to adjacency directly.
@@ -431,13 +431,13 @@ inline u32 fwabf_policy_get_dpo_ip6 (
    * Optimization is possible here, but it complicates code a lot,
    * so we decided not to implement it for now (April 2020).
    */
-  if (ap->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(ap->action.link_groups) > 1)
+  if (p->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(p->action.link_groups) > 1)
     {
       flow_hash = ip6_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
       i = FWABF_GET_INDEX_BY_FLOWHASH(
-                        flow_hash, ap->action.n_link_groups_pow2_mask,
-                        ap->action.n_link_groups_minus_1, i);
-      group = &ap->action.link_groups[i];
+                        flow_hash, p->action.n_link_groups_pow2_mask,
+                        p->action.n_link_groups_minus_1, i);
+      group = &p->action.link_groups[i];
 
       /*
        * The randomly selected group might have multiple links/labels/interfaces.
@@ -453,7 +453,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
           *dpo    = fwabf_links_get_dpo (fwlabel, lb);
           if (dpo_id_is_valid (dpo))
             {
-              ap->counter_applied++;
+              p->counter_applied++;
               return 1;
             }
         }
@@ -468,18 +468,18 @@ inline u32 fwabf_policy_get_dpo_ip6 (
           *dpo = fwabf_links_get_dpo (*pfwlabel, lb);
           if (dpo_id_is_valid (dpo))
             {
-              ap->counter_applied++;
+              p->counter_applied++;
               return 1;
             }
         }
-    } /*if (ap->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(ap->action.link_groups) > 1)*/
+    } /*if (p->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(p->action.link_groups) > 1)*/
 
 
   /*
    * No random selection - just iterate over list of groups and use the first
    * one with valid DPO.
    */
-  vec_foreach (group, ap->action.link_groups)
+  vec_foreach (group, p->action.link_groups)
     {
       /*
        * Take a care of random selection of link within selected group.
@@ -496,7 +496,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
           *dpo = fwabf_links_get_dpo (fwlabel, lb);
           if (dpo_id_is_valid (dpo))
             {
-              ap->counter_applied++;
+              p->counter_applied++;
               return 1;
             }
         }
@@ -505,7 +505,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
           *dpo = fwabf_links_get_dpo (*pfwlabel, lb);
           if (dpo_id_is_valid (dpo))
             {
-              ap->counter_applied++;
+              p->counter_applied++;
               return 1;
             }
         }
@@ -517,13 +517,13 @@ inline u32 fwabf_policy_get_dpo_ip6 (
    * to use DPO found by FIB lookup.
    * If fallback is to drop packets, return DPO_DROP.
    */
-  if (PREDICT_TRUE(ap->action.fallback==FWABF_FALLBACK_DEFAULT_ROUTE))
+  if (PREDICT_TRUE(p->action.fallback==FWABF_FALLBACK_DEFAULT_ROUTE))
     {
-      ap->counter_fallback++;
+      p->counter_fallback++;
       return 0;
     }
   dpo_copy(dpo, drop_dpo_get(DPO_PROTO_IP6));
-  ap->counter_dropped++;
+  p->counter_dropped++;
   return 1;
 }
 
@@ -751,13 +751,13 @@ format_action (u8 * s, va_list * args)
 static u8 *
 format_abf (u8 * s, va_list * args)
 {
-  fwabf_policy_t *ap = va_arg (*args, fwabf_policy_t *);
+  fwabf_policy_t *p = va_arg (*args, fwabf_policy_t *);
 
   s = format (s, "fwabf:[%d]: policy:%d acl:%d\n",
-	      ap - abf_policy_pool, ap->ap_id, ap->ap_acl);
+	      p - abf_policy_pool, p->id, p->acl);
   s = format (s, " counters: matched:%d applied:%d fallback:%d dropped:%d\n",
-	      ap->counter_matched, ap->counter_applied, ap->counter_fallback, ap->counter_dropped);
-  s = format (s, "%U", format_action, &ap->action);
+	      p->counter_matched, p->counter_applied, p->counter_fallback, p->counter_dropped);
+  s = format (s, "%U", format_action, &p->action);
   return s;
 }
 
@@ -766,7 +766,7 @@ abf_show_policy_cmd (vlib_main_t * vm,
 		     unformat_input_t * input, vlib_cli_command_t * cmd)
 {
   u32 policy_id;
-  fwabf_policy_t *ap;
+  fwabf_policy_t *p;
 
   policy_id = INDEX_INVALID;
 
@@ -781,18 +781,18 @@ abf_show_policy_cmd (vlib_main_t * vm,
   if (INDEX_INVALID == policy_id)
     {
       /* *INDENT-OFF* */
-      pool_foreach(ap, abf_policy_pool,
+      pool_foreach(p, abf_policy_pool,
       ({
-        vlib_cli_output(vm, "%U", format_abf, ap);
+        vlib_cli_output(vm, "%U", format_abf, p);
       }));
       /* *INDENT-ON* */
     }
   else
     {
-      ap = fwabf_policy_find_i (policy_id);
+      p = fwabf_policy_find_i (policy_id);
 
-      if (NULL != ap)
-        vlib_cli_output (vm, "%U", format_abf, ap);
+      if (NULL != p)
+        vlib_cli_output (vm, "%U", format_abf, p);
       else
         vlib_cli_output (vm, "Invalid policy ID:%d", policy_id);
     }

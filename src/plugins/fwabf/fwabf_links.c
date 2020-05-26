@@ -95,13 +95,13 @@ typedef struct fwabf_label_data_t_
 /**
  * FIB node type for the fwabf_sw_interface object.
  */
-fib_node_type_t fwabf_sw_interface_fib_node_type;
+fib_node_type_t fwabf_link_fib_node_type;
 
 /**
  * Database of fwabf_sw_interface_t objects. Vector.
  * sw_if_index is index in this array. The vector is never shrinks.
  */
-static fwabf_sw_interface_t* fwabf_sw_interface_db = NULL;
+static fwabf_sw_interface_t* fwabf_links = NULL;
 
 /**
  * Map of labels to fwabf_sw_interfaces.
@@ -135,18 +135,18 @@ extern vlib_node_registration_t fwabf_ip4_node;
 extern vlib_node_registration_t fwabf_ip6_node;
 
 #define FWABF_SW_INTERFACE_IS_VALID(_sw_if_index) \
-                ((_sw_if_index) < vec_len(fwabf_sw_interface_db) && \
-                fwabf_sw_interface_db[(_sw_if_index)].sw_if_index != INDEX_INVALID)
+                ((_sw_if_index) < vec_len(fwabf_links) && \
+                fwabf_links[(_sw_if_index)].sw_if_index != INDEX_INVALID)
 
 #define FWABF_SW_INTERFACE_IS_INVALID(_sw_if_index) \
-                ((_sw_if_index) >= vec_len(fwabf_sw_interface_db) || \
-                fwabf_sw_interface_db[(_sw_if_index)].sw_if_index == INDEX_INVALID)
+                ((_sw_if_index) >= vec_len(fwabf_links) || \
+                fwabf_links[(_sw_if_index)].sw_if_index == INDEX_INVALID)
 
 /*
  * Forward declarations
  */
-static void fwabf_sw_interface_refresh_dpo(fwabf_sw_interface_t* aif);
-static fwabf_sw_interface_t* fwabf_sw_interface_find(u32 sw_if_index);
+static void fwabf_link_refresh_dpo(fwabf_sw_interface_t* link);
+static fwabf_sw_interface_t* fwabf_links_find_link(u32 sw_if_index);
 
 
 u32 fwabf_links_add_interface (
@@ -154,7 +154,7 @@ u32 fwabf_links_add_interface (
                         const fwabf_label_t     fwlabel,
                         const fib_route_path_t* rpath)
 {
-  fwabf_sw_interface_t* aif;
+  fwabf_sw_interface_t* link;
   u32                   old_len;
   dpo_id_t              dpo_invalid = DPO_INVALID;
 
@@ -169,19 +169,19 @@ u32 fwabf_links_add_interface (
    * Allocate new fwabf_sw_interface_t and new label only if there is no entry yet.
    * Otherwise reuse existing one. Pool never shrinks.
    */
-  if (sw_if_index >= vec_len(fwabf_sw_interface_db))
+  if (sw_if_index >= vec_len(fwabf_links))
     {
-      old_len = vec_len(fwabf_sw_interface_db);
-      vec_resize(fwabf_sw_interface_db, (sw_if_index+1) - old_len);
-      for (u32 i = old_len; i < vec_len(fwabf_sw_interface_db); i++)
+      old_len = vec_len(fwabf_links);
+      vec_resize(fwabf_links, (sw_if_index+1) - old_len);
+      for (u32 i = old_len; i < vec_len(fwabf_links); i++)
         {
-          fwabf_sw_interface_db[i].sw_if_index = INDEX_INVALID;
+          fwabf_links[i].sw_if_index = INDEX_INVALID;
         }
-      aif = &fwabf_sw_interface_db[sw_if_index];
+      link = &fwabf_links[sw_if_index];
     }
-  else if (fwabf_sw_interface_db[sw_if_index].sw_if_index == INDEX_INVALID)
+  else if (fwabf_links[sw_if_index].sw_if_index == INDEX_INVALID)
     {
-      aif = &fwabf_sw_interface_db[sw_if_index];
+      link = &fwabf_links[sw_if_index];
     }
   else
     {
@@ -199,20 +199,20 @@ u32 fwabf_links_add_interface (
    * Initialize new fwabf_sw_interface_t now.
    */
 
-  aif->fwlabel     = fwlabel;
-  aif->sw_if_index = sw_if_index;
+  link->fwlabel     = fwlabel;
+  link->sw_if_index = sw_if_index;
 
   /*
    * Create pathlist object and become it's child, so we get updates when
-   * forwarding changes. aif->fnode is needed to become a part of FIB tree,
+   * forwarding changes. link->fnode is needed to become a part of FIB tree,
    * so we could get updates from parent object.
    */
-  fib_node_init (&aif->fnode, fwabf_sw_interface_fib_node_type);
-  aif->pathlist_flags   = FIB_PATH_LIST_FLAG_SHARED;
-  aif->pathlist_rpath   = *rpath;
-  aif->pathlist_index   = fib_path_list_create (aif->pathlist_flags, &aif->pathlist_rpath);
-  aif->pathlist_sibling = fib_path_list_child_add (
-          aif->pathlist_index, fwabf_sw_interface_fib_node_type, sw_if_index);
+  fib_node_init (&link->fnode, fwabf_link_fib_node_type);
+  link->pathlist_flags   = FIB_PATH_LIST_FLAG_SHARED;
+  link->pathlist_rpath   = *rpath;
+  link->pathlist_index   = fib_path_list_create (link->pathlist_flags, &link->pathlist_rpath);
+  link->pathlist_sibling = fib_path_list_child_add (
+          link->pathlist_index, fwabf_link_fib_node_type, sw_if_index);
 
   /*
    * Update forwarding info of the pathlist, so it will be bound to the right
@@ -220,16 +220,16 @@ u32 fwabf_links_add_interface (
    * and attach the fwabf_sw_interface object to this DPO.
    */
   ASSERT((rpath->frp_proto==DPO_PROTO_IP4 || rpath->frp_proto==DPO_PROTO_IP6));
-  aif->dpo_proto = rpath->frp_proto;
-  aif->dpo       = dpo_invalid;
-  fwabf_sw_interface_refresh_dpo(aif);
+  link->dpo_proto = rpath->frp_proto;
+  link->dpo       = dpo_invalid;
+  fwabf_link_refresh_dpo(link);
 
   return 0;
 }
 
 u32 fwabf_links_del_interface (const u32 sw_if_index)
 {
-  fwabf_sw_interface_t* aif;
+  fwabf_sw_interface_t* link;
   fwabf_label_t         fwlabel;
   u32                   index;
 
@@ -242,9 +242,9 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
    * Free (invalidate) object as soon as possible, so datapath will not use it.
    * nnoww - TODO - think of locks . or order for free() and rest resets (use local variables?)!
    */
-  aif = &fwabf_sw_interface_db[sw_if_index];
-  fwlabel          = aif->fwlabel;
-  aif->sw_if_index = INDEX_INVALID;
+  link = &fwabf_links[sw_if_index];
+  fwlabel          = link->fwlabel;
+  link->sw_if_index = INDEX_INVALID;
 
   /*
    * Remove label->interface mapping.
@@ -258,7 +258,7 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
    * Looks like the dpo is not accessable anymore and it has no effect on vlib graph!
    * nnoww - TODO - ensure this!
    */
-  dpo_reset (&aif->dpo);
+  dpo_reset (&link->dpo);
 
   /*
    * No explict call to fib_path_list_destroy!
@@ -266,10 +266,10 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
    * As we have only one path - path to remote tunnel end or to wan gateway,
    * the path removal should cause list destroy.
    */
-  fib_path_list_child_remove(aif->pathlist_index, aif->pathlist_sibling);
-  aif->pathlist_index =
-  fib_path_list_copy_and_path_remove(aif->pathlist_index, aif->pathlist_flags, &aif->pathlist_rpath);
-  ASSERT(aif->pathlist_index==INDEX_INVALID);
+  fib_path_list_child_remove(link->pathlist_index, link->pathlist_sibling);
+  link->pathlist_index =
+  fib_path_list_copy_and_path_remove(link->pathlist_index, link->pathlist_flags, &link->pathlist_rpath);
+  ASSERT(link->pathlist_index==INDEX_INVALID);
 
   return 0;
 }
@@ -309,7 +309,7 @@ dpo_id_t fwabf_links_get_dpo (fwabf_label_t fwlabel, const load_balance_t* lb)
        * Note the adjacency-to-label map is updated based on labeled DPO-s,
        * so if lookup DPO has label in the map, it is same DPO that we labeled.
        * Note labeled DPO-s are kept in correspondent fwabf_sw_interface_t object
-       * and are managed by FWABF module. See fwabf_sw_interface_refresh_dpo()
+       * and are managed by FWABF module. See fwabf_link_refresh_dpo()
        * for details.
        */
       ASSERT(lookup_dpo->dpoi_index < FWABF_MAX_ADJ_INDEX);
@@ -344,13 +344,13 @@ dpo_id_t fwabf_links_get_dpo (fwabf_label_t fwlabel, const load_balance_t* lb)
   return invalid_dpo;
 }
 
-static fwabf_sw_interface_t * fwabf_sw_interface_find(u32 sw_if_index)
+static fwabf_sw_interface_t * fwabf_links_find_link(u32 sw_if_index)
 {
   if (FWABF_SW_INTERFACE_IS_INVALID(sw_if_index))
     {
       return NULL;
     }
-  return &fwabf_sw_interface_db[sw_if_index];
+  return &fwabf_links[sw_if_index];
 }
 
 static
@@ -462,13 +462,13 @@ VLIB_CLI_COMMAND (fwabf_link_cmd_node, static) = {
 static u8 *
 format_fwabf_link (u8 * s, va_list * args)
 {
-  fwabf_sw_interface_t* aif = va_arg (*args, fwabf_sw_interface_t*);
+  fwabf_sw_interface_t* link = va_arg (*args, fwabf_sw_interface_t*);
   vnet_main_t*          vnm = va_arg (*args, vnet_main_t*);
 
   s = format (s, " %U: sw_if_index=%d, label=%d\n",
-	                  format_vnet_sw_if_index_name, vnm, aif->sw_if_index,
-                    aif->sw_if_index, aif->fwlabel);
-  s = fib_path_list_format(aif->pathlist_index, s);
+	                  format_vnet_sw_if_index_name, vnm, link->sw_if_index,
+                    link->sw_if_index, link->fwlabel);
+  s = fib_path_list_format(link->pathlist_index, s);
   return (s);
 }
 
@@ -478,7 +478,7 @@ fwabf_link_show_cmd (
 {
   u32          sw_if_index = INDEX_INVALID;
   vnet_main_t* vnm         = vnet_get_main ();
-  fwabf_sw_interface_t * aif;
+  fwabf_sw_interface_t * link;
 
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
@@ -494,23 +494,23 @@ fwabf_link_show_cmd (
 
   if (sw_if_index == INDEX_INVALID)
     {
-      vec_foreach(aif, fwabf_sw_interface_db)
+      vec_foreach(link, fwabf_links)
         {
-          if (aif->sw_if_index != INDEX_INVALID)
+          if (link->sw_if_index != INDEX_INVALID)
             {
-              vlib_cli_output(vm, "%U", format_fwabf_link, aif, vnm);
+              vlib_cli_output(vm, "%U", format_fwabf_link, link, vnm);
             }
         };
     }
   else
     {
-      aif = fwabf_sw_interface_find(sw_if_index);
-      if (aif == NULL)
+      link = fwabf_links_find_link(sw_if_index);
+      if (link == NULL)
         {
           vlib_cli_output (vm, "Invalid sw_if_index %d", sw_if_index);
           return (NULL);
         }
-      vlib_cli_output (vm, "%U", format_fwabf_link, aif, vnm);
+      vlib_cli_output (vm, "%U", format_fwabf_link, link, vnm);
     }
   return (NULL);
 }
@@ -530,7 +530,7 @@ fwabf_link_show_labels_cmd (
 {
   u32                   verbose = 0;
   vnet_main_t*          vnm     = vnet_get_main();
-  fwabf_sw_interface_t* aif;
+  fwabf_sw_interface_t* link;
   u32                   i;
   u32*                  sw_if_index;
 
@@ -552,16 +552,16 @@ fwabf_link_show_labels_cmd (
           i, fwabf_labels[i].counter_hits, fwabf_labels[i].counter_misses);
       vec_foreach (sw_if_index, fwabf_labels[i].interfaces)
         {
-          aif = &fwabf_sw_interface_db[*sw_if_index];
+          link = &fwabf_links[*sw_if_index];
           if (verbose)
             {
-              vlib_cli_output(vm, "  %U", format_fwabf_link, aif, vnm);
+              vlib_cli_output(vm, "  %U", format_fwabf_link, link, vnm);
             }
           else
             {
               vlib_cli_output(vm, "  %U (sw_if_index=%d)",
-                format_vnet_sw_if_index_name, vnm, aif->sw_if_index,
-                aif->sw_if_index);
+                format_vnet_sw_if_index_name, vnm, link->sw_if_index,
+                link->sw_if_index);
             }
         }
     }
@@ -585,13 +585,13 @@ VLIB_CLI_COMMAND (fwabf_link_show_labels_cmd_node, static) = {
  * bound to the forwarding DPO, e.g. ip4-rewrite.
  */
 static
-void fwabf_sw_interface_refresh_dpo(fwabf_sw_interface_t * aif)
+void fwabf_link_refresh_dpo(fwabf_sw_interface_t * link)
 {
   dpo_id_t                 via_dpo = DPO_INVALID;
   fib_forward_chain_type_t fwd_chain_type;
   u32                      fwabf_node_index;
 
-  if (aif->dpo_proto == DPO_PROTO_IP4)
+  if (link->dpo_proto == DPO_PROTO_IP4)
     {
       fwabf_node_index = fwabf_ip4_node.index;
       fwd_chain_type   = FIB_FORW_CHAIN_TYPE_UNICAST_IP4;
@@ -605,17 +605,17 @@ void fwabf_sw_interface_refresh_dpo(fwabf_sw_interface_t * aif)
   /*
    * Befor refreshing DPO remove the current value from a adj_indexes_to_labels map.
    */
-  if (PREDICT_TRUE(dpo_id_is_valid(&aif->dpo)))
+  if (PREDICT_TRUE(dpo_id_is_valid(&link->dpo)))
     {
-      adj_indexes_to_labels[aif->dpo.dpoi_index] = FWABF_INVALID_LABEL;
+      adj_indexes_to_labels[link->dpo.dpoi_index] = FWABF_INVALID_LABEL;
     }
 
   /*
    * Now refresh the DPO.
    */
   fib_path_list_contribute_forwarding (
-      aif->pathlist_index, fwd_chain_type, FIB_PATH_LIST_FWD_FLAG_COLLAPSE, &via_dpo);
-  dpo_stack_from_node (fwabf_node_index, &aif->dpo, &via_dpo);
+      link->pathlist_index, fwd_chain_type, FIB_PATH_LIST_FWD_FLAG_COLLAPSE, &via_dpo);
+  dpo_stack_from_node (fwabf_node_index, &link->dpo, &via_dpo);
   dpo_reset (&via_dpo);
 
   /*
@@ -625,10 +625,10 @@ void fwabf_sw_interface_refresh_dpo(fwabf_sw_interface_t * aif)
    * The last is set, if the adjacency is not arp-resolved, which means
    * the tunnel / WAN nexthop is down.
    */
-  if (PREDICT_TRUE(aif->dpo.dpoi_type == DPO_ADJACENCY))
+  if (PREDICT_TRUE(link->dpo.dpoi_type == DPO_ADJACENCY))
     {
-      ASSERT(aif->dpo.dpoi_index < FWABF_MAX_ADJ_INDEX);
-      adj_indexes_to_labels[aif->dpo.dpoi_index] = aif->fwlabel;
+      ASSERT(link->dpo.dpoi_index < FWABF_MAX_ADJ_INDEX);
+      adj_indexes_to_labels[link->dpo.dpoi_index] = link->fwlabel;
     }
 }
 
@@ -659,10 +659,10 @@ fwabf_sw_interface_t * fwabf_sw_interface_get_from_node (fib_node_t * node)
 static
 fib_node_t * fwabf_sw_interface_fnv_get_node (fib_node_index_t index)
 {
-  fwabf_sw_interface_t* aif;
+  fwabf_sw_interface_t* link;
   ASSERT((FWABF_SW_INTERFACE_IS_VALID(index)));
-  aif = &fwabf_sw_interface_db[index];
-  return (&(aif->fnode));
+  link = &fwabf_links[index];
+  return (&(link->fnode));
 }
 
 /**
@@ -689,12 +689,12 @@ static
 fib_node_back_walk_rc_t fwabf_sw_interface_fnv_back_walk_notify (
                             fib_node_t * node, fib_node_back_walk_ctx_t * ctx)
 {
-  fwabf_sw_interface_t *aif = fwabf_sw_interface_get_from_node(node);
+  fwabf_sw_interface_t *link = fwabf_sw_interface_get_from_node(node);
 
   /*
    * Update DPO with the new current forwarding info.
    */
-  fwabf_sw_interface_refresh_dpo(aif);
+  fwabf_link_refresh_dpo(link);
 
   return (FIB_NODE_BACK_WALK_CONTINUE);
 }
@@ -716,7 +716,7 @@ clib_error_t * fwabf_links_init (vlib_main_t * vm)
    * Register fwabf_sw_interface with FIB graph, so it can be inserted into
    * the graph in order to get forwarding updates.
    */
-  fwabf_sw_interface_fib_node_type = fib_node_register_new_type (&fwabf_sw_interface_vft);
+  fwabf_link_fib_node_type = fib_node_register_new_type (&fwabf_sw_interface_vft);
 
   /*
    * Initialize array of labels, elements of which are lists of interfaces

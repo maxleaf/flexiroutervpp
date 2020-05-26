@@ -87,13 +87,13 @@ typedef struct fwabf_policy_action_t_
     u32                        n_link_groups_pow2_mask;  /*0xFF...*/
 } fwabf_policy_action_t;
 
-typedef struct abf_policy_t_
+typedef struct fwabf_policy_t_
 {
   /**
    * ACL index to match.
    * The ACL rule implements policy packet class.
    */
-  u32 ap_acl;
+  u32 acl;
 
   /**
    * Policy action - what link to use for packet forwarding.
@@ -103,7 +103,7 @@ typedef struct abf_policy_t_
   /**
    * The policy ID - as configured by the client
    */
-  u32 ap_id;
+  u32 id;
 
   /**
    * Counters.
@@ -112,7 +112,6 @@ typedef struct abf_policy_t_
   u32 counter_applied;      /*Policy applied successfully*/
   u32 counter_fallback;     /*Policy failed so fallback to default routing*/
   u32 counter_dropped;      /*Policy failed so drop the packet*/
-  
 
 } fwabf_policy_t;
 

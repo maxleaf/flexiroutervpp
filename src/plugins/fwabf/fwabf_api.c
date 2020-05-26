@@ -172,19 +172,19 @@ typedef struct abf_dump_walk_ctx_t_
 } abf_dump_walk_ctx_t;
 
 static int
-abf_policy_send_details (u32 api, void *args)
+abf_policy_send_details (u32 pi, void *args)
 {
   fib_route_path_encode_t *api_rpaths = NULL, *api_rpath;
   vl_api_fwabf_policy_details_t *mp;
   abf_dump_walk_ctx_t *ctx;
   vl_api_fib_path_t *fp;
   size_t msg_size;
-  fwabf_policy_t *ap;
+  fwabf_policy_t *p;
   u8 n_paths;
 
   ctx = args;
-  ap = fwabf_policy_get (api);
-  n_paths = fib_path_list_get_n_paths (ap->ap_pl);
+  p = fwabf_policy_get (pi);
+  n_paths = fib_path_list_get_n_paths (p->ap_pl);
   msg_size = sizeof (*mp) + sizeof (mp->policy.paths[0]) * n_paths;
 
   mp = vl_msg_api_alloc (msg_size);
@@ -194,10 +194,10 @@ abf_policy_send_details (u32 api, void *args)
   /* fill in the message */
   mp->context = ctx->context;
   mp->policy.n_paths = n_paths;
-  mp->policy.acl_index = htonl (ap->ap_acl);
-  mp->policy.policy_id = htonl (ap->ap_id);
+  mp->policy.acl_index = htonl (p->acl);
+  mp->policy.policy_id = htonl (p->id);
 
-  fib_path_list_walk_w_ext (ap->ap_pl, NULL, fib_path_encode, &api_rpaths);
+  fib_path_list_walk_w_ext (p->ap_pl, NULL, fib_path_encode, &api_rpaths);
 
   fp = mp->policy.paths;
   vec_foreach (api_rpath, api_rpaths)
@@ -235,21 +235,21 @@ abf_itf_attach_send_details (u32 aiai, void *args)
 {
   vl_api_fwabf_itf_attach_details_t *mp;
   abf_dump_walk_ctx_t *ctx;
-  fwabf_itf_attach_t *aia;
-  fwabf_policy_t *ap;
+  fwabf_itf_attach_t *fia;
+  fwabf_policy_t *p;
 
   ctx = args;
-  aia = fwabf_itf_attach_get (aiai);
-  ap = fwabf_policy_get (aia->aia_abf);
+  fia = fwabf_itf_attach_get (aiai);
+  p = fwabf_policy_get (fia->fia_policy);
 
   mp = vl_msg_api_alloc (sizeof (*mp));
   mp->_vl_msg_id = ntohs (VL_API_FWABF_ITF_ATTACH_DETAILS + abf_base_msg_id);
 
   mp->context = ctx->context;
-  mp->attach.policy_id = htonl (ap->ap_id);
-  mp->attach.sw_if_index = htonl (aia->aia_sw_if_index);
-  mp->attach.priority = htonl (aia->aia_prio);
-  mp->attach.is_ipv6 = (aia->aia_proto == FIB_PROTOCOL_IP6);
+  mp->attach.policy_id = htonl (p->id);
+  mp->attach.sw_if_index = htonl (fia->fia_sw_if_index);
+  mp->attach.priority = htonl (fia->fia_prio);
+  mp->attach.is_ipv6 = (fia->fia_proto == FIB_PROTOCOL_IP6);
 
   vl_msg_api_send_shmem (ctx->q, (u8 *) & mp);
 

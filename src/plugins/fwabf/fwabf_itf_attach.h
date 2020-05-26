@@ -38,30 +38,30 @@ typedef struct abf_itf_attach_t_
   /**
    * ACL index to match
    */
-  u32 aia_acl;
+  u32 fia_acl;
 
   /**
-   * The VPP index of the ABF policy
+   * The VPP index of the FWABF policy
    */
-  u32 aia_abf;
+  u32 fia_policy;
 
   /**
    * The protocol for the attachment. i.e. the protocol
    * of the packets that are being forwarded
    */
-  fib_protocol_t aia_proto;
+  fib_protocol_t fia_proto;
 
   /**
    * The interface for the attachment
    */
-  u32 aia_sw_if_index;
+  u32 fia_sw_if_index;
 
   /**
    * The priority of this policy for attachment.
    * The lower the value the higher the priority.
    * The higher priority policies are matched first.
    */
-  u32 aia_prio;
+  u32 fia_prio;
 } fwabf_itf_attach_t;
 
 /**
