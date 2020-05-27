@@ -84,12 +84,12 @@ fwabf_itf_attach_t *fwabf_itf_attach_pool;
 /**
  * A per interface vector of attached policies. used in the data-plane
  */
-static u32 **fwabf_per_itf[FIB_PROTOCOL_MAX];
+static u32 **fwabf_attach_per_itf[FIB_PROTOCOL_MAX];
 
 /**
  * Per interface values of ACL lookup context IDs. used in the data-plane
  */
-static u32 *fwabf_alctx_per_itf[FIB_PROTOCOL_MAX];
+static u32 *fwabf_acl_lc_per_itf[FIB_PROTOCOL_MAX];
 
 /**
  * ABF ACL module user id returned during the initialization
@@ -107,92 +107,83 @@ static acl_plugin_methods_t acl_plugin;
 static uword *fwabf_itf_attach_db;
 
 static u64
-fwabf_itf_attach_mk_key (u32 abf_index, u32 sw_if_index)
+fwabf_itf_attach_mk_key (u32 policy, u32 sw_if_index)
 {
   u64 key;
 
-  key = abf_index;
+  key = policy;
   key = key << 32;
   key |= sw_if_index;
 
-  return (key);
+  return key;
 }
 
 static fwabf_itf_attach_t *
-fwabf_itf_attach_db_find (u32 abf_index, u32 sw_if_index)
+fwabf_itf_attach_db_find (u32 policy, u32 sw_if_index)
 {
   uword *p;
   u64 key;
 
-  key = fwabf_itf_attach_mk_key (abf_index, sw_if_index);
+  key = fwabf_itf_attach_mk_key (policy, sw_if_index);
 
   p = hash_get (fwabf_itf_attach_db, key);
 
-  if (NULL != p)
+  if (p != NULL)
     return (pool_elt_at_index (fwabf_itf_attach_pool, p[0]));
 
-  return (NULL);
+  return NULL;
 }
 
 static void
-fwabf_itf_attach_db_add (u32 abf_index, u32 sw_if_index, fwabf_itf_attach_t * fia)
+fwabf_itf_attach_db_add (u32 policy, u32 sw_if_index, fwabf_itf_attach_t * fia)
 {
-  u64 key;
-
-  key = fwabf_itf_attach_mk_key (abf_index, sw_if_index);
-
+  u64 key = fwabf_itf_attach_mk_key (policy, sw_if_index);
   hash_set (fwabf_itf_attach_db, key, fia - fwabf_itf_attach_pool);
 }
 
 static void
-fwabf_itf_attach_db_del (u32 abf_index, u32 sw_if_index)
+fwabf_itf_attach_db_del (u32 policy, u32 sw_if_index)
 {
-  u64 key;
-
-  key = fwabf_itf_attach_mk_key (abf_index, sw_if_index);
-
+  u64 key = fwabf_itf_attach_mk_key (policy, sw_if_index);
   hash_unset (fwabf_itf_attach_db, key);
 }
 
 static int
 fwabf_cmp_attach_for_sort (void *v1, void *v2)
 {
-  const fwabf_itf_attach_t *aia1;
-  const fwabf_itf_attach_t *aia2;
+  const fwabf_itf_attach_t *fia1;
+  const fwabf_itf_attach_t *fia2;
 
-  aia1 = fwabf_itf_attach_get (*(u32 *) v1);
-  aia2 = fwabf_itf_attach_get (*(u32 *) v2);
+  fia1 = fwabf_itf_attach_get (*(u32 *) v1);
+  fia2 = fwabf_itf_attach_get (*(u32 *) v2);
 
-  return (aia1->fia_prio - aia2->fia_prio);
+  return (fia1->fia_prio - fia2->fia_prio);
 }
 
-void
-fwabf_setup_acl_lc (fib_protocol_t fproto, u32 sw_if_index)
+void fwabf_setup_acl_lc (fib_protocol_t fproto, u32 sw_if_index)
 {
   u32 *acl_vec = 0;
-  u32 *aiai;
+  u32 *fiai;
   fwabf_itf_attach_t *fia;
 
-  if (~0 == fwabf_alctx_per_itf[fproto][sw_if_index])
+  if (~0 == fwabf_acl_lc_per_itf[fproto][sw_if_index])
     return;
 
-  vec_foreach (aiai, fwabf_per_itf[fproto][sw_if_index])
+  vec_foreach (fiai, fwabf_attach_per_itf[fproto][sw_if_index])
   {
-    fia = fwabf_itf_attach_get (*aiai);
+    fia = fwabf_itf_attach_get (*fiai);
     vec_add1 (acl_vec, fia->fia_acl);
   }
-  acl_plugin.set_acl_vec_for_context (fwabf_alctx_per_itf[fproto][sw_if_index],
-				      acl_vec);
+  acl_plugin.set_acl_vec_for_context (
+                        fwabf_acl_lc_per_itf[fproto][sw_if_index], acl_vec);
   vec_free (acl_vec);
 }
 
-int
-fwabf_itf_attach (fib_protocol_t fproto,
-		u32 policy_id, u32 priority, u32 sw_if_index)
+int fwabf_itf_attach (fib_protocol_t fproto, u32 policy_id, u32 priority, u32 sw_if_index)
 {
-  fwabf_itf_attach_t *fia;
-  fwabf_policy_t *p;
-  u32 pi;
+  fwabf_itf_attach_t* fia;
+  fwabf_policy_t*     p;
+  u32                 pi;
 
   pi = fwabf_policy_find (policy_id);
 
@@ -213,46 +204,48 @@ fwabf_itf_attach (fib_protocol_t fproto,
    */
   pool_get (fwabf_itf_attach_pool, fia);
 
-  fia->fia_prio = priority;
-  fia->fia_acl = p->acl;
+  fia->fia_prio   = priority;
+  fia->fia_acl    = p->acl;
   fia->fia_policy = pi;
   fia->fia_sw_if_index = sw_if_index;
 
   fwabf_itf_attach_db_add (policy_id, sw_if_index, fia);
 
   /*
-   * Insert the policy on the interfaces list.
+   * Insert the attachment/policy on the interfaces list.
    */
-  vec_validate_init_empty (fwabf_per_itf[fproto], sw_if_index, NULL);
-  vec_add1 (fwabf_per_itf[fproto][sw_if_index], fia - fwabf_itf_attach_pool);
-  if (1 == vec_len (fwabf_per_itf[fproto][sw_if_index]))
+  vec_validate_init_empty (fwabf_attach_per_itf[fproto], sw_if_index, NULL);
+  vec_add1 (fwabf_attach_per_itf[fproto][sw_if_index], fia - fwabf_itf_attach_pool);
+  if (1 == vec_len (fwabf_attach_per_itf[fproto][sw_if_index]))
     {
       /*
-       * when enabling the first ABF policy on the interface
-       * we need to enable the interface input feature
+       * When enabling the first FWABF policy on the interface
+       * we need:
+       *  1. to enable the interface input feature.
+       *  2. to acquire an ACL lookup context in ACL plugin
        */
-      vnet_feature_enable_disable ((FIB_PROTOCOL_IP4 == fproto ?
-				    "ip4-unicast" :
-				    "ip6-unicast"),
-				   (FIB_PROTOCOL_IP4 == fproto ?
-				    "fwabf-input-ip4" :
-				    "fwabf-input-ip6"),
-				   sw_if_index, 1, NULL, 0);
+      vnet_feature_enable_disable (
+          (FIB_PROTOCOL_IP4 == fproto ? "ip4-unicast" : "ip6-unicast"),
+				  (FIB_PROTOCOL_IP4 == fproto ? "fwabf-input-ip4" : "fwabf-input-ip6"),
+				  sw_if_index, 1, NULL, 0);
 
-      /* if this is the first ABF policy, we need to acquire an ACL lookup context */
-      vec_validate_init_empty (fwabf_alctx_per_itf[fproto], sw_if_index, ~0);
-      fwabf_alctx_per_itf[fproto][sw_if_index] =
-	acl_plugin.get_lookup_context_index (fwabf_acl_user_id, sw_if_index, 0);
+      vec_validate_init_empty (fwabf_acl_lc_per_itf[fproto], sw_if_index, ~0);
+      fwabf_acl_lc_per_itf[fproto][sw_if_index] =
+        acl_plugin.get_lookup_context_index (fwabf_acl_user_id, sw_if_index, 0);
     }
   else
     {
-      vec_sort_with_function (fwabf_per_itf[fproto][sw_if_index],
-			      fwabf_cmp_attach_for_sort);
+      /*
+       * take a care of priorities
+       */
+      vec_sort_with_function (
+            fwabf_attach_per_itf[fproto][sw_if_index], fwabf_cmp_attach_for_sort);
     }
 
-  /* Prepare and set the list of ACLs for lookup within the context */
+  /*
+   * update ACL plugin with our contexts
+   */
   fwabf_setup_acl_lc (fproto, sw_if_index);
-
   return (0);
 }
 
@@ -277,71 +270,59 @@ fwabf_itf_detach (fib_protocol_t fproto, u32 policy_id, u32 sw_if_index)
   /*
    * first remove from the interface's vector
    */
-  ASSERT (fwabf_per_itf[fproto]);
-  ASSERT (fwabf_per_itf[fproto][sw_if_index]);
+  ASSERT (fwabf_attach_per_itf[fproto]);
+  ASSERT (fwabf_attach_per_itf[fproto][sw_if_index]);
 
-  index = vec_search (fwabf_per_itf[fproto][sw_if_index],
-		      fia - fwabf_itf_attach_pool);
+  index = vec_search (fwabf_attach_per_itf[fproto][sw_if_index],
+		                  fia - fwabf_itf_attach_pool);
 
   ASSERT (index != ~0);
-  vec_del1 (fwabf_per_itf[fproto][sw_if_index], index);
+  vec_del1 (fwabf_attach_per_itf[fproto][sw_if_index], index);
 
-  if (0 == vec_len (fwabf_per_itf[fproto][sw_if_index]))
+  if (0 == vec_len (fwabf_attach_per_itf[fproto][sw_if_index]))
     {
       /*
-       * when deleting the last ABF policy on the interface
-       * we need to disable the interface input feature
+       * When deleting the last FWABF attachment on the interface
+       * we need:
+       *  - to disable the interface input feature
+       *  - to release ACL lookup context in ACL plugin
        */
-      vnet_feature_enable_disable ((FIB_PROTOCOL_IP4 == fproto ?
-				    "ip4-unicast" :
-				    "ip6-unicast"),
-				   (FIB_PROTOCOL_IP4 == fproto ?
-				    "fwabf-input-ip4" :
-				    "fwabf-input-ip6"),
-				   sw_if_index, 0, NULL, 0);
+      vnet_feature_enable_disable (
+          (FIB_PROTOCOL_IP4 == fproto ? "ip4-unicast" : "ip6-unicast"),
+          (FIB_PROTOCOL_IP4 == fproto ? "fwabf-input-ip4" : "fwabf-input-ip6"),
+				  sw_if_index, 0, NULL, 0);
 
-      /* Return the lookup context, invalidate its id in our records */
-      acl_plugin.put_lookup_context_index (fwabf_alctx_per_itf[fproto]
-					   [sw_if_index]);
-      fwabf_alctx_per_itf[fproto][sw_if_index] = ~0;
-    }
-  else
-    {
-      vec_sort_with_function (fwabf_per_itf[fproto][sw_if_index],
-			      fwabf_cmp_attach_for_sort);
+      acl_plugin.put_lookup_context_index (fwabf_acl_lc_per_itf[fproto][sw_if_index]);
+      fwabf_acl_lc_per_itf[fproto][sw_if_index] = ~0;
     }
 
-  /* Prepare and set the list of ACLs for lookup within the context */
+  /*
+   * update ACL plugin with our contexts
+   */
   fwabf_setup_acl_lc (fproto, sw_if_index);
 
   /*
    * remove the attachment from the DB
    */
   fwabf_itf_attach_db_del (policy_id, sw_if_index);
-
-  /*
-   * return the object
-   */
   pool_put (fwabf_itf_attach_pool, fia);
 
   return (0);
 }
 
 static u8 *
-format_abf_intf_attach (u8 * s, va_list * args)
+format_fwabf_itf_attach (u8 * s, va_list * args)
 {
   fwabf_itf_attach_t *fia = va_arg (*args, fwabf_itf_attach_t *);
   fwabf_policy_t *p;
 
   p = fwabf_policy_get (fia->fia_policy);
-  s = format (s, "fabf-interface-attach: policy:%d priority:%d",
-	      p->id, fia->fia_prio);
+  s = format (s, "fabf-interface-attach: policy:%d priority:%d", p->id, fia->fia_prio);
   return (s);
 }
 
 static clib_error_t *
-abf_itf_attach_cmd (vlib_main_t * vm,
-		    unformat_input_t * input, vlib_cli_command_t * cmd)
+fwabf_itf_attach_cmd (vlib_main_t * vm, unformat_input_t * input, vlib_cli_command_t * cmd)
 {
   u32 policy_id, sw_if_index;
   fib_protocol_t fproto;
@@ -404,19 +385,18 @@ abf_itf_attach_cmd (vlib_main_t * vm,
 /**
  * Attach an ABF policy to an interface.
  */
-VLIB_CLI_COMMAND (abf_itf_attach_cmd_node, static) = {
+VLIB_CLI_COMMAND (fwabf_itf_attach_cmd_node, static) = {
   .path = "fwabf attach",
-  .function = abf_itf_attach_cmd,
+  .function = fwabf_itf_attach_cmd,
   .short_help = "fwabf attach <ip4|ip6> [del] policy <value> [priority <value>] <interface>",
 };
 /* *INDENT-ON* */
 
 static clib_error_t *
-abf_show_attach_cmd (vlib_main_t * vm,
-		     unformat_input_t * input, vlib_cli_command_t * cmd)
+fwabf_show_attach_cmd (vlib_main_t * vm, unformat_input_t * input, vlib_cli_command_t * cmd)
 {
   const fwabf_itf_attach_t *fia;
-  u32 sw_if_index, *aiai;
+  u32 sw_if_index, *fiai;
   fib_protocol_t fproto;
   vnet_main_t *vnm;
 
@@ -441,15 +421,15 @@ abf_show_attach_cmd (vlib_main_t * vm,
   /* *INDENT-OFF* */
   FOR_EACH_FIB_IP_PROTOCOL(fproto)
   {
-    if (sw_if_index < vec_len(fwabf_per_itf[fproto]))
+    if (sw_if_index < vec_len(fwabf_attach_per_itf[fproto]))
       {
-        if (vec_len(fwabf_per_itf[fproto][sw_if_index]))
+        if (vec_len(fwabf_attach_per_itf[fproto][sw_if_index]))
           vlib_cli_output(vm, "%U:", format_fib_protocol, fproto);
 
-        vec_foreach(aiai, fwabf_per_itf[fproto][sw_if_index])
+        vec_foreach(fiai, fwabf_attach_per_itf[fproto][sw_if_index])
           {
-            fia = pool_elt_at_index(fwabf_itf_attach_pool, *aiai);
-            vlib_cli_output(vm, " %U", format_abf_intf_attach, fia);
+            fia = pool_elt_at_index(fwabf_itf_attach_pool, *fiai);
+            vlib_cli_output(vm, " %U", format_fwabf_itf_attach, fia);
           }
       }
   }
@@ -458,9 +438,9 @@ abf_show_attach_cmd (vlib_main_t * vm,
 }
 
 /* *INDENT-OFF* */
-VLIB_CLI_COMMAND (abf_show_attach_cmd_node, static) = {
+VLIB_CLI_COMMAND (fwabf_show_attach_cmd_node, static) = {
   .path = "show fwabf attach",
-  .function = abf_show_attach_cmd,
+  .function = fwabf_show_attach_cmd,
   .short_help = "show fwabf attach <interface>",
   .is_mp_safe = 1,
 };
@@ -562,11 +542,11 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
             */
           sw_if_index0 = vnet_buffer (b0)->sw_if_index[VLIB_RX];
 
-          ASSERT (vec_len (fwabf_per_itf[FIB_PROTOCOL_IP4]) > sw_if_index0);
-          attachments0 = fwabf_per_itf[FIB_PROTOCOL_IP4][sw_if_index0];
+          ASSERT (vec_len (fwabf_attach_per_itf[FIB_PROTOCOL_IP4]) > sw_if_index0);
+          attachments0 = fwabf_attach_per_itf[FIB_PROTOCOL_IP4][sw_if_index0];
 
-          ASSERT (vec_len (fwabf_alctx_per_itf[FIB_PROTOCOL_IP4]) > sw_if_index0);
-          lc_index = fwabf_alctx_per_itf[FIB_PROTOCOL_IP4][sw_if_index0];
+          ASSERT (vec_len (fwabf_acl_lc_per_itf[FIB_PROTOCOL_IP4]) > sw_if_index0);
+          lc_index = fwabf_acl_lc_per_itf[FIB_PROTOCOL_IP4][sw_if_index0];
 
           /*
             A non-inline version looks like this:
@@ -730,11 +710,11 @@ fwabf_input_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
             */
           sw_if_index0 = vnet_buffer (b0)->sw_if_index[VLIB_RX];
 
-          ASSERT (vec_len (fwabf_per_itf[FIB_PROTOCOL_IP6]) > sw_if_index0);
-          attachments0 = fwabf_per_itf[FIB_PROTOCOL_IP6][sw_if_index0];
+          ASSERT (vec_len (fwabf_attach_per_itf[FIB_PROTOCOL_IP6]) > sw_if_index0);
+          attachments0 = fwabf_attach_per_itf[FIB_PROTOCOL_IP6][sw_if_index0];
 
-          ASSERT (vec_len (fwabf_alctx_per_itf[FIB_PROTOCOL_IP6]) > sw_if_index0);
-          lc_index = fwabf_alctx_per_itf[FIB_PROTOCOL_IP6][sw_if_index0];
+          ASSERT (vec_len (fwabf_acl_lc_per_itf[FIB_PROTOCOL_IP6]) > sw_if_index0);
+          lc_index = fwabf_acl_lc_per_itf[FIB_PROTOCOL_IP6][sw_if_index0];
 
           acl_plugin_fill_5tuple_inline (acl_plugin.p_acl_main, lc_index, b0,
                 1, 1, 0, &fa_5tuple0);

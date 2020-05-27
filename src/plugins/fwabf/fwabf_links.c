@@ -240,10 +240,9 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
 
   /*
    * Free (invalidate) object as soon as possible, so datapath will not use it.
-   * nnoww - TODO - think of locks . or order for free() and rest resets (use local variables?)!
    */
-  link = &fwabf_links[sw_if_index];
-  fwlabel          = link->fwlabel;
+  link    = &fwabf_links[sw_if_index];
+  fwlabel = link->fwlabel;
   link->sw_if_index = INDEX_INVALID;
 
   /*
@@ -254,9 +253,7 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
   vec_del1 (fwabf_labels[fwlabel].interfaces, index);
 
   /*
-   * Copied from ABF, but do we really need this?
-   * Looks like the dpo is not accessable anymore and it has no effect on vlib graph!
-   * nnoww - TODO - ensure this!
+   * Release adjacency if our link is the last owner.
    */
   dpo_reset (&link->dpo);
 

@@ -231,7 +231,7 @@ vl_api_fwabf_policy_dump_t_handler (vl_api_fwabf_policy_dump_t * mp)
 }
 
 static int
-abf_itf_attach_send_details (u32 aiai, void *args)
+abf_itf_attach_send_details (u32 fiai, void *args)
 {
   vl_api_fwabf_itf_attach_details_t *mp;
   abf_dump_walk_ctx_t *ctx;
@@ -239,7 +239,7 @@ abf_itf_attach_send_details (u32 aiai, void *args)
   fwabf_policy_t *p;
 
   ctx = args;
-  fia = fwabf_itf_attach_get (aiai);
+  fia = fwabf_itf_attach_get (fiai);
   p = fwabf_policy_get (fia->fia_policy);
 
   mp = vl_msg_api_alloc (sizeof (*mp));
