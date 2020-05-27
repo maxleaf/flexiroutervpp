@@ -168,6 +168,7 @@ int
 fwabf_policy_delete (u32 policy_id)
 {
   fwabf_policy_link_group_t* group;
+  fwabf_policy_link_group_t* link_groups;
   fwabf_policy_t*            p;
   u32                        pi;
 
@@ -179,11 +180,22 @@ fwabf_policy_delete (u32 policy_id)
   if (p->refCounter > 0)
     return VNET_API_ERROR_INSTANCE_IN_USE;
 
-  vec_foreach (group, p->action.link_groups)
+  /*
+   * Reset link group ASAP to prevent usage of stale policy
+   * and ensure no DROP if the stale policy is used.
+   */
+  link_groups           = p->action.link_groups;
+  p->action.link_groups = 0;
+  p->action.fallback    = FWABF_FALLBACK_DEFAULT_ROUTE;
+
+  /*
+   * Now free resources.
+   */
+  vec_foreach (group, link_groups)
     {
       vec_free (group->links);
     }
-  vec_free (p->action.link_groups);
+  vec_free (link_groups);
 
   hash_unset (abf_policy_db, policy_id);
   pool_put (abf_policy_pool, p);
@@ -579,7 +591,9 @@ unformat_link_group (unformat_input_t * input, va_list * args)
           group->alg = FWABF_SELECTION_RANDOM;
         }
       else if (unformat (input, "labels %U", unformat_labels, vm, &group->links))
-        ;
+        {
+          break;
+        }
       else
         return 0; /* failed to parse action*/
     }
@@ -620,19 +634,14 @@ unformat_action (unformat_input_t * input, va_list * args)
           return 1;   /* finished to parse list of groups*/
         }
       /* Now give a chance to list of groups */
-      else if (unformat (input, "group %d %U,", &gid, unformat_link_group, vm, &group))
-        {
-          vec_add1(action->link_groups, group);
-        }
       else if (unformat (input, "group %d %U", &gid, unformat_link_group, vm, &group))
         {
           vec_add1(action->link_groups, group);
-          return 1;   /* finished to parse list of groups*/
         }
       else
         return 0; /* failed to parse action*/
     }
-  return 0; /* groups were not found */
+  return 1;
 }
 
 static clib_error_t *
