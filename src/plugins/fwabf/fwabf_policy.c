@@ -645,18 +645,19 @@ unformat_action (unformat_input_t * input, va_list * args)
 }
 
 static clib_error_t *
-abf_policy_cmd (vlib_main_t * vm,
-		unformat_input_t * main_input, vlib_cli_command_t * cmd)
+abf_policy_cmd (vlib_main_t * vm, unformat_input_t * main_input, vlib_cli_command_t * cmd)
 {
   unformat_input_t _line_input, *line_input = &_line_input;
   fwabf_policy_action_t policy_action;
-  u32 acl_index, policy_id;
-  u32 is_del;
-  u32 ret;
+  u32                   acl_index;
+  u32                   policy_id;
+  u32                   is_del;
+  u32                   ret;
 
-  is_del = 0;
+  is_del    = 0;
   acl_index = INDEX_INVALID;
   policy_id = INDEX_INVALID;
+  memset(&policy_action, 0, sizeof(policy_action));
 
   /* Get a line of input. */
   if (!unformat_user (main_input, unformat_line_input, line_input))
@@ -687,6 +688,11 @@ abf_policy_cmd (vlib_main_t * vm,
   if (INDEX_INVALID == acl_index)
     {
       vlib_cli_output (vm, "Specify a ACL rule ID");
+      return 0;
+    }
+  if (policy_action.link_groups == 0)
+    {
+      vlib_cli_output (vm, "Specify at least one group of links in action");
       return 0;
     }
 
