@@ -600,14 +600,6 @@ void fwabf_link_refresh_dpo(fwabf_sw_interface_t * link)
     }
 
   /*
-   * Befor refreshing DPO remove the current value from a adj_indexes_to_labels map.
-   */
-  if (PREDICT_TRUE(dpo_id_is_valid(&link->dpo)))
-    {
-      adj_indexes_to_labels[link->dpo.dpoi_index] = FWABF_INVALID_LABEL;
-    }
-
-  /*
    * Now refresh the DPO.
    */
   fib_path_list_contribute_forwarding (
@@ -626,6 +618,10 @@ void fwabf_link_refresh_dpo(fwabf_sw_interface_t * link)
     {
       ASSERT(link->dpo.dpoi_index < FWABF_MAX_ADJ_INDEX);
       adj_indexes_to_labels[link->dpo.dpoi_index] = link->fwlabel;
+    }
+  else
+    {
+      adj_indexes_to_labels[link->dpo.dpoi_index] = FWABF_INVALID_LABEL;
     }
 }
 
