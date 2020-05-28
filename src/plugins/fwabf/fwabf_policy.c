@@ -684,6 +684,11 @@ abf_policy_cmd (vlib_main_t * vm,
       vlib_cli_output (vm, "Specify a Policy ID");
       return 0;
     }
+  if (INDEX_INVALID == acl_index)
+    {
+      vlib_cli_output (vm, "Specify a ACL rule ID");
+      return 0;
+    }
 
   if (!is_del)
     {
@@ -707,7 +712,7 @@ abf_policy_cmd (vlib_main_t * vm,
 VLIB_CLI_COMMAND (abf_policy_cmd_node, static) = {
   .path = "fwabf policy",
   .function = abf_policy_cmd,
-  .short_help = "fwabf policy [add|del] id <index> [acl <index>] action [select_group random] [fallback drop] [group <id>] [random] labels <label1,label2,...> [group <id> [random] labels <label1,label2,...>] ...",
+  .short_help = "fwabf policy [add|del] id <index> acl <index> action [select_group random] [fallback drop] [group <id>] [random] labels <label1,label2,...> [group <id> [random] labels <label1,label2,...>] ...",
   .is_mp_safe = 1,
 };
 /* *INDENT-ON* */
