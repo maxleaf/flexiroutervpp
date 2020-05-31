@@ -323,7 +323,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
           i = FWABF_GET_INDEX_BY_FLOWHASH(
                 flow_hash, group->n_links_pow2_mask, group->n_links_minus_1, i);
           fwlabel = group->links[i];
-          *dpo    = fwabf_links_get_dpo (fwlabel, lb);
+          *dpo    = fwabf_links_get_dpo (fwlabel, lb, DPO_PROTO_IP4);
           if (dpo_id_is_valid (dpo))
             {
               p->counter_applied++;
@@ -338,7 +338,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
        */
       vec_foreach (pfwlabel, group->links)
         {
-          *dpo = fwabf_links_get_dpo (*pfwlabel, lb);
+          *dpo = fwabf_links_get_dpo (*pfwlabel, lb, DPO_PROTO_IP4);
           if (dpo_id_is_valid (dpo))
             {
               p->counter_applied++;
@@ -366,7 +366,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
             flow_hash = ip4_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
           }
           fwlabel = group->links[flow_hash & group->n_links_minus_1];
-          *dpo = fwabf_links_get_dpo (fwlabel, lb);
+          *dpo = fwabf_links_get_dpo (fwlabel, lb, DPO_PROTO_IP4);
           if (dpo_id_is_valid (dpo))
             {
               p->counter_applied++;
@@ -375,7 +375,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
         }
       vec_foreach (pfwlabel, group->links)
         {
-          *dpo = fwabf_links_get_dpo (*pfwlabel, lb);
+          *dpo = fwabf_links_get_dpo (*pfwlabel, lb, DPO_PROTO_IP4);
           if (dpo_id_is_valid (dpo))
             {
               p->counter_applied++;
@@ -464,7 +464,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
           i = FWABF_GET_INDEX_BY_FLOWHASH(
                 flow_hash, group->n_links_pow2_mask, group->n_links_minus_1, i);
           fwlabel = group->links[i];
-          *dpo    = fwabf_links_get_dpo (fwlabel, lb);
+          *dpo    = fwabf_links_get_dpo (fwlabel, lb, DPO_PROTO_IP6);
           if (dpo_id_is_valid (dpo))
             {
               p->counter_applied++;
@@ -479,7 +479,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
        */
       vec_foreach (pfwlabel, group->links)
         {
-          *dpo = fwabf_links_get_dpo (*pfwlabel, lb);
+          *dpo = fwabf_links_get_dpo (*pfwlabel, lb, DPO_PROTO_IP6);
           if (dpo_id_is_valid (dpo))
             {
               p->counter_applied++;
@@ -507,7 +507,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
             flow_hash = ip6_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
           }
           fwlabel = group->links[flow_hash & group->n_links_minus_1];
-          *dpo = fwabf_links_get_dpo (fwlabel, lb);
+          *dpo = fwabf_links_get_dpo (fwlabel, lb, DPO_PROTO_IP6);
           if (dpo_id_is_valid (dpo))
             {
               p->counter_applied++;
@@ -516,7 +516,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
         }
       vec_foreach (pfwlabel, group->links)
         {
-          *dpo = fwabf_links_get_dpo (*pfwlabel, lb);
+          *dpo = fwabf_links_get_dpo (*pfwlabel, lb, DPO_PROTO_IP6);
           if (dpo_id_is_valid (dpo))
             {
               p->counter_applied++;
