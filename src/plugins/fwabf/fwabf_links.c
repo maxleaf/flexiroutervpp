@@ -241,9 +241,9 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
   /*
    * Free (invalidate) object as soon as possible, so datapath will not use it.
    */
-  link    = &fwabf_links[sw_if_index];
-  fwlabel = link->fwlabel;
+  link              = &fwabf_links[sw_if_index];
   link->sw_if_index = INDEX_INVALID;
+  fwlabel           = link->fwlabel;
 
   /*
    * Remove label->interface mapping.
@@ -683,6 +683,14 @@ fib_node_back_walk_rc_t fwabf_sw_interface_fnv_back_walk_notify (
                             fib_node_t * node, fib_node_back_walk_ctx_t * ctx)
 {
   fwabf_sw_interface_t *link = fwabf_sw_interface_get_from_node(node);
+
+  /*
+   * Poor multi-thread protection:
+   *  1. Link memory is never freed
+   *  2. Active link must have 'link->sw_if_index'
+   */
+  if (link->sw_if_index == INDEX_INVALID)
+    return (FIB_NODE_BACK_WALK_CONTINUE);
 
   /*
    * Update DPO with the new current forwarding info.
