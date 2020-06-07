@@ -20,10 +20,6 @@
  *     flooded to TAP through BVI, so Linux will see proper mac header.
  */
 
-#ifndef FLEXIWAN_FIX
-#define FLEXIWAN_FIX
-#endif
-
 /**
  * @file
  * @brief L2-GRE over IPSec packet processing.

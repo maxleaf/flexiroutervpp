@@ -20,10 +20,6 @@
  *   - Use 4789 for VxLan src port - enables full NAT traversal
  */
 
-#ifndef FLEXIWAN_FIX
-#define FLEXIWAN_FIX
-#endif
-
 #include <vppinfra/error.h>
 #include <vppinfra/hash.h>
 #include <vnet/vnet.h>
