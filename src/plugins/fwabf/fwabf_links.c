@@ -23,6 +23,7 @@
 #include <vnet/dpo/drop_dpo.h>
 #include <vnet/dpo/load_balance_map.h>
 #include <vnet/fib/fib_path_list.h>
+#include <vnet/fib/fib_table.h>
 #include <vnet/fib/fib_walk.h>
 #include <vnet/interface_funcs.h>
 
@@ -90,6 +91,8 @@ typedef struct fwabf_label_data_t_
   u32* interfaces;
   u32  counter_hits;
   u32  counter_misses;
+  u32  counter_enforced_hits;
+  u32  counter_enforced_misses;
 } fwabf_label_data_t;
 
 /**
@@ -126,6 +129,43 @@ static fwabf_label_data_t* fwabf_labels = NULL;
 static u32* adj_indexes_to_labels = NULL;
 #define FWABF_MAX_ADJ_INDEX  0xFFFF
 
+
+/*
+ * Default route handling.
+ * The default route adjacencies are used as follows:
+ * if packet matches policy and FIB lookup brings default route adjacency,
+ * the packet will be forwarded on the labeled tunnel with no regards to routing
+ * tables. This is to enable user to enforce public internet traffic, e.g. Facebook,
+ * to go through the tunnel if user configured such policy.
+ * If FIB lookup doesn't bring default route, the traffic is not designated for
+ * open internet probably, so final tunnel to be used is found by intersection
+ * of FIB lookup result and labeled tunnels.
+ *  To my sorrow FIB lookup output does not provide indication if the result DPO
+ * belongs to the default route - entry with prefix 0.0.0.0/0. Therefore we have
+ * all the vijearasta below - incorporation of FWABF into FIB graph:
+ * we find the default route entry in FIB table #0 and register with it to get
+ * FIB updates.
+ */
+typedef struct fwabf_default_route_ip46_t_
+{
+  fib_prefix_t      fib_prefix;       /* Prefix - 0.0.0.0/0 or ::/0*/
+  fib_node_index_t  fib_entry_index;  /* Index of FIB Entry for default prefix */
+  u32               sibling_index;    /* FWABF as a child of entry */
+  fib_node_t        fib_node;         /* Linkage into FIB graph needed to get FIB updates by walk */
+  u32*              adj_index_list;   /* List of current adjacencies */
+  u32*              adj_index_map;    /* Map of adjacencies into booleans: 1 - adjacency stand for default route */
+} fwabf_default_route_ip46_t;
+
+typedef struct fwabf_default_route_t_
+{
+  fib_node_type_t   fib_node_type;     /* Node type needed by FIB walk */
+  fib_node_vft_t    fib_node_vft;      /* Functions needed by FIB walk */
+  fwabf_default_route_ip46_t dr4;
+  fwabf_default_route_ip46_t dr6;
+} fwabf_default_route_t;
+
+static fwabf_default_route_t fwabf_default_route;
+
 /**
  * FWABF nodes.
  * They are initialized in abf_itf_attach.
@@ -147,6 +187,10 @@ extern vlib_node_registration_t fwabf_ip6_node;
  */
 static void fwabf_link_refresh_dpo(fwabf_sw_interface_t* link);
 static fwabf_sw_interface_t* fwabf_links_find_link(u32 sw_if_index);
+static dpo_id_t fwabf_links_get_labeled_dpo (fwabf_label_t fwlabel);
+static void fwabf_default_route_init();
+static void fwabf_default_route_refresh_dpo(fib_protocol_t proto);
+
 
 
 u32 fwabf_links_add_interface (
@@ -224,6 +268,17 @@ u32 fwabf_links_add_interface (
   link->dpo       = dpo_invalid;
   fwabf_link_refresh_dpo(link);
 
+  /*
+   * Initialize default route adjacencies.
+   * We try to do it on every interface add as we don't know when default route
+   * prefix will be added to FIB.
+   */
+  if (fwabf_default_route.dr4.fib_entry_index == ~0  ||
+      fwabf_default_route.dr6.fib_entry_index == ~0)
+    {
+      fwabf_default_route_init();
+    }
+
   return 0;
 }
 
@@ -241,9 +296,9 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
   /*
    * Free (invalidate) object as soon as possible, so datapath will not use it.
    */
-  link    = &fwabf_links[sw_if_index];
-  fwlabel = link->fwlabel;
+  link              = &fwabf_links[sw_if_index];
   link->sw_if_index = INDEX_INVALID;
+  fwlabel           = link->fwlabel;
 
   /*
    * Remove label->interface mapping.
@@ -271,11 +326,17 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
   return 0;
 }
 
-dpo_id_t fwabf_links_get_dpo (fwabf_label_t fwlabel, const load_balance_t* lb)
+dpo_id_t fwabf_links_get_dpo (
+                        fwabf_label_t         fwlabel,
+                        const load_balance_t* lb,
+                        dpo_proto_t           proto)
 {
   const dpo_id_t* lookup_dpo;
   dpo_id_t        invalid_dpo = DPO_INVALID;
   u32             i;
+  u32*            default_route_adjacencies = (proto == DPO_PROTO_IP4) ?
+                                      fwabf_default_route.dr4.adj_index_map :
+                                      fwabf_default_route.dr6.adj_index_map;
 
   /*
    * lb - is DPO of Load Balance type. It is the object returned by the FIB
@@ -309,7 +370,29 @@ dpo_id_t fwabf_links_get_dpo (fwabf_label_t fwlabel, const load_balance_t* lb)
        * and are managed by FWABF module. See fwabf_link_refresh_dpo()
        * for details.
        */
+
+      /*
+       * If lookup DPO stands for default route (prefix 0.0.0.0/0),
+       * do not intersect it with labeled DPO-s, use labeled DPO directly.
+       * In this way we enforce packets designated for open internet to go into
+       * labeled tunnel/WAN interface. Remember at this point we deal only with
+       * packets that matched policy rules. For example, if user configured
+       * policy to redirect Facebook traffic into tunnel, we will do this even
+       * if FIB prefers to use default route for it. Because this is what user
+       * wants us to do. Note we can't guarantee that the traffic will reach
+       * Facebook servers, as tunnel might end up with non routeable device.
+       * User should take responsibilty and configure routing on remote end of
+       * tunnel to get the Facebook traffic where it wants.
+       */
       ASSERT(lookup_dpo->dpoi_index < FWABF_MAX_ADJ_INDEX);
+      if (default_route_adjacencies[lookup_dpo->dpoi_index] == 1)
+        {
+          return fwabf_links_get_labeled_dpo(fwlabel);
+        }
+
+      /*
+       * Now go and intersect lookup DPO with labeled DPO.
+       */
       if (PREDICT_TRUE(adj_indexes_to_labels[lookup_dpo->dpoi_index] == fwlabel))
         {
           fwabf_labels[fwlabel].counter_hits++;
@@ -326,6 +409,10 @@ dpo_id_t fwabf_links_get_dpo (fwabf_label_t fwlabel, const load_balance_t* lb)
         {
           lookup_dpo = load_balance_get_fwd_bucket (lb, i);
           ASSERT(lookup_dpo->dpoi_index < FWABF_MAX_ADJ_INDEX);
+          if (default_route_adjacencies[lookup_dpo->dpoi_index] == 1)
+            {
+              return fwabf_links_get_labeled_dpo(fwlabel);
+            }
           if (PREDICT_TRUE(adj_indexes_to_labels[lookup_dpo->dpoi_index] == fwlabel))
             {
               fwabf_labels[fwlabel].counter_hits++;
@@ -338,6 +425,37 @@ dpo_id_t fwabf_links_get_dpo (fwabf_label_t fwlabel, const load_balance_t* lb)
    * No match between lookup DPO and labeled DPO-s.
    */
   fwabf_labels[fwlabel].counter_misses++;
+  return invalid_dpo;
+}
+
+/**
+ * Fetches DPO of the interface with provided label (either tunnel or WAN).
+ * If there are few interfaces with same label - use the first alive.
+ *
+ * @param fwlabel       FWABF label.
+ * @return DPO of alive tunnel/WAN inteface or DPO_INVALID if not found.
+ */
+static dpo_id_t fwabf_links_get_labeled_dpo (fwabf_label_t fwlabel)
+{
+  dpo_id_t              invalid_dpo = DPO_INVALID;
+  u32*                  sw_if_index;
+  fwabf_label_data_t*   label;
+  fwabf_sw_interface_t* link;
+
+  ASSERT(fwlabel <= FWABF_MAX_LABEL);
+  label = &fwabf_labels[fwlabel];
+
+  vec_foreach(sw_if_index, label->interfaces)
+    {
+      link = &fwabf_links[*sw_if_index];
+      if (PREDICT_TRUE(link->dpo.dpoi_type == DPO_ADJACENCY))
+        {
+          label->counter_enforced_hits++;
+          return link->dpo;
+        }
+    }
+
+  label->counter_enforced_misses++;
   return invalid_dpo;
 }
 
@@ -545,8 +663,9 @@ fwabf_link_show_labels_cmd (
       if (vec_len(fwabf_labels[i].interfaces) == 0)
         continue;
 
-      vlib_cli_output(vm, "%d (hits:%d misses:%d):",
-          i, fwabf_labels[i].counter_hits, fwabf_labels[i].counter_misses);
+      vlib_cli_output(vm, "%d (hits:%d misses:%d enforced_hits:%d enforced_misses:%d):",
+          i, fwabf_labels[i].counter_hits, fwabf_labels[i].counter_misses,
+          fwabf_labels[i].counter_enforced_hits, fwabf_labels[i].counter_enforced_misses);
       vec_foreach (sw_if_index, fwabf_labels[i].interfaces)
         {
           link = &fwabf_links[*sw_if_index];
@@ -600,14 +719,6 @@ void fwabf_link_refresh_dpo(fwabf_sw_interface_t * link)
     }
 
   /*
-   * Befor refreshing DPO remove the current value from a adj_indexes_to_labels map.
-   */
-  if (PREDICT_TRUE(dpo_id_is_valid(&link->dpo)))
-    {
-      adj_indexes_to_labels[link->dpo.dpoi_index] = FWABF_INVALID_LABEL;
-    }
-
-  /*
    * Now refresh the DPO.
    */
   fib_path_list_contribute_forwarding (
@@ -626,6 +737,10 @@ void fwabf_link_refresh_dpo(fwabf_sw_interface_t * link)
     {
       ASSERT(link->dpo.dpoi_index < FWABF_MAX_ADJ_INDEX);
       adj_indexes_to_labels[link->dpo.dpoi_index] = link->fwlabel;
+    }
+  else
+    {
+      adj_indexes_to_labels[link->dpo.dpoi_index] = FWABF_INVALID_LABEL;
     }
 }
 
@@ -683,10 +798,18 @@ void fwabf_sw_interface_fnv_last_lock_gone (fib_node_t * node)
  * If no route exists,it will be updated to DPO_DROP.
  */
 static
-fib_node_back_walk_rc_t fwabf_sw_interface_fnv_back_walk_notify (
+fib_node_back_walk_rc_t fwabf_sw_interface_fnv_back_walk (
                             fib_node_t * node, fib_node_back_walk_ctx_t * ctx)
 {
   fwabf_sw_interface_t *link = fwabf_sw_interface_get_from_node(node);
+
+  /*
+   * Poor multi-thread protection:
+   *  1. Link memory is never freed
+   *  2. Active link must have 'link->sw_if_index'
+   */
+  if (link->sw_if_index == INDEX_INVALID)
+    return (FIB_NODE_BACK_WALK_CONTINUE);
 
   /*
    * Update DPO with the new current forwarding info.
@@ -703,8 +826,187 @@ fib_node_back_walk_rc_t fwabf_sw_interface_fnv_back_walk_notify (
 static const fib_node_vft_t fwabf_sw_interface_vft = {
   .fnv_get       = fwabf_sw_interface_fnv_get_node,
   .fnv_last_lock = fwabf_sw_interface_fnv_last_lock_gone,
-  .fnv_back_walk = fwabf_sw_interface_fnv_back_walk_notify,
+  .fnv_back_walk = fwabf_sw_interface_fnv_back_walk,
 };
+
+
+
+/*
+ * Take a care of FIB graph updates for the default routes.
+ */
+
+static fib_node_t * fwabf_default_route_fnv_get_node (fib_node_index_t index)
+{
+  fib_node_t* fnode = (index == FIB_PROTOCOL_IP4) ?
+                  &fwabf_default_route.dr4.fib_node :
+                  &fwabf_default_route.dr6.fib_node;
+  return fnode;
+}
+
+static void fwabf_default_route_fnv_last_lock_gone (fib_node_t * node)
+{
+  /*not in use, as no one is attached to fwabf_default_route object in FIB graph*/
+}
+
+static fib_node_back_walk_rc_t fwabf_default_route_fnv_back_walk (
+                            fib_node_t * node, fib_node_back_walk_ctx_t * ctx)
+{
+  fib_protocol_t proto = (node == &fwabf_default_route.dr4.fib_node) ?
+                         FIB_PROTOCOL_IP4 : FIB_PROTOCOL_IP6;
+  fwabf_default_route_refresh_dpo(proto);
+  return (FIB_NODE_BACK_WALK_CONTINUE);
+}
+
+static void fwabf_default_route_refresh_dpo(fib_protocol_t proto)
+{
+  dpo_id_t                  dpo = DPO_INVALID;
+  dpo_id_t                  dpo_i;
+  index_t                   *p_adj_index, adj_index;
+  fib_node_index_t          fib_entry_index;
+  fib_forward_chain_type_t  fwd_chain_type;
+  fwabf_default_route_t*    dr = &fwabf_default_route;
+  load_balance_t*           lb;
+  u32**                     p_adj_index_list;
+  u32*                      adj_index_map;
+
+  if (proto == FIB_PROTOCOL_IP4)
+    {
+      fwd_chain_type    = FIB_FORW_CHAIN_TYPE_UNICAST_IP4;
+      fib_entry_index   = dr->dr4.fib_entry_index;
+      adj_index_map     = dr->dr4.adj_index_map;
+      p_adj_index_list  = &dr->dr4.adj_index_list;
+    }
+  else
+    {
+      fwd_chain_type    = FIB_FORW_CHAIN_TYPE_UNICAST_IP6;
+      fib_entry_index   = dr->dr6.fib_entry_index;
+      adj_index_map     = dr->dr6.adj_index_map;
+      p_adj_index_list  = &dr->dr6.adj_index_list;
+    }
+
+  /* Get new default route adjacencies.
+  */
+  fib_entry_contribute_forwarding (fib_entry_index, fwd_chain_type, &dpo);
+
+  /* Remove currently stored default route adjacencies.
+  */
+  vec_foreach(p_adj_index, *p_adj_index_list)
+    {
+      adj_index_map[*p_adj_index] = 0;
+    }
+  vec_free(*p_adj_index_list);
+
+  /* Now store new default route adjacencies.
+   * Note the FIB entry root DPO is always of DPO_LOAD_BALANCE type even if it
+   * has only one actual DPO.
+   */
+  if (PREDICT_TRUE(dpo.dpoi_type == DPO_LOAD_BALANCE))
+  {
+    lb = load_balance_get (dpo.dpoi_index);
+    for (u32 i = 0; i < lb->lb_n_buckets; i++)
+    {
+      dpo_i = *(load_balance_get_bucket_i (lb, i));
+      if (PREDICT_TRUE(dpo_i.dpoi_type == DPO_ADJACENCY))
+      {
+        adj_index = dpo_i.dpoi_index;
+        ASSERT(adj_index < FWABF_MAX_ADJ_INDEX);
+        vec_add1(*p_adj_index_list, adj_index);
+        adj_index_map[adj_index] = 1;
+      }
+    }
+  }
+  dpo_reset (&dpo);
+}
+
+static void fwabf_default_route_init()
+{
+  fwabf_default_route_ip46_t* dr4 = &fwabf_default_route.dr4;
+  fwabf_default_route_ip46_t* dr6 = &fwabf_default_route.dr6;
+
+  if (dr4->fib_entry_index == ~0)
+  {
+    dr4->fib_entry_index = fib_table_lookup(0 /*fib_index*/, &dr4->fib_prefix);
+    if (dr4->fib_entry_index != ~0)
+      {
+        dr4->sibling_index = fib_entry_child_add (
+                dr4->fib_entry_index, fwabf_default_route.fib_node_type, FIB_PROTOCOL_IP4);
+        fwabf_default_route_refresh_dpo (FIB_PROTOCOL_IP4);
+      }
+  }
+  if (dr6->fib_entry_index == ~0)
+  {
+    dr6->fib_entry_index = fib_table_lookup(0 /*fib_index*/, &dr6->fib_prefix);
+    if (dr6->fib_entry_index != ~0)
+      {
+        dr6->sibling_index = fib_entry_child_add (
+                dr6->fib_entry_index, fwabf_default_route.fib_node_type, FIB_PROTOCOL_IP6);
+        fwabf_default_route_refresh_dpo (FIB_PROTOCOL_IP6);
+      }
+  }
+}
+
+static clib_error_t *
+fwabf_link_show_default_route_cmd (
+        vlib_main_t * vm, unformat_input_t * input, vlib_cli_command_t * cmd)
+{
+  fwabf_default_route_t* dr = &fwabf_default_route;
+  index_t   *adj_index, *adj_index_list;
+  u32      verbose = 0;
+  u32      is_ip4  = 1;
+  fib_node_index_t  fib_entry_index;
+
+  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (input, "verbose"))
+        verbose = 1;
+      else if (unformat (input, "ip6"))
+        is_ip4 = 0;
+      else
+        return (clib_error_return (0, "unknown input '%U'",
+				                           format_unformat_error, input));
+    }
+
+  if (is_ip4 == 1)
+    {
+      fib_entry_index = dr->dr4.fib_entry_index;
+      adj_index_list  = dr->dr4.adj_index_list;
+    }
+    else
+    {
+      fib_entry_index = dr->dr6.fib_entry_index;
+      adj_index_list  = dr->dr6.adj_index_list;
+    }
+
+  vlib_cli_output(vm, "FIB\n");
+  vlib_cli_output(vm, "=============\n");
+  if (fib_entry_index != ~0)
+  {
+    vlib_cli_output(vm, "%U\n", format_fib_entry, fib_entry_index,
+        (verbose ? FIB_ENTRY_FORMAT_DETAIL2 : FIB_ENTRY_FORMAT_DETAIL));
+  }
+
+  vlib_cli_output(vm, "\nFWABF\n");
+  vlib_cli_output(vm, "=============\n");
+  vec_foreach(adj_index, adj_index_list)
+    {
+      vlib_cli_output(vm, "[%d] %U\n", *adj_index,
+          format_ip_adjacency, *adj_index,
+          (verbose ? FORMAT_IP_ADJACENCY_DETAIL : FORMAT_IP_ADJACENCY_BRIEF));
+    }
+
+  return (NULL);
+}
+
+/* *INDENT-OFF* */
+VLIB_CLI_COMMAND (fwabf_default_route_show_cmd_node, static) = {
+  .path = "show fwabf default_route",
+  .function = fwabf_link_show_default_route_cmd,
+  .short_help = "show fwabf default_route [verbose]",
+  .is_mp_safe = 1,
+};
+/* *INDENT-ON* */
+
+
 
 static
 clib_error_t * fwabf_links_init (vlib_main_t * vm)
@@ -731,8 +1033,26 @@ clib_error_t * fwabf_links_init (vlib_main_t * vm)
    * Initialize array of adjacencies, elements of which are labels.
    * We preallocate it as number of adjacencies is limited by 0xFFFF.
    */
-  vec_validate(adj_indexes_to_labels, FWABF_MAX_ADJ_INDEX);
-  vec_set(adj_indexes_to_labels, FWABF_INVALID_LABEL);
+  vec_validate_init_empty(adj_indexes_to_labels, FWABF_MAX_ADJ_INDEX, FWABF_INVALID_LABEL);
+
+  /*
+   * Initialize default route adjacencies. They might be needed by Policy.
+   * See usage of default_route_adj_indexes for more details.
+   */
+  fwabf_default_route_t* dr = &fwabf_default_route;
+  memset(dr, 0, sizeof(*dr));
+  dr->fib_node_vft.fnv_get       = fwabf_default_route_fnv_get_node;
+  dr->fib_node_vft.fnv_last_lock = fwabf_default_route_fnv_last_lock_gone;
+  dr->fib_node_vft.fnv_back_walk = fwabf_default_route_fnv_back_walk;
+  dr->fib_node_type              = fib_node_register_new_type (&dr->fib_node_vft);
+  fib_node_init (&dr->dr4.fib_node, dr->fib_node_type);
+  fib_node_init (&dr->dr6.fib_node, dr->fib_node_type);
+  dr->dr4.fib_entry_index        = ~0;
+  dr->dr4.fib_prefix.fp_proto    = FIB_PROTOCOL_IP4;
+  vec_validate_init_empty(dr->dr4.adj_index_map, FWABF_MAX_ADJ_INDEX, 0);
+  dr->dr6.fib_entry_index        = ~0;
+  dr->dr6.fib_prefix.fp_proto    = FIB_PROTOCOL_IP6;
+  vec_validate_init_empty(dr->dr6.adj_index_map, FWABF_MAX_ADJ_INDEX, 0);
 
   return (NULL);
 }

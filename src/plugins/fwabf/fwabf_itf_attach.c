@@ -655,7 +655,7 @@ fwabf_input_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
       while (n_left_from > 0 && n_left_to_next > 0)
         {
           const u32*            attachments0;
-          const fwabf_itf_attach_t* fia0;
+          const fwabf_itf_attach_t* fia0 = 0;
           ip_lookup_next_t      next0 = IP_LOOKUP_NEXT_DROP;
           vlib_buffer_t*        b0;
           fa_5tuple_opaque_t    fa_5tuple0;

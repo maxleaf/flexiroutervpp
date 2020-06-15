@@ -80,11 +80,13 @@ extern u32 fwabf_links_del_interface (const u32 sw_if_index);
  * @param lb        the result of FIB lookup. It is DPO of Load Balance type.
  *                  It can't be used for forwarding. It is used to hold one or
  *                  more children DPO-s that can be used for forwarding.
+ * @param proto     IPv4/IPv6
  * @return DPO to be used for forwarding or DPO_INVALID if intersection failed.
  */
 extern dpo_id_t fwabf_links_get_dpo (
                         fwabf_label_t         fwlabel,
-                        const load_balance_t* lb);
+                        const load_balance_t* lb,
+                        dpo_proto_t           proto);
 
 /*
  * fd.io coding-style-patch-verification: ON
