@@ -28,7 +28,7 @@ static char *dhcp_proxy_error_strings[] = {
 };
 
 #define foreach_dhcp_proxy_to_server_input_next \
-  _ (DROP, "error-drop")			\
+  _ (DROP, "ip4-punt")			\
   _ (LOOKUP, "ip4-lookup")			\
   _ (SEND_TO_CLIENT, "dhcp-proxy-to-client")
 
@@ -769,7 +769,7 @@ dhcp4_proxy_init (vlib_main_t * vm)
   dhcp_proxy_main_t *dm = &dhcp_proxy_main;
   vlib_node_t *error_drop_node;
 
-  error_drop_node = vlib_get_node_by_name (vm, (u8 *) "error-drop");
+  error_drop_node = vlib_get_node_by_name (vm, (u8 *) "ip4-punt");
   dm->error_drop_node_index = error_drop_node->index;
   dm->vlib_main = vm;
 
