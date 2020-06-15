@@ -230,7 +230,7 @@ VLIB_REGISTER_NODE (ip4_not_enabled_node, static) =
   .format_trace = format_ip4_forward_next_trace,
   .n_next_nodes = 1,
   .next_nodes = {
-    [0] = "ip4-punt",
+    [0] = "error-drop",
   },
 };
 
