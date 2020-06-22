@@ -13,14 +13,6 @@
  * limitations under the License.
  */
 
-/*
- *  Copyright (C) 2020 flexiWAN Ltd.
- *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
- *   - Instead of dropping packets on interface with disable IP feature punt
- *     them into tap-inject. This is needed to use Linux DHCP client instead
- *     of native from VPP.
- */
-
 #include <vnet/ip/ip.h>
 #include <vnet/ip/ip_punt_drop.h>
 #include <vnet/policer/policer.h>
@@ -238,11 +230,7 @@ VLIB_REGISTER_NODE (ip4_not_enabled_node, static) =
   .format_trace = format_ip4_forward_next_trace,
   .n_next_nodes = 1,
   .next_nodes = {
-#ifdef FLEXIWAN_FEATURE
-    [0] = "ip4-punt",
-#else
     [0] = "error-drop",
-#endif
   },
 };
 
