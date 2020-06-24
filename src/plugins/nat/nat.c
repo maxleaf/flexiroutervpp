@@ -2161,6 +2161,9 @@ snat_init (vlib_main_t * vm)
   sm->workers = 0;
   sm->port_per_thread = 0xffff - 1024;
   sm->fq_in2out_index = ~0;
+#ifdef FLEXIWAN_FIX
+  sm->fq_in2out_output_index = ~0;
+#endif
   sm->fq_out2in_index = ~0;
   sm->udp_timeout = SNAT_UDP_TIMEOUT;
   sm->tcp_established_timeout = SNAT_TCP_ESTABLISHED_TIMEOUT;
