@@ -12,6 +12,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - Do not handle DHCP packets in a special way.
+ */
+
 /**
  * @file
  * @brief NAT44 endpoint-dependent outside to inside network translation
@@ -881,7 +888,9 @@ nat44_ed_out2in_node_fn_inline (vlib_main_t * vm,
 					     clib_host_to_net_u16
 					     (UDP_DST_PORT_dhcp_to_client))))
 			{
+#ifndef FLEXIWAN_FIX
 			  vnet_feature_next (&next0, b0);
+#endif
 			  goto trace00;
 			}
 
@@ -1115,7 +1124,9 @@ nat44_ed_out2in_node_fn_inline (vlib_main_t * vm,
 					     clib_host_to_net_u16
 					     (UDP_DST_PORT_dhcp_to_client))))
 			{
+#ifndef FLEXIWAN_FIX
 			  vnet_feature_next (&next1, b1);
+#endif
 			  goto trace01;
 			}
 
@@ -1383,7 +1394,9 @@ nat44_ed_out2in_node_fn_inline (vlib_main_t * vm,
 					     clib_host_to_net_u16
 					     (UDP_DST_PORT_dhcp_to_client))))
 			{
+#ifndef FLEXIWAN_FIX
 			  vnet_feature_next (&next0, b0);
+#endif
 			  goto trace0;
 			}
 
@@ -1747,7 +1760,9 @@ nat44_ed_out2in_reass_node_fn (vlib_main_t * vm,
 					     clib_host_to_net_u16
 					     (UDP_DST_PORT_dhcp_to_client))))
 			{
+#ifndef FLEXIWAN_FIX
 			  vnet_feature_next (&next0, b0);
+#endif
 			  goto trace0;
 			}
 
