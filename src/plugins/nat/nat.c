@@ -2162,6 +2162,10 @@ snat_init (vlib_main_t * vm)
   sm->port_per_thread = 0xffff - 1024;
   sm->fq_in2out_index = ~0;
 #ifdef FLEXIWAN_FIX
+/* Fix ported back from vpp 20.x. The fq_in2out_output_index was not
+* initialized which caused packets in multicore environment to divert to
+* the wrong queue.
+*/
   sm->fq_in2out_output_index = ~0;
 #endif
   sm->fq_out2in_index = ~0;
