@@ -2164,7 +2164,9 @@ snat_init (vlib_main_t * vm)
 #ifdef FLEXIWAN_FIX
 /* Fix ported back from vpp 20.x. The fq_in2out_output_index was not
 * initialized which caused packets in multicore environment to divert to
-* the wrong queue.
+* the wrong queue. This led to a crash as the node accepting the packets
+* was not prepared to receive them, and its sw_if_index was pointing to illegal
+* value, beyond the array limits.
 */
   sm->fq_in2out_output_index = ~0;
 #endif
