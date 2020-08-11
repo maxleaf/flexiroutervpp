@@ -43,6 +43,7 @@ define vxlan_add_del_tunnel
   u32 vni;
   u32 next_hop_sw_if_index;
   u8 next_hop_ip[16];
+  u16 dest_port;
 };
 
 define vxlan_add_del_tunnel_reply
@@ -71,6 +72,7 @@ define vxlan_tunnel_details
   u32 decap_next_index;
   u32 vni;
   u8 is_ipv6;
+  u16 dest_port;
 };
 
 /** \brief Interface set vxlan-bypass request
