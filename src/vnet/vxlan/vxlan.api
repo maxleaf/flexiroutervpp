@@ -13,6 +13,13 @@
  * limitations under the License.
  */
 
+ /*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+*   - Add destination port for vxlan tunnle, if remote device is behind NAT. Port is
+ *     provisioned by fleximanage when creating the tunnel.
+ */
+
 option version = "1.1.0";
 
 /** \brief Create or delete a VXLAN tunnel
@@ -27,6 +34,8 @@ option version = "1.1.0";
     @param encap_vrf_id - Encap route table FIB index
     @param decap_next_index - Name of decap next graph node
     @param vni - The VXLAN Network Identifier, uint24
+    @param dest_port - the destination port of the vxlan tunnel, provisioned by
+                       fleximanage
 */
 define vxlan_add_del_tunnel
 {

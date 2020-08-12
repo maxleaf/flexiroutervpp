@@ -18,6 +18,9 @@
  *  Copyright (C) 2019 flexiWAN Ltd.
  *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
  *   - Use 4789 for VxLan src port - enables full NAT traversal
+ *   - Add destination port for vxlan tunnle, if remote device is behind NAT. Port is
+ *     provisioned by fleximanage when creating the tunnel.
+
  */
 
 #include <vppinfra/error.h>
@@ -260,6 +263,11 @@ vxlan_encap_inline (vlib_main_t * vm,
           udp1->length = payload_l1;
           udp1->src_port = flow_hash1;
 #endif
+#ifdef FLEXIWAN_FEATURE
+/* setting dest port provisioned my fleximanage, if dest behind NAT */
+          udp0->dst_port = clib_host_to_net_u16(t0->dest_port);
+          udp1->dst_port = clib_host_to_net_u16(t1->dest_port);
+#endif
 
           if (csum_offload)
             {
@@ -425,6 +433,10 @@ vxlan_encap_inline (vlib_main_t * vm,
           /* Fix UDP length  and set source port */
           udp0->length = payload_l0;
           udp0->src_port = flow_hash0;
+#endif
+#ifdef FLEXIWAN_FEATURE
+/* setting dest port provisioned my fleximanage, if dest behind NAT */
+          udp0->dst_port = clib_host_to_net_u16(t0->dest_port);
 #endif
 
           if (csum_offload)
