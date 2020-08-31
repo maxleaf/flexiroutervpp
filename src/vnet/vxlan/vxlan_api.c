@@ -134,7 +134,7 @@ static void vl_api_vxlan_add_del_tunnel_t_handler
   vl_api_vxlan_add_del_tunnel_reply_t *rmp;
   int rv = 0;
   u32 fib_index;
-
+  clib_warning("vl_api_vxlan_add_del_tunnel_t_handler %d",mp->dest_port);
   fib_index = fib_table_find (fib_ip_proto (mp->is_ipv6),
 			      ntohl (mp->encap_vrf_id));
   if (fib_index == ~0)
@@ -159,10 +159,10 @@ static void vl_api_vxlan_add_del_tunnel_t_handler
     .next_hop.frp_addr = to_ip46 (mp->is_ipv6, mp->next_hop_ip),
 #endif
 #ifdef FLEXIWAN_FEATURE
-    .dest_port = ntohl (mp->dest_port),
+    .dest_port = clib_net_to_host_u16 (mp->dest_port),
 #endif
   };
-
+  clib_warning("vl_api_vxlan_add_del_tunnel_t_handler: a.dest_port %d", a.dest_port);
   /* Check src & dst are different */
   if (ip46_address_cmp (&a.dst, &a.src) == 0)
     {
@@ -220,7 +220,7 @@ static void send_vxlan_tunnel_details
   rmp->is_ipv6 = is_ipv6;
   rmp->context = context;
 #ifdef FLEXIWAN_FEATURE
-  rmp->dest_port = htonl(t->dest_port);
+  rmp->dest_port = clib_host_to_net_u16(t->dest_port);
 #endif
 
   vl_api_send_msg (reg, (u8 *) rmp);

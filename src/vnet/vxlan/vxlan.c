@@ -72,7 +72,7 @@ format_vxlan_tunnel (u8 * s, va_list * args)
  
 #ifdef FLEXIWAN_FEATURE
      s = format (s,
-	      "[%d] instance %d src %U dst %U vni %d fib-idx %d sw-if-idx %d dest_port %u",
+	      "[%d] instance %d src %U dst %U vni %d fib-idx %d sw-if-idx %d dest_port %u ",
 	      t->dev_instance, t->user_instance,
 	      format_ip46_address, &t->src, IP46_TYPE_ANY,
 	      format_ip46_address, &t->dst, IP46_TYPE_ANY,
@@ -318,8 +318,9 @@ vxlan_rewrite (vxlan_tunnel_t * t, bool is_ip6)
 
   /* UDP header, randomize src port on something, maybe? */
   udp->src_port = clib_host_to_net_u16 (4789);
-#ifdef FLEXIWAN_FEARTURE
-  udp->dst_port = clib_host_to_net_u16 (t->dest_port);
+#ifdef FLEXIWAN_FEATURE
+  udp->dst_port = clib_host_to_net_u16(t->dest_port);
+  clib_warning("vxlan_rewrite, udp dest port %d->%d",t->dest_port,udp->dst_port);
 #else
   udp->dst_port = clib_host_to_net_u16 (UDP_DST_PORT_vxlan);
 #endif  
@@ -477,7 +478,7 @@ int vnet_vxlan_add_del_tunnel
 #define _(x) t->x = a->x;
       foreach_copy_field;
 #undef _
-
+      clib_warning("a.dest_port %d, t.dest_port %d",a->dest_port,t->dest_port);
       vxlan_rewrite (t, is_ip6);
       /*
        * Reconcile the real dev_instance and a possible requested instance.
