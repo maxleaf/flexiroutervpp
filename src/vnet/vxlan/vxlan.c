@@ -320,7 +320,6 @@ vxlan_rewrite (vxlan_tunnel_t * t, bool is_ip6)
   udp->src_port = clib_host_to_net_u16 (4789);
 #ifdef FLEXIWAN_FEATURE
   udp->dst_port = clib_host_to_net_u16(t->dest_port);
-  clib_warning("vxlan_rewrite, udp dest port %d->%d",t->dest_port,udp->dst_port);
 #else
   udp->dst_port = clib_host_to_net_u16 (UDP_DST_PORT_vxlan);
 #endif  
@@ -478,7 +477,10 @@ int vnet_vxlan_add_del_tunnel
 #define _(x) t->x = a->x;
       foreach_copy_field;
 #undef _
-      clib_warning("a.dest_port %d, t.dest_port %d",a->dest_port,t->dest_port);
+#ifdef FLEXIWAN_FEATURE
+      clib_warning("vnet_vxlan_add_del_tunnel: checking correctness of port copying: a.dest_port %d, t.dest_port %d",
+      a->dest_port,t->dest_port);
+#endif      
       vxlan_rewrite (t, is_ip6);
       /*
        * Reconcile the real dev_instance and a possible requested instance.
@@ -825,8 +827,10 @@ vxlan_add_del_tunnel_command_fn (vlib_main_t * vm,
 	;
       else if (unformat (line_input, "vni %d", &vni))
 	;
+#ifdef FLEXIWAN_FEATURE
       else if (unformat (line_input, "dest_port %u,", &dest_port))
     ;
+#endif
       else
 	{
 	  parse_error = clib_error_return (0, "parse error: '%U'",
@@ -872,9 +876,10 @@ vxlan_add_del_tunnel_command_fn (vlib_main_t * vm,
 
   if (vni >> 24)
     return clib_error_return (0, "vni %d out of range", vni);
-
+#ifdef FLEXIWAN_FEATURE
   if (dest_port == 0)
     return clib_error_return (0, "dest_port not specified");
+#endif
   vnet_vxlan_add_del_tunnel_args_t a = {
     .is_add = is_add,
     .is_ip6 = ipv6_set,
@@ -941,7 +946,10 @@ VLIB_CLI_COMMAND (create_vxlan_tunnel_command, static) = {
   .path = "create vxlan tunnel",
   .short_help =
   "create vxlan tunnel src <local-vtep-addr>"
-  " {dst <remote-vtep-addr>|group <mcast-vtep-addr> <intf-name>} vni <nn> dest_port <nn>"
+  " {dst <remote-vtep-addr>|group <mcast-vtep-addr> <intf-name>} vni <nn>"
+#ifdef FLEXIWAN_FEATURE
+  " dest_port <nn>"
+#endif
   " [instance <id>]"
   " [encap-vrf-id <nn>] [decap-next [l2|node <name>]] [del]",
   .function = vxlan_add_del_tunnel_command_fn,

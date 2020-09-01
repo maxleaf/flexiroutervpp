@@ -267,7 +267,6 @@ vxlan_encap_inline (vlib_main_t * vm,
 /* setting dest port provisioned my fleximanage, if dest behind NAT */
           udp0->dst_port = clib_host_to_net_u16(t0->dest_port);
           udp1->dst_port = clib_host_to_net_u16(t1->dest_port);
-          clib_warning("dst_port0, dst_port1, %d %d",udp0->dst_port,udp1->dst_port);
 #endif
 
           if (csum_offload)
@@ -438,9 +437,7 @@ vxlan_encap_inline (vlib_main_t * vm,
 #ifdef FLEXIWAN_FEATURE
 /* setting dest port provisioned my fleximanage, if dest behind NAT */
           udp0->dst_port = clib_host_to_net_u16(t0->dest_port);
-          clib_warning("dst_port0, %d",udp0->dst_port);
-
-#endif
+ #endif
 
           if (csum_offload)
             {
