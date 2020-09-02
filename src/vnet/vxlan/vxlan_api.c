@@ -161,6 +161,11 @@ static void vl_api_vxlan_add_del_tunnel_t_handler
     .dest_port = clib_net_to_host_u16 (mp->dest_port),
 #endif
   };
+#ifdef FLEXIWAN_FEATURE
+  /* set default port if none is provided */
+  if (a.dest_port == 0)
+    a.dest_port = 4789;
+#endif
   /* Check src & dst are different */
   if (ip46_address_cmp (&a.dst, &a.src) == 0)
     {
