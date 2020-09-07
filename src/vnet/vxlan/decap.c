@@ -19,6 +19,10 @@
 #include <vnet/pg/pg.h>
 #include <vnet/vxlan/vxlan.h>
 
+#ifdef FLEXIWAN_FEATURE
+extern vlib_node_registration_t ip4_punt_node;
+#endif
+
 #ifndef CLIB_MARCH_VARIANT
 vlib_node_registration_t vxlan4_input_node;
 vlib_node_registration_t vxlan6_input_node;
@@ -291,8 +295,14 @@ vxlan_input (vlib_main_t * vm,
 	    }
 	  else
 	    {
+#ifdef FLEXIWAN_FEATURE
+          /* restore packet pointer */
+          vlib_buffer_advance (b[0], -sizeof(*vxlan0));
+          next[0] = ip4_punt_node.index;
+#else
 	      b[0]->error = node->errors[di0.error];
 	      pkts_dropped++;
+#endif
 	    }
 
 	  if (di1.error == 0)
@@ -304,8 +314,14 @@ vxlan_input (vlib_main_t * vm,
 	    }
 	  else
 	    {
+#ifdef FLEXIWAN_FEATURE
+                    /* restore packet pointer */
+          vlib_buffer_advance (b[1], -sizeof(*vxlan0));
+          next[1] = ip4_punt_node.index;
+#else
 	      b[1]->error = node->errors[di1.error];
 	      pkts_dropped++;
+#endif
 	    }
 	}
 
@@ -373,8 +389,14 @@ vxlan_input (vlib_main_t * vm,
 	}
       else
 	{
+#ifdef FLEXIWAN_FEATURE
+    /* restore packet pointer */
+    vlib_buffer_advance (b[0], -sizeof(*vxlan0));
+    next[0] = ip4_punt_node.index;
+#else
 	  b[0]->error = node->errors[di0.error];
 	  pkts_dropped++;
+#endif
 	}
 
       if (PREDICT_FALSE (b[0]->flags & VLIB_BUFFER_IS_TRACED))

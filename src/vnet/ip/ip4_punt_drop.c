@@ -235,8 +235,11 @@ VLIB_REGISTER_NODE (ip4_not_enabled_node, static) =
 };
 
 VLIB_NODE_FUNCTION_MULTIARCH (ip4_not_enabled_node, ip4_not_enabled);
-
+#ifdef FLEXIWAN_FEATURE
+VLIB_REGISTER_NODE (ip4_punt_node) =
+#else
 VLIB_REGISTER_NODE (ip4_punt_node, static) =
+#endif
 {
   .function = ip4_punt,
   .name = "ip4-punt",
