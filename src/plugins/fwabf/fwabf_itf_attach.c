@@ -859,19 +859,19 @@ VNET_FEATURE_INIT (abf_ip6_feat, static) =
 /* *INDENT-ON* */
 
 static clib_error_t *
-abf_itf_bond_init (vlib_main_t * vm)
+fwabf_itf_bond_init (vlib_main_t * vm)
 {
   clib_error_t *acl_init_res = acl_plugin_exports_init (&acl_plugin);
   if (acl_init_res)
     return (acl_init_res);
 
   fwabf_acl_user_id =
-    acl_plugin.register_user_module ("ABF plugin", "sw_if_index", NULL);
+    acl_plugin.register_user_module ("FWABF plugin", "sw_if_index", NULL);
 
   return (NULL);
 }
 
-VLIB_INIT_FUNCTION (abf_itf_bond_init);
+VLIB_INIT_FUNCTION (fwabf_itf_bond_init);
 
 /*
  * fd.io coding-style-patch-verification: ON

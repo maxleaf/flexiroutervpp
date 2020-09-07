@@ -270,8 +270,8 @@ u32 fwabf_links_add_interface (
 
   /*
    * Initialize default route adjacencies.
-   * We try to do it on every interface add as we don't know when default route
-   * prefix will be added to FIB.
+   * As we don't know when default route prefix is added to FIB,
+   * we poll it here - on every link addition to FWABF.
    */
   if (fwabf_default_route.dr4.fib_entry_index == ~0  ||
       fwabf_default_route.dr6.fib_entry_index == ~0)
