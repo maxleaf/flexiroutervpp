@@ -162,7 +162,9 @@ typedef struct
 
 #define foreach_vxlan_input_next        \
 _(DROP, "error-drop")                   \
-_(L2_INPUT, "l2-input")
+_(L2_INPUT, "l2-input")                 \
+_(PUNT4, "ip4-punt")                    \
+_(PUNT6, "ip6-punt")
 
 typedef enum
 {
