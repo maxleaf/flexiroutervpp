@@ -292,8 +292,10 @@ vxlan_input (vlib_main_t * vm,
 	  else
 	    {
 #ifdef FLEXIWAN_FEATURE
+		  u32 vxlanh_sz0;
+		  vxlanh_sz0 = sizeof(*vxlan0);
           /* restore packet pointer */
-          vlib_buffer_advance (b[0], -sizeof(*vxlan0));
+          vlib_buffer_advance (b[0], -vxlanh_sz0);
           next[0] = is_ip4 ? VXLAN_INPUT_NEXT_PUNT4 : VXLAN_INPUT_NEXT_PUNT6;
 #else
 	      b[0]->error = node->errors[di0.error];
@@ -311,8 +313,10 @@ vxlan_input (vlib_main_t * vm,
 	  else
 	    {
 #ifdef FLEXIWAN_FEATURE
-                    /* restore packet pointer */
-          vlib_buffer_advance (b[1], -sizeof(*vxlan0));
+		  u32 vxlanh_sz1;
+		  vxlanh_sz1 = sizeof(*vxlan1);
+          /* restore packet pointer */
+          vlib_buffer_advance (b[1], -vxlanh_sz1);
           next[1] = is_ip4 ? VXLAN_INPUT_NEXT_PUNT4 : VXLAN_INPUT_NEXT_PUNT6;
 #else
 	      b[1]->error = node->errors[di1.error];
@@ -386,9 +390,11 @@ vxlan_input (vlib_main_t * vm,
       else
 	{
 #ifdef FLEXIWAN_FEATURE
-    /* restore packet pointer */
-    vlib_buffer_advance (b[0], -sizeof(*vxlan0));
-    next[0] = is_ip4 ? VXLAN_INPUT_NEXT_PUNT4 : VXLAN_INPUT_NEXT_PUNT6;
+		u32 vxlanh_sz0;
+		vxlanh_sz0 = sizeof(*vxlan0);
+        /* restore packet pointer */
+        vlib_buffer_advance (b[0], -vxlanh_sz0);
+    	next[0] = is_ip4 ? VXLAN_INPUT_NEXT_PUNT4 : VXLAN_INPUT_NEXT_PUNT6;
 #else
 	  b[0]->error = node->errors[di0.error];
 	  pkts_dropped++;
