@@ -13,6 +13,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ * 
+ *  Flexiwan addition:
+ *  1. Fix to vxlan_input: when we send STUN request from port 4789, we receive a reposnse on
+ *     port 4789 which is registered to vxlan. However, this is not a tunneled packet, but a
+ *     regular one. So we need to restore location in packet processing back to L3 header, and
+ *     forward this reply to IPx_PUNT node so it can be processed as a regular packet.
  */
 
 #include <vlib/vlib.h>
@@ -231,6 +237,11 @@ vxlan_input (vlib_main_t * vm,
 
       ip4_header_t *ip4_0, *ip4_1;
       ip6_header_t *ip6_0, *ip6_1;
+
+#ifdef FLEXIWAN_FIX
+      /* Stun reply fix, please refer to file header for description */
+      u32 offset_back = sizeof(vxlan_header_t) + sizeof(udp_header_t);
+#endif
       if (is_ip4)
 	{
 	  ip4_0 = cur0 - sizeof (udp_header_t) - sizeof (ip4_header_t);
@@ -291,12 +302,12 @@ vxlan_input (vlib_main_t * vm,
 	    }
 	  else
 	    {
-#ifdef FLEXIWAN_FEATURE
-		  u32 vxlanh_sz0;
-		  vxlanh_sz0 = sizeof(*vxlan0);
+#ifdef FLEXIWAN_FIX
+          /* Stun reply fix, please refer to file header for description */
           /* restore packet pointer */
-          vlib_buffer_advance (b[0], -vxlanh_sz0);
-          next[0] = is_ip4 ? VXLAN_INPUT_NEXT_PUNT4 : VXLAN_INPUT_NEXT_PUNT6;
+          offset_back += is_ip4 ? sizeof(ip4_header_t) : sizeof(ip6_header_t);
+          vlib_buffer_advance (b[0], -(word) offset_back);
+         next[0] = is_ip4 ? VXLAN_INPUT_NEXT_PUNT4 : VXLAN_INPUT_NEXT_PUNT6;
 #else
 	      b[0]->error = node->errors[di0.error];
 	      pkts_dropped++;
@@ -312,11 +323,11 @@ vxlan_input (vlib_main_t * vm,
 	    }
 	  else
 	    {
-#ifdef FLEXIWAN_FEATURE
-		  u32 vxlanh_sz1;
-		  vxlanh_sz1 = sizeof(*vxlan1);
+#ifdef FLEXIWAN_FIX
+          /* Stun reply fix, please refer to file header for description */
           /* restore packet pointer */
-          vlib_buffer_advance (b[1], -vxlanh_sz1);
+          offset_back += is_ip4 ? sizeof(ip4_header_t) : sizeof(ip6_header_t);
+          vlib_buffer_advance (b[1], -(word) offset_back);
           next[1] = is_ip4 ? VXLAN_INPUT_NEXT_PUNT4 : VXLAN_INPUT_NEXT_PUNT6;
 #else
 	      b[1]->error = node->errors[di1.error];
@@ -357,6 +368,11 @@ vxlan_input (vlib_main_t * vm,
       vxlan_header_t *vxlan0 = cur0;
       ip4_header_t *ip4_0;
       ip6_header_t *ip6_0;
+
+#ifdef FLEXIWAN_FIX
+      /* Stun reply fix, please refer to file header for description */
+      u32 offset_back = sizeof(vxlan_header_t) + sizeof(udp_header_t);
+#endif
       if (is_ip4)
 	ip4_0 = cur0 - sizeof (udp_header_t) - sizeof (ip4_header_t);
       else
@@ -389,11 +405,11 @@ vxlan_input (vlib_main_t * vm,
 	}
       else
 	{
-#ifdef FLEXIWAN_FEATURE
-		u32 vxlanh_sz0;
-		vxlanh_sz0 = sizeof(*vxlan0);
+#ifdef FLEXIWAN_FIX
+        /* Stun reply fix, please refer to file header for description */
         /* restore packet pointer */
-        vlib_buffer_advance (b[0], -vxlanh_sz0);
+        offset_back += is_ip4 ? sizeof(ip4_header_t) : sizeof(ip6_header_t);
+        vlib_buffer_advance (b[0], -(word) offset_back);
     	next[0] = is_ip4 ? VXLAN_INPUT_NEXT_PUNT4 : VXLAN_INPUT_NEXT_PUNT6;
 #else
 	  b[0]->error = node->errors[di0.error];
