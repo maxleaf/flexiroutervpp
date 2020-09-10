@@ -42,6 +42,8 @@ define vxlan_add_del_tunnel
   u32 encap_vrf_id;
   u32 decap_next_index;
   u32 vni;
+  u32 next_hop_sw_if_index;
+  u8 next_hop_ip[16];
 };
 
 define vxlan_add_del_tunnel_reply

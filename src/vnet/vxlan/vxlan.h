@@ -12,6 +12,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - enable enforcement of interface, where VXLAN tunnel should send unicast
+ *     packets from. This is need for the FlexiWAN Multi-link feature.
+ */
+
 #ifndef included_vnet_vxlan_h
 #define included_vnet_vxlan_h
 
@@ -32,6 +40,9 @@
 #include <vnet/udp/udp.h>
 #include <vnet/dpo/dpo.h>
 #include <vnet/adj/adj_types.h>
+#ifdef FLEXIWAN_FEATURE
+#include <vnet/fib/fib_path_list.h>
+#endif
 
 /* *INDENT-OFF* */
 typedef CLIB_PACKED (struct {
@@ -117,6 +128,18 @@ typedef struct
    */
   fib_node_index_t fib_entry_index;
   adj_index_t mcast_adj_index;
+
+#ifdef FLEXIWAN_FEATURE
+  /*
+   * Enforce specific tx interface for tunnel packets, if next hop for tunnel
+   * was provided by user on tunnel creation. In this case no FIB LOOKUP is
+   * needed. Just use the path of attached-next-hop type to get the adjacency
+   * to be used for forwarding.
+   */
+  fib_node_index_t      fib_pl_index;
+  fib_path_list_flags_t pl_flags;
+  fib_route_path_t      rpath;
+#endif
 
   /**
    * The tunnel is a child of the FIB entry for its destination. This is
@@ -208,6 +231,9 @@ typedef struct
   u32 encap_fib_index;
   u32 decap_next_index;
   u32 vni;
+#ifdef FLEXIWAN_FEATURE
+  fib_route_path_t next_hop;
+#endif
 } vnet_vxlan_add_del_tunnel_args_t;
 
 int vnet_vxlan_add_del_tunnel
