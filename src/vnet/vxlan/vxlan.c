@@ -72,7 +72,7 @@ format_vxlan_tunnel (u8 * s, va_list * args)
  
 #ifdef FLEXIWAN_FEATURE
      s = format (s,
-	      "[%d] instance %d src %U dst %U vni %d fib-idx %d sw-if-idx %d dest_port %u ",
+	      "[%d] instance %d src %U dst %U vni %d fib-idx %d sw-if-idx %d dest_port %d ",
 	      t->dev_instance, t->user_instance,
 	      format_ip46_address, &t->src, IP46_TYPE_ANY,
 	      format_ip46_address, &t->dst, IP46_TYPE_ANY,
@@ -828,7 +828,7 @@ vxlan_add_del_tunnel_command_fn (vlib_main_t * vm,
       else if (unformat (line_input, "vni %d", &vni))
 	;
 #ifdef FLEXIWAN_FEATURE
-      else if (unformat (line_input, "dest_port %u,", &dest_port))
+      else if (unformat (line_input, "dest_port %d,", &dest_port))
     ;
 #endif
       else
