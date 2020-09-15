@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  * 
- *  Flexiwan addition:
+ *  Flexiwan addition (denoted by FLEXIWAN_FIX flag):
  *  1. Fix to vxlan_input: when we send STUN request from port 4789, we receive a reposnse on
  *     port 4789 which is registered to vxlan. However, this is not a tunneled packet, but a
  *     regular one. So we need to restore location in packet processing back to L3 header, and
@@ -405,7 +405,7 @@ vxlan_input (vlib_main_t * vm,
         /* Stun reply fix, please refer to file header for description */
         /* restore packet pointer */
         u32 offset_back = sizeof(vxlan_header_t) + sizeof(udp_header_t);
-        
+
         offset_back += is_ip4 ? sizeof(ip4_header_t) : sizeof(ip6_header_t);
         vlib_buffer_advance (b[0], -(word) offset_back);
     	next[0] = is_ip4 ? VXLAN_INPUT_NEXT_PUNT4 : VXLAN_INPUT_NEXT_PUNT6;

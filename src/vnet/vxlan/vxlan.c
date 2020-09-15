@@ -477,10 +477,6 @@ int vnet_vxlan_add_del_tunnel
 #define _(x) t->x = a->x;
       foreach_copy_field;
 #undef _
-#ifdef FLEXIWAN_FEATURE
-      clib_warning("vnet_vxlan_add_del_tunnel: checking correctness of port copying: a.dest_port %d, t.dest_port %d",
-      a->dest_port,t->dest_port);
-#endif      
       vxlan_rewrite (t, is_ip6);
       /*
        * Reconcile the real dev_instance and a possible requested instance.

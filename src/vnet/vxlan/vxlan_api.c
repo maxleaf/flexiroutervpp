@@ -21,7 +21,7 @@
  *  Copyright (C) 2020 flexiWAN Ltd.
  *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
  *   - enable enforcement of interface, where VXLAN tunnel should send unicast
- *     packets from. This is need for the FlexiWAN Multi-link feature. 
+ *     packets from. This is need for the FlexiWAN Multi-link feature.
  *   - Add destination port for vxlan tunnle, if remote device is behind NAT. Port is
  *     provisioned by fleximanage when creating the tunnel.
  */
@@ -164,7 +164,7 @@ static void vl_api_vxlan_add_del_tunnel_t_handler
 #ifdef FLEXIWAN_FEATURE
   /* set default port if none is provided */
   if (a.dest_port == 0)
-    a.dest_port = 4789;
+    a.dest_port = UDP_DST_PORT_vxlan;
 #endif
   /* Check src & dst are different */
   if (ip46_address_cmp (&a.dst, &a.src) == 0)
