@@ -18,6 +18,11 @@
  *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
  *   - enable enforcement of interface, where VXLAN tunnel should send unicast
  *     packets from. This is need for the FlexiWAN Multi-link feature.
+ *   - Add destination port for vxlan tunnel, if remote device is behind NAT. Port is
+ *     provisioned by fleximanage when creating the tunnel.
+ *
+ *  List of fixes made for FlexiWAN (demoted by FLEXIWAN_FIX flag):
+ *  - For none vxlan packet received on port 4789, add ipx_punt node to next_nodes.
  */
 
 #ifndef included_vnet_vxlan_h
@@ -139,6 +144,9 @@ typedef struct
   fib_path_list_flags_t pl_flags;
   fib_route_path_t      rpath;
 #endif
+#ifdef FLEXIWAN_FEATURE
+  u16 dest_port;
+#endif
 
   /**
    * The tunnel is a child of the FIB entry for its destination. This is
@@ -155,9 +163,17 @@ typedef struct
     vnet_declare_rewrite (VLIB_BUFFER_PRE_DATA_SIZE);
 } vxlan_tunnel_t;
 
+#ifdef FLEXIWAN_FIX
+#define foreach_vxlan_input_next        \
+_(DROP, "error-drop")                   \
+_(L2_INPUT, "l2-input")                 \
+_(PUNT4, "ip4-punt")                    \
+_(PUNT6, "ip6-punt")
+#else
 #define foreach_vxlan_input_next        \
 _(DROP, "error-drop")                   \
 _(L2_INPUT, "l2-input")
+#endif
 
 typedef enum
 {
@@ -233,6 +249,10 @@ typedef struct
   u32 vni;
 #ifdef FLEXIWAN_FEATURE
   fib_route_path_t next_hop;
+#endif
+#ifdef FLEXIWAN_FEATURE
+  /* adding dest port for vxlan tunnel in case destination behind NAT */
+  u16 dest_port;
 #endif
 } vnet_vxlan_add_del_tunnel_args_t;
 

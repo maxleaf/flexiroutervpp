@@ -544,6 +544,9 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
            * as it uses labels to choose DPO-s for forwarding.
            * In this case there is no need to bother with ACL & Policy,
            * go directly to deafult routing - use FIB lookup result.
+           * ASSUMPTION: if user wants policy, it labels all available tunnels,
+           *             so FIB lookup can't bring mix of labeled and not labeled
+           *             tunnels!
            */
           match0 = 0;
           if (fwabf_links_is_dpo_labeled (lb0))
