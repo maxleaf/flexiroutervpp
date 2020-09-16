@@ -18,6 +18,8 @@
  *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
  *   - enable enforcement of interface, where VXLAN tunnel should send unicast
  *     packets from. This is need for the FlexiWAN Multi-link feature.
+ *   - Add destination port for vxlan tunnle, if remote device is behind NAT. Port is
+ *     provisioned by fleximanage when creating the tunnel.
  */
 
 #include <vnet/vxlan/vxlan.h>
@@ -67,12 +69,22 @@ format_vxlan_tunnel (u8 * s, va_list * args)
 {
   vxlan_tunnel_t *t = va_arg (*args, vxlan_tunnel_t *);
 
-  s = format (s,
+ 
+#ifdef FLEXIWAN_FEATURE
+     s = format (s,
+	      "[%d] instance %d src %U dst %U vni %d fib-idx %d sw-if-idx %d dest_port %d ",
+	      t->dev_instance, t->user_instance,
+	      format_ip46_address, &t->src, IP46_TYPE_ANY,
+	      format_ip46_address, &t->dst, IP46_TYPE_ANY,
+	      t->vni, t->encap_fib_index, t->sw_if_index, t->dest_port);
+#else
+     s = format (s,
 	      "[%d] instance %d src %U dst %U vni %d fib-idx %d sw-if-idx %d",
 	      t->dev_instance, t->user_instance,
 	      format_ip46_address, &t->src, IP46_TYPE_ANY,
 	      format_ip46_address, &t->dst, IP46_TYPE_ANY,
 	      t->vni, t->encap_fib_index, t->sw_if_index);
+#endif
 
   s = format (s, "encap-dpo-idx %d ", t->next_dpo.dpoi_index);
 
@@ -259,7 +271,8 @@ _(mcast_sw_if_index)                            \
 _(encap_fib_index)                              \
 _(decap_next_index)                             \
 _(src)                                          \
-_(dst)
+_(dst)                                          \
+_(dest_port)
 
 static void
 vxlan_rewrite (vxlan_tunnel_t * t, bool is_ip6)
@@ -305,7 +318,11 @@ vxlan_rewrite (vxlan_tunnel_t * t, bool is_ip6)
 
   /* UDP header, randomize src port on something, maybe? */
   udp->src_port = clib_host_to_net_u16 (4789);
+#ifdef FLEXIWAN_FEATURE
+  udp->dst_port = clib_host_to_net_u16(t->dest_port);
+#else
   udp->dst_port = clib_host_to_net_u16 (UDP_DST_PORT_vxlan);
+#endif  
 
   /* VXLAN header */
   vnet_set_vni_and_flags (vxlan, t->vni);
@@ -460,14 +477,13 @@ int vnet_vxlan_add_del_tunnel
 #define _(x) t->x = a->x;
       foreach_copy_field;
 #undef _
-
       vxlan_rewrite (t, is_ip6);
       /*
        * Reconcile the real dev_instance and a possible requested instance.
        */
       user_instance = a->instance;
       if (user_instance == ~0)
-	user_instance = dev_instance;
+	    user_instance = dev_instance;
       if (hash_get (vxm->instance_used, user_instance))
 	{
 	  pool_put (vxm->tunnels, t);
@@ -759,6 +775,9 @@ vxlan_add_del_tunnel_command_fn (vlib_main_t * vm,
   u32 mcast_sw_if_index = ~0;
   u32 decap_next_index = VXLAN_INPUT_NEXT_L2_INPUT;
   u32 vni = 0;
+#ifdef FLEXIWAN_FEATURE
+  u16 dest_port = 0;
+#endif
   u32 table_id;
   clib_error_t *parse_error = NULL;
 
@@ -804,6 +823,10 @@ vxlan_add_del_tunnel_command_fn (vlib_main_t * vm,
 	;
       else if (unformat (line_input, "vni %d", &vni))
 	;
+#ifdef FLEXIWAN_FEATURE
+      else if (unformat (line_input, "dest_port %d,", &dest_port))
+    ;
+#endif
       else
 	{
 	  parse_error = clib_error_return (0, "parse error: '%U'",
@@ -849,7 +872,10 @@ vxlan_add_del_tunnel_command_fn (vlib_main_t * vm,
 
   if (vni >> 24)
     return clib_error_return (0, "vni %d out of range", vni);
-
+#ifdef FLEXIWAN_FEATURE
+  if (dest_port == 0)
+    return clib_error_return (0, "dest_port not specified");
+#endif
   vnet_vxlan_add_del_tunnel_args_t a = {
     .is_add = is_add,
     .is_ip6 = ipv6_set,
@@ -917,6 +943,9 @@ VLIB_CLI_COMMAND (create_vxlan_tunnel_command, static) = {
   .short_help =
   "create vxlan tunnel src <local-vtep-addr>"
   " {dst <remote-vtep-addr>|group <mcast-vtep-addr> <intf-name>} vni <nn>"
+#ifdef FLEXIWAN_FEATURE
+  " dest_port <nn>"
+#endif
   " [instance <id>]"
   " [encap-vrf-id <nn>] [decap-next [l2|node <name>]] [del]",
   .function = vxlan_add_del_tunnel_command_fn,
@@ -1198,7 +1227,11 @@ vnet_vxlan_add_del_rx_flow (u32 hw_if_index, u32 t_index, int is_add)
 	    .ip4_vxlan = {
 			  .src_addr = t->dst.ip4,
 			  .dst_addr = t->src.ip4,
+#ifdef FLEXIWAN_FEATURE
+              .dst_port = t->dest_port,
+#else
 			  .dst_port = UDP_DST_PORT_vxlan,
+#endif
 			  .vni = t->vni,
 			  }
 	    ,

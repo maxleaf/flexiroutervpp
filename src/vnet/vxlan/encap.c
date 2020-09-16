@@ -16,8 +16,11 @@
 
 /*
  *  Copyright (C) 2019 flexiWAN Ltd.
- *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
  *   - Use 4789 for VxLan src port - enables full NAT traversal
+ *   - Add destination port for vxlan tunnle, if remote device is behind NAT. Port is
+ *     provisioned by fleximanage when creating the tunnel.
+
  */
 
 #include <vppinfra/error.h>
@@ -145,7 +148,7 @@ vxlan_encap_inline (vlib_main_t * vm,
 	  if (sw_if_index0 != vnet_buffer(b0)->sw_if_index[VLIB_TX])
 	    {
 	      sw_if_index0 = vnet_buffer(b0)->sw_if_index[VLIB_TX];
-	      vnet_hw_interface_t *hi0 = 
+	      vnet_hw_interface_t *hi0 =
 		  vnet_get_sup_hw_interface (vnm, sw_if_index0);
 	      t0 = &vxm->tunnels[hi0->dev_instance];
 	      /* Note: change to always set next0 if it may set to drop */
@@ -260,6 +263,11 @@ vxlan_encap_inline (vlib_main_t * vm,
           udp1->length = payload_l1;
           udp1->src_port = flow_hash1;
 #endif
+#ifdef FLEXIWAN_FEATURE
+/* setting dest port provisioned my fleximanage, if dest behind NAT */
+          udp0->dst_port = clib_host_to_net_u16(t0->dest_port);
+          udp1->dst_port = clib_host_to_net_u16(t1->dest_port);
+#endif
 
           if (csum_offload)
             {
@@ -361,7 +369,7 @@ vxlan_encap_inline (vlib_main_t * vm,
 	  if (sw_if_index0 != vnet_buffer(b0)->sw_if_index[VLIB_TX])
 	    {
 	      sw_if_index0 = vnet_buffer(b0)->sw_if_index[VLIB_TX];
-	      vnet_hw_interface_t *hi0 = 
+	      vnet_hw_interface_t *hi0 =
 		  vnet_get_sup_hw_interface (vnm, sw_if_index0);
 	      t0 = &vxm->tunnels[hi0->dev_instance];
 	      /* Note: change to always set next0 if it may be set to drop */
@@ -426,6 +434,10 @@ vxlan_encap_inline (vlib_main_t * vm,
           udp0->length = payload_l0;
           udp0->src_port = flow_hash0;
 #endif
+#ifdef FLEXIWAN_FEATURE
+/* setting dest port provisioned my fleximanage, if dest behind NAT */
+          udp0->dst_port = clib_host_to_net_u16(t0->dest_port);
+ #endif
 
           if (csum_offload)
             {
