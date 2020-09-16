@@ -645,7 +645,7 @@ unformat_action (unformat_input_t * input, va_list * args)
 }
 
 static clib_error_t *
-abf_policy_cmd (vlib_main_t * vm, unformat_input_t * main_input, vlib_cli_command_t * cmd)
+fwabf_policy_cmd (vlib_main_t * vm, unformat_input_t * main_input, vlib_cli_command_t * cmd)
 {
   unformat_input_t _line_input, *line_input = &_line_input;
   fwabf_policy_action_t policy_action;
@@ -705,7 +705,7 @@ abf_policy_cmd (vlib_main_t * vm, unformat_input_t * main_input, vlib_cli_comman
       ret = fwabf_policy_delete (policy_id);
     }
   if (ret != 0)
-    return (clib_error_return (0, "abf_policy_%s failed(ret=%d)", (is_del?"delete":"add"), ret));
+    return (clib_error_return (0, "fwabf_policy_%s failed(ret=%d)", (is_del?"delete":"add"), ret));
 
   unformat_free (line_input);
   return 0;
@@ -715,9 +715,9 @@ abf_policy_cmd (vlib_main_t * vm, unformat_input_t * main_input, vlib_cli_comman
 /**
  * Create an ABF policy.
  */
-VLIB_CLI_COMMAND (abf_policy_cmd_node, static) = {
+VLIB_CLI_COMMAND (fwabf_policy_cmd_node, static) = {
   .path = "fwabf policy",
-  .function = abf_policy_cmd,
+  .function = fwabf_policy_cmd,
   .short_help = "fwabf policy [add|del] id <index> acl <index> action [select_group random] [fallback drop] [group <id>] [random] labels <label1,label2,...> [group <id> [random] labels <label1,label2,...>] ...",
   .is_mp_safe = 1,
 };
@@ -832,12 +832,12 @@ VLIB_CLI_COMMAND (abf_policy_show_policy_cmd_node, static) = {
 /* *INDENT-ON* */
 
 static clib_error_t *
-abf_policy_init (vlib_main_t * vm)
+fwabf_policy_init (vlib_main_t * vm)
 {
   return (NULL);
 }
 
-VLIB_INIT_FUNCTION (abf_policy_init);
+VLIB_INIT_FUNCTION (fwabf_policy_init);
 
 /*
  * fd.io coding-style-patch-verification: ON
