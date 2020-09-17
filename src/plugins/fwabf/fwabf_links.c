@@ -439,18 +439,19 @@ dpo_id_t fwabf_links_get_dpo (
 
 int fwabf_links_is_dpo_labeled (const load_balance_t* lb)
 {
-  const dpo_id_t* lookup_dpo;
+  dpo_id_t lookup_dpo;
 
-  lookup_dpo = load_balance_get_bucket_i (lb, 0);
-  if (PREDICT_FALSE(!dpo_id_is_valid(lookup_dpo)))
-	  return 0;
-  if (lookup_dpo->dpoi_type != DPO_ADJACENCY) /*usage of dpoi_index dependens on type, we use DPO_ADJACENCY for links, so dpoi_index stands for adjacency*/
-	  return 0;
+  for (u32 i = 0; i < lb->lb_n_buckets; i++)
+  {
+    lookup_dpo = *(load_balance_get_bucket_i (lb, i));
+    if (lookup_dpo.dpoi_type != DPO_ADJACENCY) /*usage of dpoi_index below dependens on type, we use DPO_ADJACENCY for links, so dpoi_index stands for adjacency*/
+      return 0;   /*The routes takes us to local machine probably (dpoi_type is DPO_RECEIVE)*/
 
-  ASSERT(lookup_dpo->dpoi_index < FWABF_MAX_ADJ_INDEX);
-  if (adj_indexes_to_labels[lookup_dpo->dpoi_index] == FWABF_INVALID_LABEL)
-      return 0;
-  return 1;
+    ASSERT(lookup_dpo.dpoi_index < FWABF_MAX_ADJ_INDEX);
+    if (adj_indexes_to_labels[lookup_dpo.dpoi_index] != FWABF_INVALID_LABEL)
+        return 1;
+  }
+  return 0;  /*No even single labeled DPO was found*/
 }
 
 /**
