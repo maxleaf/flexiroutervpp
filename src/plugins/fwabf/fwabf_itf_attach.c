@@ -699,7 +699,7 @@ fwabf_input_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
           ip_lookup_set_buffer_fib_index (im->fib_index_by_sw_if_index, b0);
           ip60 = vlib_buffer_get_current (b0);
           lbi0 = ip6_fib_table_fwding_lookup (
-                    im, vnet_buffer (b0)->ip.fib_index, &ip60->dst_address);
+                    vnet_buffer (b0)->ip.fib_index, &ip60->dst_address);
           ASSERT (lbi0);
           lb0 = load_balance_get(lbi0);
           ASSERT (lb0->lb_n_buckets > 0);
