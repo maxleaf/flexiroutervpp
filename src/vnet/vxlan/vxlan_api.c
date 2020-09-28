@@ -22,6 +22,8 @@
  *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
  *   - enable enforcement of interface, where VXLAN tunnel should send unicast
  *     packets from. This is need for the FlexiWAN Multi-link feature.
+ *   - Add destination port for vxlan tunnle, if remote device is behind NAT. Port is
+ *     provisioned by fleximanage when creating the tunnel.
  */
 
 #include <vnet/vnet.h>
@@ -171,8 +173,16 @@ static void vl_api_vxlan_add_del_tunnel_t_handler
     .next_hop.frp_sw_if_index = ntohl (mp->next_hop_sw_if_index),
     .next_hop.frp_addr = to_ip46 (is_ipv6, mp->next_hop_ip),
 #endif /* FLEXIWAN_FEATURE */
+#ifdef FLEXIWAN_FEATURE
+    .dest_port = clib_net_to_host_u16 (mp->dest_port),
+#endif
   };
 
+#ifdef FLEXIWAN_FEATURE
+  /* set default port if none is provided */
+  if (a.dest_port == 0)
+    a.dest_port = UDP_DST_PORT_vxlan;
+#endif
   /* Check src & dst are different */
   if (ip46_address_cmp (&a.dst, &a.src) == 0)
     {
@@ -223,6 +233,9 @@ static void send_vxlan_tunnel_details
   rmp->decap_next_index = htonl (t->decap_next_index);
   rmp->sw_if_index = htonl (t->sw_if_index);
   rmp->context = context;
+#ifdef FLEXIWAN_FEATURE
+  rmp->dest_port = clib_host_to_net_u16(t->dest_port);
+#endif
 
   vl_api_send_msg (reg, (u8 *) rmp);
 }
