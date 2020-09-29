@@ -52,7 +52,7 @@ define vxlan_add_del_tunnel
   u32 decap_next_index;
   u32 vni;
   u32 next_hop_sw_if_index;
-  u8 next_hop_ip[16];
+  vl_api_address_t next_hop_ip;
   u16 dest_port;
 };
 

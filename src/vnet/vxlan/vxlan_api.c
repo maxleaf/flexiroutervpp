@@ -138,9 +138,15 @@ static void vl_api_vxlan_add_del_tunnel_t_handler
   bool is_ipv6;
   u32 fib_index;
   ip46_address_t src, dst;
+#ifdef FLEXIWAN_FEATURE
+  ip46_address_t next_hop_ip;
+#endif /* FLEXIWAN_FEATURE */
 
   ip_address_decode (&mp->src_address, &src);
   ip_address_decode (&mp->dst_address, &dst);
+#ifdef FLEXIWAN_FEATURE
+  ip_address_decode (&mp->next_hop_ip, &next_hop_ip);
+#endif /* FLEXIWAN_FEATURE */
 
   if (ip46_address_is_ip4 (&src) != ip46_address_is_ip4 (&dst))
     {
@@ -171,7 +177,7 @@ static void vl_api_vxlan_add_del_tunnel_t_handler
 #ifdef FLEXIWAN_FEATURE
     .next_hop.frp_proto = is_ipv6 ? DPO_PROTO_IP6 : DPO_PROTO_IP4,
     .next_hop.frp_sw_if_index = ntohl (mp->next_hop_sw_if_index),
-    .next_hop.frp_addr = to_ip46 (is_ipv6, mp->next_hop_ip),
+    .next_hop.frp_addr = next_hop_ip,
 #endif /* FLEXIWAN_FEATURE */
 #ifdef FLEXIWAN_FEATURE
     .dest_port = clib_net_to_host_u16 (mp->dest_port),
