@@ -126,7 +126,8 @@ static fwabf_label_data_t* fwabf_labels = NULL;
  * The 0xFFFF limit makes it possible to use array for adjacancy->label mapping,
  * which is best option for dapatplane path.
  */
-static u32* adj_indexes_to_labels = NULL;
+static u32* adj_indexes_to_labels           = NULL;  // Lables of all links, either UP or DOWN
+static u32* adj_indexes_to_reachable_labels = NULL;  // Labels for links that are UP
 #define FWABF_MAX_ADJ_INDEX  0xFFFF
 
 
@@ -270,8 +271,8 @@ u32 fwabf_links_add_interface (
 
   /*
    * Initialize default route adjacencies.
-   * We try to do it on every interface add as we don't know when default route
-   * prefix will be added to FIB.
+   * As we don't know when default route prefix is added to FIB,
+   * we poll it here - on every link addition to FWABF.
    */
   if (fwabf_default_route.dr4.fib_entry_index == ~0  ||
       fwabf_default_route.dr6.fib_entry_index == ~0)
@@ -306,6 +307,14 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
   index = vec_search (fwabf_labels[fwlabel].interfaces, sw_if_index);
   ASSERT (index !=INDEX_INVALID);
   vec_del1 (fwabf_labels[fwlabel].interfaces, index);
+
+  /*
+   * Remove adjacency->label mapping.
+   */
+  if (PREDICT_TRUE(link->dpo.dpoi_index != INDEX_INVALID))
+    {
+      adj_indexes_to_labels[link->dpo.dpoi_index] = FWABF_INVALID_LABEL;
+    }
 
   /*
    * Release adjacency if our link is the last owner.
@@ -393,7 +402,7 @@ dpo_id_t fwabf_links_get_dpo (
       /*
        * Now go and intersect lookup DPO with labeled DPO.
        */
-      if (PREDICT_TRUE(adj_indexes_to_labels[lookup_dpo->dpoi_index] == fwlabel))
+      if (PREDICT_TRUE(adj_indexes_to_reachable_labels[lookup_dpo->dpoi_index] == fwlabel))
         {
           fwabf_labels[fwlabel].counter_hits++;
           return *lookup_dpo;
@@ -413,7 +422,7 @@ dpo_id_t fwabf_links_get_dpo (
             {
               return fwabf_links_get_labeled_dpo(fwlabel);
             }
-          if (PREDICT_TRUE(adj_indexes_to_labels[lookup_dpo->dpoi_index] == fwlabel))
+          if (PREDICT_TRUE(adj_indexes_to_reachable_labels[lookup_dpo->dpoi_index] == fwlabel))
             {
               fwabf_labels[fwlabel].counter_hits++;
               return *lookup_dpo;
@@ -426,6 +435,23 @@ dpo_id_t fwabf_links_get_dpo (
    */
   fwabf_labels[fwlabel].counter_misses++;
   return invalid_dpo;
+}
+
+int fwabf_links_is_dpo_labeled (const load_balance_t* lb)
+{
+  dpo_id_t lookup_dpo;
+
+  for (u32 i = 0; i < lb->lb_n_buckets; i++)
+  {
+    lookup_dpo = *(load_balance_get_bucket_i (lb, i));
+    if (lookup_dpo.dpoi_type != DPO_ADJACENCY) /*usage of dpoi_index below dependens on type, we use DPO_ADJACENCY for links, so dpoi_index stands for adjacency*/
+      return 0;   /*The routes takes us to local machine probably (dpoi_type is DPO_RECEIVE)*/
+
+    ASSERT(lookup_dpo.dpoi_index < FWABF_MAX_ADJ_INDEX);
+    if (adj_indexes_to_labels[lookup_dpo.dpoi_index] != FWABF_INVALID_LABEL)
+        return 1;
+  }
+  return 0;  /*No even single labeled DPO was found*/
 }
 
 /**
@@ -580,9 +606,9 @@ format_fwabf_link (u8 * s, va_list * args)
   fwabf_sw_interface_t* link = va_arg (*args, fwabf_sw_interface_t*);
   vnet_main_t*          vnm = va_arg (*args, vnet_main_t*);
 
-  s = format (s, " %U: sw_if_index=%d, label=%d\n",
+  s = format (s, " %U: sw_if_index=%d, label=%d, adj=%d\n",
 	                  format_vnet_sw_if_index_name, vnm, link->sw_if_index,
-                    link->sw_if_index, link->fwlabel);
+                    link->sw_if_index, link->fwlabel, link->dpo.dpoi_index);
   s = fib_path_list_format(link->pathlist_index, s);
   return (s);
 }
@@ -727,20 +753,28 @@ void fwabf_link_refresh_dpo(fwabf_sw_interface_t * link)
   dpo_reset (&via_dpo);
 
   /*
-   * Update adj_indexes_to_labels map with refreshed DPO.
+   * Update adj_indexes_to_reachable_labels map with refreshed DPO.
    * Note we add only active DPO-s to the map, so ensure that DPO state
    * is DPO_ADJACENCY and not DPO_ADJACENCY_INCOMPLETE.
    * The last is set, if the adjacency is not arp-resolved, which means
    * the tunnel / WAN nexthop is down.
    */
+  ASSERT(link->dpo.dpoi_index < FWABF_MAX_ADJ_INDEX);
   if (PREDICT_TRUE(link->dpo.dpoi_type == DPO_ADJACENCY))
     {
-      ASSERT(link->dpo.dpoi_index < FWABF_MAX_ADJ_INDEX);
-      adj_indexes_to_labels[link->dpo.dpoi_index] = link->fwlabel;
+      adj_indexes_to_reachable_labels[link->dpo.dpoi_index] = link->fwlabel;
     }
   else
     {
-      adj_indexes_to_labels[link->dpo.dpoi_index] = FWABF_INVALID_LABEL;
+      adj_indexes_to_reachable_labels[link->dpo.dpoi_index] = FWABF_INVALID_LABEL;
+    }
+
+  /*
+   * Update main adjacencies-to-labels map if not updated yet for this link.
+   */
+  if (PREDICT_FALSE(adj_indexes_to_labels[link->dpo.dpoi_index] == FWABF_INVALID_LABEL))
+    {
+      adj_indexes_to_labels[link->dpo.dpoi_index] = link->fwlabel;
     }
 }
 
@@ -1033,7 +1067,8 @@ clib_error_t * fwabf_links_init (vlib_main_t * vm)
    * Initialize array of adjacencies, elements of which are labels.
    * We preallocate it as number of adjacencies is limited by 0xFFFF.
    */
-  vec_validate_init_empty(adj_indexes_to_labels, FWABF_MAX_ADJ_INDEX, FWABF_INVALID_LABEL);
+  vec_validate_init_empty(adj_indexes_to_labels,           FWABF_MAX_ADJ_INDEX, FWABF_INVALID_LABEL);
+  vec_validate_init_empty(adj_indexes_to_reachable_labels, FWABF_MAX_ADJ_INDEX, FWABF_INVALID_LABEL);
 
   /*
    * Initialize default route adjacencies. They might be needed by Policy.
