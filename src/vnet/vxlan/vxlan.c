@@ -272,7 +272,8 @@ _(mcast_sw_if_index)                            \
 _(encap_fib_index)                              \
 _(decap_next_index)                             \
 _(src)                                          \
-_(dst)
+_(dst)                                          \
+_(dest_port)
 
 static void
 vxlan_rewrite (vxlan_tunnel_t * t, bool is_ip6)
