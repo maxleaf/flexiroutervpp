@@ -35,6 +35,8 @@
 #include <vlibapi/api.h>
 #include <vlibmemory/api.h>
 
+#define REPLY_MSG_ID_BASE (dm->msg_id_base)
+
 /* define message IDs */
 #include <dpdk/api/dpdk_msg_enum.h>
 
