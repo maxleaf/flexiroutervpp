@@ -244,8 +244,63 @@ static void *vl_api_sw_interface_set_dpdk_hqos_tctbl_t_print
   FINISH;
 }
 
+
+static void
+  vl_api_sw_interface_set_dpdk_hqos_pipe_bw_t_handler
+  (vl_api_sw_interface_set_dpdk_hqos_pipe_bw_t * mp)
+{
+  vl_api_sw_interface_set_dpdk_hqos_pipe_bw_reply_t *rmp;
+  int rv = 0;
+
+  dpdk_main_t *dm = &dpdk_main;
+  dpdk_device_t *xd;
+
+  u32 sw_if_index = ntohl (mp->sw_if_index);
+  u32 subport = ntohl (mp->subport);
+  u32 pipe = ntohl (mp->pipe);
+  u32 profile = ntohl(0);
+  vnet_hw_interface_t *hw;
+
+  VALIDATE_SW_IF_INDEX (mp);
+
+  /* hw_if & dpdk device */
+  hw = vnet_get_sup_hw_interface (dm->vnet_main, sw_if_index);
+
+  xd = vec_elt_at_index (dm->devices, hw->dev_instance);
+
+  /* TODO: Currently, This is just same as the pipe message call.
+     It is a placeholder and to check if new message api addition flow works as
+     expected (specifically for a vpp getting started person to get going)
+
+     Next: Should be analysing code needed to check on how pipe bw can be set
+     */
+
+  rv = rte_sched_pipe_config (xd->hqos_ht->hqos, subport, pipe, profile);
+
+  BAD_SW_IF_INDEX_LABEL;
+
+  REPLY_MACRO (VL_API_SW_INTERFACE_SET_DPDK_HQOS_PIPE_BW_REPLY);
+}
+
+static void *vl_api_sw_interface_set_dpdk_hqos_pipe_bw_t_print
+  (vl_api_sw_interface_set_dpdk_hqos_pipe_bw_t * mp, void *handle)
+{
+  u8 *s;
+
+  s = format (0, "SCRIPT: sw_interface_set_dpdk_hqos_pipe_bw ");
+
+  s = format (s, "sw_if_index %u ", ntohl (mp->sw_if_index));
+
+  s = format (s, "subport %u  pipe %u  profile %u ",
+	      ntohl (mp->subport), ntohl (mp->pipe), ntohl (0));
+
+  FINISH;
+}
+
+
 #define foreach_dpdk_plugin_api_msg                                       \
 _(SW_INTERFACE_SET_DPDK_HQOS_PIPE, sw_interface_set_dpdk_hqos_pipe)       \
+_(SW_INTERFACE_SET_DPDK_HQOS_PIPE_BW, sw_interface_set_dpdk_hqos_pipe_bw) \
 _(SW_INTERFACE_SET_DPDK_HQOS_SUBPORT, sw_interface_set_dpdk_hqos_subport) \
 _(SW_INTERFACE_SET_DPDK_HQOS_TCTBL, sw_interface_set_dpdk_hqos_tctbl)
 
