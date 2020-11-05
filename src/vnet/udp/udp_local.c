@@ -176,12 +176,6 @@ udp46_local_inline (vlib_main_t * vm,
 	  sparse_vec_index2 (is_ip4 ? um->next_by_dst_port4 :
 			     um->next_by_dst_port6,
 			     dst_port0, dst_port1, &i0, &i1);
-	  next0 = (error0 == 0) ?
-	    vec_elt (is_ip4 ? um->next_by_dst_port4 : um->next_by_dst_port6,
-		     i0) : next0;
-	  next1 = (error1 == 0) ?
-	    vec_elt (is_ip4 ? um->next_by_dst_port4 : um->next_by_dst_port6,
-		     i1) : next1;
 
 	  if (PREDICT_FALSE (i0 == SPARSE_VEC_INVALID_INDEX))
 	    {
@@ -215,6 +209,9 @@ udp46_local_inline (vlib_main_t * vm,
 	    }
 	  else
 	    {
+		  next0 = (error0 == 0) ?
+	    	vec_elt (is_ip4 ? um->next_by_dst_port4 : um->next_by_dst_port6,
+		     i0) : next0;
 	      b0->error = node->errors[UDP_ERROR_NONE];
 	      // advance to the payload
 	      vlib_buffer_advance (b0, sizeof (*h0));
@@ -252,6 +249,9 @@ udp46_local_inline (vlib_main_t * vm,
 	    }
 	  else
 	    {
+	      next1 = (error1 == 0) ?
+	        vec_elt (is_ip4 ? um->next_by_dst_port4 : um->next_by_dst_port6,
+		     i1) : next1;
 	      b1->error = node->errors[UDP_ERROR_NONE];
 	      // advance to the payload
 	      vlib_buffer_advance (b1, sizeof (*h1));
@@ -326,8 +326,6 @@ udp46_local_inline (vlib_main_t * vm,
 	    {
 	      i0 = sparse_vec_index (is_ip4 ? um->next_by_dst_port4 :
 				     um->next_by_dst_port6, h0->dst_port);
-	      next0 = vec_elt (is_ip4 ? um->next_by_dst_port4 :
-			       um->next_by_dst_port6, i0);
 
 	      if (PREDICT_FALSE (i0 == SPARSE_VEC_INVALID_INDEX))
 		{
@@ -361,6 +359,8 @@ udp46_local_inline (vlib_main_t * vm,
 		}
 	      else
 		{
+	      next0 = vec_elt (is_ip4 ? um->next_by_dst_port4 :
+			       um->next_by_dst_port6, i0);
 		  b0->error = node->errors[UDP_ERROR_NONE];
 		  // advance to the payload
 		  vlib_buffer_advance (b0, sizeof (*h0));
