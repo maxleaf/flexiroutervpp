@@ -13,6 +13,12 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *   - Use route preference size the same as Linux metric, i.e. u32
+ */
+
 #include <vnet/adj/adj.h>
 #include <vnet/dpo/load_balance.h>
 #include <vnet/dpo/mpls_label_dpo.h>
@@ -212,7 +218,11 @@ typedef struct fib_entry_src_collect_forwarding_ctx_t_
     const fib_entry_src_t *esrc;
     fib_forward_chain_type_t fct;
     int n_recursive_constrained;
+#ifdef FLEXIWAN_FEATURE
+    u32 preference;
+#else
     u16 preference;
+#endif
 } fib_entry_src_collect_forwarding_ctx_t;
 
 /**
@@ -393,7 +403,11 @@ fib_entry_src_collect_forwarding (fib_node_index_t pl_index,
     {
         ctx->n_recursive_constrained += 1;
     }
+#ifdef FLEXIWAN_FEATURE
+    if (0xffffffff == ctx->preference)
+#else
     if (0xffff == ctx->preference)
+#endif
     {
         /*
          * not set a preference yet, so the first path we encounter
@@ -515,7 +529,11 @@ fib_entry_src_mk_lb (fib_entry_t *fib_entry,
         .next_hops = NULL,
         .n_recursive_constrained = 0,
         .fct = fct,
+#ifdef FLEXIWAN_FEATURE
+        .preference = 0xffffffff,
+#else
         .preference = 0xffff,
+#endif
     };
 
     /*
