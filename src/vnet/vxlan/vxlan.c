@@ -668,10 +668,14 @@ int vnet_vxlan_add_del_tunnel
 #ifdef FLEXIWAN_FEATURE
     if (t->fib_pl_index != INDEX_INVALID)
     {
-      fib_path_list_child_remove (t->fib_pl_index, t->sibling_index);
+      fib_node_index_t old_pl;
+      old_pl = t->fib_pl_index;
+
       t->fib_pl_index =
       fib_path_list_copy_and_path_remove(t->fib_pl_index, t->pl_flags, &t->rpath);
       ASSERT(t->fib_pl_index==INDEX_INVALID);
+      fib_path_list_child_remove (old_pl, t->sibling_index);
+      t->sibling_index = ~0;
     }
     else
     {
