@@ -327,10 +327,13 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
    * As we have only one path - path to remote tunnel end or to wan gateway,
    * the path removal should cause list destroy.
    */
-  fib_path_list_child_remove(link->pathlist_index, link->pathlist_sibling);
+  fib_node_index_t old_pl;
+  old_pl = link->pathlist_index;
   link->pathlist_index =
   fib_path_list_copy_and_path_remove(link->pathlist_index, link->pathlist_flags, &link->pathlist_rpath);
   ASSERT(link->pathlist_index==INDEX_INVALID);
+  fib_path_list_child_remove(old_pl, link->pathlist_sibling);
+  link->pathlist_sibling = ~0;
 
   return 0;
 }
