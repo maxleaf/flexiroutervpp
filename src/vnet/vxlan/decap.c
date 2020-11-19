@@ -388,8 +388,18 @@ vxlan_input (vlib_main_t * vm,
 	}
       else
 	{
+#ifdef FLEXIWAN_FIX
+        /* Stun reply fix, please refer to file header for description */
+        /* restore packet pointer */
+        u32 offset_back = sizeof(vxlan_header_t) + sizeof(udp_header_t);
+
+        offset_back += is_ip4 ? sizeof(ip4_header_t) : sizeof(ip6_header_t);
+        vlib_buffer_advance (b[0], -(word) offset_back);
+    	next[0] = is_ip4 ? VXLAN_INPUT_NEXT_PUNT4 : VXLAN_INPUT_NEXT_PUNT6;
+#else
 	  b[0]->error = node->errors[di0.error];
 	  pkts_dropped++;
+#endif
 	}
 
       if (PREDICT_FALSE (b[0]->flags & VLIB_BUFFER_IS_TRACED))
