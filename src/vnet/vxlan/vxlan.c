@@ -815,7 +815,7 @@ vxlan_add_del_tunnel_command_fn (vlib_main_t * vm,
       else if (unformat (line_input, "vni %d", &vni))
 	;
 #ifdef FLEXIWAN_FEATURE
-      else if (unformat (line_input, "dest_port %d,", &dest_port))
+      else if (unformat (line_input, "dest_port %d", &dest_port))
   ;
 #endif
       else
