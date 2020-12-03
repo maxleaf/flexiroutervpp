@@ -431,6 +431,10 @@ gre_mk_sn_key (const gre_tunnel_t * gt, gre_sn_key_t * key)
   key->fib_index = gt->outer_fib_index;
 }
 
+extern gre_tunnel_t *
+gre_tunnel_db_find (const vnet_gre_tunnel_add_del_args_t * a,
+		    u32 outer_fib_index, gre_tunnel_key_t * key);
+
 #endif /* included_gre_h */
 
 /*

@@ -24,7 +24,7 @@
 #include <vnet/udp/udp.h>
 #include <vnet/ipsec/ipsec.h>
 #include <vnet/ipsec/ipsec_tun.h>
-#include <vnet/ipip/ipip.h>
+#include <vnet/gre/gre.h>
 #include <plugins/ikev2/ikev2.h>
 #include <plugins/ikev2/ikev2_priv.h>
 #include <openssl/sha.h>
@@ -1518,13 +1518,24 @@ ikev2_add_tunnel_from_main (ikev2_add_ipsec_tunnel_args_t * a)
   u32 sw_if_index;
   int rv = 0;
 
+  /* *INDENT-OFF* */
+  vnet_gre_tunnel_add_del_args_t gre_args = {
+    .is_add = 1,
+    .type = GRE_TUNNEL_TYPE_TEB,
+    .is_ipv6 = 0,
+    .instance = 0,
+    .src = a->local_ip,
+    .dst = a->remote_ip,
+    .outer_table_id = 0,
+    .session_id = 0,
+    .flags = TUNNEL_ENCAP_DECAP_FLAG_NONE
+  };
+  /* *INDENT-ON* */
+
   if (~0 == a->sw_if_index)
     {
       /* no tunnel associated with the SA/profile - create a new one */
-      rv = ipip_add_tunnel (IPIP_TRANSPORT_IP4, ~0,
-			    &a->local_ip, &a->remote_ip, 0,
-			    TUNNEL_ENCAP_DECAP_FLAG_NONE, IP_DSCP_CS0,
-			    TUNNEL_MODE_P2P, &sw_if_index);
+      rv = vnet_gre_tunnel_add_del(&gre_args, &sw_if_index);
 
       if (rv == VNET_API_ERROR_IF_ALREADY_EXISTS)
 	{
@@ -1836,26 +1847,33 @@ static void
 ikev2_del_tunnel_from_main (ikev2_del_ipsec_tunnel_args_t * a)
 {
   ikev2_main_t *km = &ikev2_main;
-  ipip_tunnel_t *ipip = NULL;
+  gre_tunnel_t *gre = NULL;
   u32 sw_if_index;
+
+    /* *INDENT-OFF* */
+    vnet_gre_tunnel_add_del_args_t gre_args = {
+     .is_add = 1,
+     .type = GRE_TUNNEL_TYPE_TEB,
+     .mode = TUNNEL_MODE_P2P,
+     .is_ipv6 = 0,
+     .instance = 0,
+     .src = a->local_ip,
+     .dst = a->remote_ip,
+     .outer_table_id = 0,
+     .session_id = 0,
+     .flags = TUNNEL_ENCAP_DECAP_FLAG_NONE
+    };
+    /* *INDENT-ON* */
+    gre_tunnel_key_t gre_key;
 
   if (~0 == a->sw_if_index)
     {
-    /* *INDENT-OFF* */
-    ipip_tunnel_key_t key = {
-      .src = a->local_ip,
-      .dst = a->remote_ip,
-      .transport = IPIP_TRANSPORT_IP4,
-      .fib_index = 0,
-    };
-    /* *INDENT-ON* */
+      gre = gre_tunnel_db_find(&gre_args, 0, &gre_key);
 
-      ipip = ipip_tunnel_db_find (&key);
-
-      if (ipip)
+      if (gre)
 	{
-	  sw_if_index = ipip->sw_if_index;
-	  hash_unset (km->sw_if_indices, ipip->sw_if_index);
+	  sw_if_index = gre->sw_if_index;
+	  hash_unset (km->sw_if_indices, gre->sw_if_index);
 	}
       else
 	sw_if_index = ~0;
@@ -1873,8 +1891,9 @@ ikev2_del_tunnel_from_main (ikev2_del_ipsec_tunnel_args_t * a)
   ipsec_sa_unlock_id (a->local_sa_id);
   ipsec_sa_unlock_id (ikev2_flip_alternate_sa_bit (a->remote_sa_id));
 
-  if (ipip)
-    ipip_del_tunnel (ipip->sw_if_index);
+  if (gre)
+    gre_args.is_add = 0;
+    vnet_gre_tunnel_add_del (&gre_args, &gre->sw_if_index);
 }
 
 static int
@@ -3799,7 +3818,7 @@ ikev2_mngr_process_child_sa (ikev2_sa_t * sa, ikev2_child_sa_t * csa,
 
   if (del_old_ids)
     {
-      ipip_tunnel_t *ipip = NULL;
+      gre_tunnel_t *gre = NULL;
       u32 sw_if_index = sa->is_tun_itf_set ? sa->tun_itf : ~0;
       if (~0 == sw_if_index)
 	{
@@ -3816,19 +3835,25 @@ ikev2_mngr_process_child_sa (ikev2_sa_t * sa, ikev2_child_sa_t * csa,
 	      ip46_address_set_ip4 (&remote_ip, &sa->iaddr);
 	    }
 
-       /* *INDENT-OFF* */
-       ipip_tunnel_key_t key = {
-         .src = local_ip,
-         .dst = remote_ip,
-         .transport = IPIP_TRANSPORT_IP4,
-         .fib_index = 0,
-       };
-       /* *INDENT-ON* */
+    /* *INDENT-OFF* */
+    vnet_gre_tunnel_add_del_args_t gre_args = {
+      .is_add = 1,
+      .type = GRE_TUNNEL_TYPE_TEB,
+      .is_ipv6 = 0,
+      .instance = 0,
+      .src = local_ip,
+      .dst = remote_ip,
+      .outer_table_id = 0,
+      .session_id = 0,
+      .flags = TUNNEL_ENCAP_DECAP_FLAG_NONE
+    };
+    /* *INDENT-ON* */
+    gre_tunnel_key_t gre_key;
 
-	  ipip = ipip_tunnel_db_find (&key);
+	  gre = gre_tunnel_db_find(&gre_args, 0, &gre_key);
 
-	  if (ipip)
-	    sw_if_index = ipip->sw_if_index;
+	  if (gre)
+	    sw_if_index = gre->sw_if_index;
 	  else
 	    return res;
 	}
