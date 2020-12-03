@@ -1523,7 +1523,7 @@ ikev2_add_tunnel_from_main (ikev2_add_ipsec_tunnel_args_t * a)
     .is_add = 1,
     .type = GRE_TUNNEL_TYPE_TEB,
     .is_ipv6 = 0,
-    .instance = 0,
+    .instance = 0xffffffff,
     .src = a->local_ip,
     .dst = a->remote_ip,
     .outer_table_id = 0,
@@ -1852,11 +1852,11 @@ ikev2_del_tunnel_from_main (ikev2_del_ipsec_tunnel_args_t * a)
 
     /* *INDENT-OFF* */
     vnet_gre_tunnel_add_del_args_t gre_args = {
-     .is_add = 1,
+     .is_add = 0,
      .type = GRE_TUNNEL_TYPE_TEB,
      .mode = TUNNEL_MODE_P2P,
      .is_ipv6 = 0,
-     .instance = 0,
+     .instance = 0xffffffff,
      .src = a->local_ip,
      .dst = a->remote_ip,
      .outer_table_id = 0,
@@ -1892,7 +1892,6 @@ ikev2_del_tunnel_from_main (ikev2_del_ipsec_tunnel_args_t * a)
   ipsec_sa_unlock_id (ikev2_flip_alternate_sa_bit (a->remote_sa_id));
 
   if (gre)
-    gre_args.is_add = 0;
     vnet_gre_tunnel_add_del (&gre_args, &gre->sw_if_index);
 }
 
@@ -3837,10 +3836,10 @@ ikev2_mngr_process_child_sa (ikev2_sa_t * sa, ikev2_child_sa_t * csa,
 
     /* *INDENT-OFF* */
     vnet_gre_tunnel_add_del_args_t gre_args = {
-      .is_add = 1,
+      .is_add = 0,
       .type = GRE_TUNNEL_TYPE_TEB,
       .is_ipv6 = 0,
-      .instance = 0,
+      .instance = 0xffffffff,
       .src = local_ip,
       .dst = remote_ip,
       .outer_table_id = 0,
