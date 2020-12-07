@@ -15,6 +15,12 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *   - Use GRE tunnel instead of IPIP inside IKEv2
+ */
+
 #include <vnet/vnet.h>
 #include <vnet/pg/pg.h>
 #include <vnet/gre/gre.h>
@@ -67,9 +73,15 @@ format_gre_tunnel (u8 * s, va_list * args)
   return s;
 }
 
+#ifdef FLEXIWAN_FEATURE
 gre_tunnel_t *
 gre_tunnel_db_find (const vnet_gre_tunnel_add_del_args_t * a,
 		    u32 outer_fib_index, gre_tunnel_key_t * key)
+#else
+static gre_tunnel_t *
+gre_tunnel_db_find (const vnet_gre_tunnel_add_del_args_t * a,
+		    u32 outer_fib_index, gre_tunnel_key_t * key)
+#endif /* FLEXIWAN_FEATURE */
 {
   gre_main_t *gm = &gre_main;
   uword *p;

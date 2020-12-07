@@ -13,6 +13,12 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *   - Use GRE tunnel instead of IPIP inside IKEv2
+ */
+
 #include <vlib/vlib.h>
 #include <vlib/unix/plugin.h>
 #include <vlibmemory/api.h>
@@ -24,7 +30,11 @@
 #include <vnet/udp/udp.h>
 #include <vnet/ipsec/ipsec.h>
 #include <vnet/ipsec/ipsec_tun.h>
+#ifdef FLEXIWAN_FEATURE
 #include <vnet/gre/gre.h>
+#else
+#include <vnet/ipip/ipip.h>
+#endif /* FLEXIWAN_FEATURE */
 #include <plugins/ikev2/ikev2.h>
 #include <plugins/ikev2/ikev2_priv.h>
 #include <openssl/sha.h>
@@ -1518,25 +1528,30 @@ ikev2_add_tunnel_from_main (ikev2_add_ipsec_tunnel_args_t * a)
   u32 sw_if_index;
   int rv = 0;
 
-  /* *INDENT-OFF* */
-  vnet_gre_tunnel_add_del_args_t gre_args = {
-    .is_add = 1,
-    .type = GRE_TUNNEL_TYPE_TEB,
-    .is_ipv6 = 0,
-    .instance = 0xffffffff,
-    .src = a->local_ip,
-    .dst = a->remote_ip,
-    .outer_table_id = 0,
-    .session_id = 0,
-    .flags = TUNNEL_ENCAP_DECAP_FLAG_NONE
-  };
-  /* *INDENT-ON* */
-
   if (~0 == a->sw_if_index)
     {
       /* no tunnel associated with the SA/profile - create a new one */
+#ifdef FLEXIWAN_FEATURE
+      /* *INDENT-OFF* */
+      vnet_gre_tunnel_add_del_args_t gre_args = {
+        .is_add = 1,
+        .type = GRE_TUNNEL_TYPE_TEB,
+        .is_ipv6 = 0,
+        .instance = 0xffffffff,
+        .src = a->local_ip,
+        .dst = a->remote_ip,
+        .outer_table_id = 0,
+        .session_id = 0,
+        .flags = TUNNEL_ENCAP_DECAP_FLAG_NONE
+      };
+      /* *INDENT-ON* */
       rv = vnet_gre_tunnel_add_del(&gre_args, &sw_if_index);
-
+#else
+      rv = ipip_add_tunnel (IPIP_TRANSPORT_IP4, ~0,
+			    &a->local_ip, &a->remote_ip, 0,
+			    TUNNEL_ENCAP_DECAP_FLAG_NONE, IP_DSCP_CS0,
+			    TUNNEL_MODE_P2P, &sw_if_index);
+#endif /* FLEXIWAN_FEATURE */
       if (rv == VNET_API_ERROR_IF_ALREADY_EXISTS)
 	{
 	  if (hash_get (km->sw_if_indices, sw_if_index))
@@ -1843,40 +1858,41 @@ ikev2_flip_alternate_sa_bit (u32 id)
   return id | mask;
 }
 
+#ifdef FLEXIWAN_FEATURE
 static void
 ikev2_del_tunnel_from_main (ikev2_del_ipsec_tunnel_args_t * a)
 {
   ikev2_main_t *km = &ikev2_main;
   gre_tunnel_t *gre = NULL;
+  gre_tunnel_key_t gre_key;
   u32 sw_if_index;
 
-    /* *INDENT-OFF* */
-    vnet_gre_tunnel_add_del_args_t gre_args = {
-     .is_add = 0,
-     .type = GRE_TUNNEL_TYPE_TEB,
-     .mode = TUNNEL_MODE_P2P,
-     .is_ipv6 = 0,
-     .instance = 0xffffffff,
-     .src = a->local_ip,
-     .dst = a->remote_ip,
-     .outer_table_id = 0,
-     .session_id = 0,
-     .flags = TUNNEL_ENCAP_DECAP_FLAG_NONE
-    };
-    /* *INDENT-ON* */
-    gre_tunnel_key_t gre_key;
+  /* *INDENT-OFF* */
+  vnet_gre_tunnel_add_del_args_t gre_args = {
+    .is_add = 0,
+    .type = GRE_TUNNEL_TYPE_TEB,
+    .mode = TUNNEL_MODE_P2P,
+    .is_ipv6 = 0,
+    .instance = 0xffffffff,
+    .src = a->local_ip,
+    .dst = a->remote_ip,
+    .outer_table_id = 0,
+    .session_id = 0,
+    .flags = TUNNEL_ENCAP_DECAP_FLAG_NONE
+  };
+  /* *INDENT-ON* */
 
   if (~0 == a->sw_if_index)
     {
       gre = gre_tunnel_db_find(&gre_args, 0, &gre_key);
 
       if (gre)
-	{
-	  sw_if_index = gre->sw_if_index;
-	  hash_unset (km->sw_if_indices, gre->sw_if_index);
-	}
+        {
+          sw_if_index = gre->sw_if_index;
+          hash_unset (km->sw_if_indices, gre->sw_if_index);
+        }
       else
-	sw_if_index = ~0;
+	      sw_if_index = ~0;
     }
   else
     {
@@ -1894,6 +1910,52 @@ ikev2_del_tunnel_from_main (ikev2_del_ipsec_tunnel_args_t * a)
   if (gre)
     vnet_gre_tunnel_add_del (&gre_args, &gre->sw_if_index);
 }
+#else
+static void
+ikev2_del_tunnel_from_main (ikev2_del_ipsec_tunnel_args_t * a)
+{
+  ikev2_main_t *km = &ikev2_main;
+  ipip_tunnel_t *ipip = NULL;
+  u32 sw_if_index;
+
+  if (~0 == a->sw_if_index)
+    {
+    /* *INDENT-OFF* */
+    ipip_tunnel_key_t key = {
+      .src = a->local_ip,
+      .dst = a->remote_ip,
+      .transport = IPIP_TRANSPORT_IP4,
+      .fib_index = 0,
+    };
+    /* *INDENT-ON* */
+
+      ipip = ipip_tunnel_db_find (&key);
+
+      if (ipip)
+	{
+	  sw_if_index = ipip->sw_if_index;
+	  hash_unset (km->sw_if_indices, ipip->sw_if_index);
+	}
+      else
+	sw_if_index = ~0;
+    }
+  else
+    {
+      sw_if_index = a->sw_if_index;
+      vnet_sw_interface_admin_down (vnet_get_main (), sw_if_index);
+    }
+
+  if (~0 != sw_if_index)
+    ipsec_tun_protect_del (sw_if_index, NULL);
+
+  ipsec_sa_unlock_id (a->remote_sa_id);
+  ipsec_sa_unlock_id (a->local_sa_id);
+  ipsec_sa_unlock_id (ikev2_flip_alternate_sa_bit (a->remote_sa_id));
+
+  if (ipip)
+    ipip_del_tunnel (ipip->sw_if_index);
+}
+#endif /* FLEXIWAN_FEATURE */
 
 static int
 ikev2_delete_tunnel_interface (vnet_main_t * vnm, ikev2_sa_t * sa,
@@ -3817,7 +3879,11 @@ ikev2_mngr_process_child_sa (ikev2_sa_t * sa, ikev2_child_sa_t * csa,
 
   if (del_old_ids)
     {
+#ifdef FLEXIWAN_FEATURE
       gre_tunnel_t *gre = NULL;
+#else
+      ipip_tunnel_t *ipip = NULL;
+#endif /* FLEXIWAN_FEATURE */
       u32 sw_if_index = sa->is_tun_itf_set ? sa->tun_itf : ~0;
       if (~0 == sw_if_index)
 	{
@@ -3834,6 +3900,8 @@ ikev2_mngr_process_child_sa (ikev2_sa_t * sa, ikev2_child_sa_t * csa,
 	      ip46_address_set_ip4 (&remote_ip, &sa->iaddr);
 	    }
 
+#ifdef FLEXIWAN_FEATURE
+    gre_tunnel_key_t gre_key;
     /* *INDENT-OFF* */
     vnet_gre_tunnel_add_del_args_t gre_args = {
       .is_add = 0,
@@ -3847,12 +3915,26 @@ ikev2_mngr_process_child_sa (ikev2_sa_t * sa, ikev2_child_sa_t * csa,
       .flags = TUNNEL_ENCAP_DECAP_FLAG_NONE
     };
     /* *INDENT-ON* */
-    gre_tunnel_key_t gre_key;
 
 	  gre = gre_tunnel_db_find(&gre_args, 0, &gre_key);
 
 	  if (gre)
 	    sw_if_index = gre->sw_if_index;
+#else
+       /* *INDENT-OFF* */
+       ipip_tunnel_key_t key = {
+         .src = local_ip,
+         .dst = remote_ip,
+         .transport = IPIP_TRANSPORT_IP4,
+         .fib_index = 0,
+       };
+       /* *INDENT-ON* */
+
+	  ipip = ipip_tunnel_db_find (&key);
+
+	  if (ipip)
+	    sw_if_index = ipip->sw_if_index;
+#endif /* FLEXIWAN_FEATURE */
 	  else
 	    return res;
 	}
