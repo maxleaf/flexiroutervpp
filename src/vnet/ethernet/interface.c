@@ -915,6 +915,15 @@ vnet_delete_loopback_interface (u32 sw_if_index)
 }
 
 int
+vnet_interface_check_if_loopback (vnet_hw_interface_t *hw)
+{
+  if (hw && hw->dev_class_index == ethernet_simulated_device_class.index)
+    return 0;
+
+  return -1;
+}
+
+int
 vnet_delete_sub_interface (u32 sw_if_index)
 {
   vnet_main_t *vnm = vnet_get_main ();

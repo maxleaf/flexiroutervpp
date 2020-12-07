@@ -472,6 +472,7 @@ int vnet_create_loopback_interface (u32 * sw_if_indexp, u8 * mac_address,
 				    u8 is_specified, u32 user_instance);
 int vnet_delete_loopback_interface (u32 sw_if_index);
 int vnet_delete_sub_interface (u32 sw_if_index);
+int vnet_interface_check_if_loopback (vnet_hw_interface_t *hw);
 
 // Perform ethernet subinterface classification table lookups given
 // the ports's sw_if_index and fields extracted from the ethernet header.
