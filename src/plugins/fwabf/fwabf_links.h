@@ -89,18 +89,21 @@ extern dpo_id_t fwabf_links_get_dpo (
                         dpo_proto_t           proto);
 
 /**
- * Checks if DPO-s retrieved by FIB lookup belong to labeled tunnels,
- * either reachable currently or unreachable.
+ * Checks if DPO-s retrieved by FIB lookup belong to labeled tunnels, labeled
+ * DIA interfaces or default route interface. This is either reachable currently
+ * or unreachable.
  * Note we check the first of FIB lookup DPO-s only, as there is enforcement
  * on user behavior: if user wants policy, he has to label all tunnels/WAN-s.
  *
  * @param lb        the result of FIB lookup. It is DPO of Load Balance type.
  *                  It can't be used for forwarding. It is used to hold one or
  *                  more children DPO-s that can be used for forwarding.
- * @return 1 if DPO is labeled, 0 otherwise.
+ * @param proto     DPO_PROTO_IP4/DPO_PROTO_IP6.
+ * @return 1 if DPO is labeled or belongs to default route, 0 otherwise.
  */
-extern int fwabf_links_is_dpo_labeled (
-                        const load_balance_t* lb);
+extern int fwabf_links_is_dpo_labeled_or_default_route (
+                            const load_balance_t* lb,
+                            dpo_proto_t           proto);
 
 /*
  * fd.io coding-style-patch-verification: ON
