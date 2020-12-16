@@ -547,9 +547,15 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
            * ASSUMPTION: if user wants policy, it labels all available tunnels,
            *             so FIB lookup can't bring mix of labeled and not labeled
            *             tunnels!
+           *
+           * The exception for this algorithm is DPO of default route. We have
+           * to enable policy on such DPO in order to drop specific DIA packets
+           * without DIA label! That means even if DPO is not labeled.
+           * This is for user convenience, so he could set policy without
+           * binding labels to interfaces.
            */
           match0 = 0;
-          if (fwabf_links_is_dpo_labeled (lb0))
+          if (fwabf_links_is_dpo_labeled_or_default_route (lb0, DPO_PROTO_IP4))
             {
               /*
                 * Perform ACL lookup and if found - apply policy.
@@ -594,7 +600,7 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
                     }
                   matches++;
                 }
-            } /*if (fwabf_links_is_dpo_labeled (lb0)*/
+            } /*if (fwabf_links_is_dpo_labeled_or_default_route (lb0)*/
 
           /*
            * If policy was not applied, finish the ip4_lookup_inline logic -
@@ -725,9 +731,15 @@ fwabf_input_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
            * ASSUMPTION: if user wants policy, it labels all available tunnels,
            *             so FIB lookup can't bring mix of labeled and not labeled
            *             tunnels!
+           *
+           * The exception for this algorithm is DPO of default route. We have
+           * to enable policy on such DPO in order to drop specific DIA packets
+           * without DIA label! That means even if DPO is not labeled.
+           * This is for user convenience, so he could set policy without
+           * binding labels to interfaces.
            */
           match0 = 0;
-          if (fwabf_links_is_dpo_labeled (lb0))
+          if (fwabf_links_is_dpo_labeled_or_default_route (lb0, DPO_PROTO_IP6))
             {
               /*
                 * Perform ACL lookup and if found - apply policy.
@@ -761,7 +773,7 @@ fwabf_input_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
                     }
                   matches++;
                 }
-            } /*if (fwabf_links_is_dpo_labeled (lb0)*/
+            } /*if (fwabf_links_is_dpo_labeled_or_default_route (lb0)*/
 
           /*
            * If policy was not applied, finish the ip4_lookup_inline logic -
