@@ -17,6 +17,7 @@
  *  Copyright (C) 2020 flexiWAN Ltd.
  *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
  *   - Use GRE tunnel instead of IPIP inside IKEv2
+ *   - Fixed crash on cleaning up timed out connection
  */
 
 #include <vlib/vlib.h>
@@ -4112,7 +4113,9 @@ ikev2_mngr_process_fn (vlib_main_t * vm, vlib_node_runtime_t * rt,
 {
   ikev2_main_t *km = &ikev2_main;
   ipsec_main_t *im = &ipsec_main;
+#ifndef FLEXIWAN_FIX
   ikev2_profile_t *p;
+#endif
   ikev2_child_sa_t *c;
   u32 *sai;
 
@@ -4154,6 +4157,7 @@ ikev2_mngr_process_fn (vlib_main_t * vm, vlib_node_runtime_t * rt,
 	vec_foreach (sai, to_be_deleted)
 	{
 	  sa = pool_elt_at_index (tkm->sas, sai[0]);
+#ifndef FLEXIWAN_FIX
 	  if (sa->is_initiator && sa->is_profile_index_set)
 	    {
 	      p = pool_elt_at_index (km->profiles, sa->profile_index);
@@ -4162,6 +4166,7 @@ ikev2_mngr_process_fn (vlib_main_t * vm, vlib_node_runtime_t * rt,
 		  ikev2_initiate_sa_init (vm, p->name);
 		}
 	    }
+#endif
 	  vec_foreach (c, sa->childs)
 	    ikev2_delete_tunnel_interface (km->vnet_main, sa, c);
 	  hash_unset (tkm->sa_by_rspi, sa->rspi);
