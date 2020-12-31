@@ -18,6 +18,7 @@
  *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
  *   - Use GRE tunnel instead of IPIP inside IKEv2
  *   - Fixed crash on cleaning up timed out connection. It is already fixed in VPP v21.01
+ *   - Fixed crash on rekeying. It is already fixed in VPP v21.01
  */
 
 #include <vlib/vlib.h>
@@ -3843,7 +3844,11 @@ ikev2_mngr_process_child_sa (ikev2_sa_t * sa, ikev2_child_sa_t * csa,
   f64 now = vlib_time_now (vm);
   u8 res = 0;
 
+#ifdef FLEXIWAN_FIX
+  if (sa->profile_index != ~0)
+#else
   if (sa->is_profile_index_set)
+#endif
     p = pool_elt_at_index (km->profiles, sa->profile_index);
 
   if (sa->is_initiator && p && csa->time_to_expiration
