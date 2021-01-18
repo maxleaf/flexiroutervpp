@@ -20,6 +20,7 @@
  *   - Fixed crash on cleaning up timed out connection. It is partially fixed in VPP v21.01
  *   - Fixed crash on rekeying. It is already fixed in VPP v21.01
  *   - Fixed crash on changing expiration time. It is partially fixed in VPP v21.01
+ *   - Fixed crash on message generation. It is fixed in VPP v21.01
  */
 
 #include <vlib/vlib.h>
@@ -2175,7 +2176,11 @@ ikev2_generate_message (ikev2_sa_t * sa, ike_header_t * ike, void *user)
 	}
       else
 	{
+#ifdef FLEXIWAN_FIX
+	  if (vec_len (sa->rekey) > 0)
+#else
 	  if (sa->rekey)
+#endif
 	    {
 	      ikev2_payload_add_sa (chain, sa->rekey[0].r_proposal);
 	      ikev2_payload_add_nonce (chain, sa->r_nonce);
@@ -2228,7 +2233,11 @@ ikev2_generate_message (ikev2_sa_t * sa, ike_header_t * ike, void *user)
       clib_memcpy_fast (ike->payload, chain->data, vec_len (chain->data));
 
       /* store whole IKE payload - needed for PSK auth */
+#ifdef FLEXIWAN_FIX
+      vec_reset_length (sa->last_sa_init_res_packet_data);
+#else
       vec_free (sa->last_sa_init_res_packet_data);
+#endif
       vec_add (sa->last_sa_init_res_packet_data, ike, tlen);
     }
   else
@@ -2261,7 +2270,11 @@ ikev2_generate_message (ikev2_sa_t * sa, ike_header_t * ike, void *user)
 			sizeof (*ike), integ, tr_integ->key_trunc);
 
       /* store whole IKE payload - needed for retransmit */
+#ifdef FLEXIWAN_FIX
+      vec_reset_length (sa->last_res_packet_data);
+#else
       vec_free (sa->last_res_packet_data);
+#endif
       vec_add (sa->last_res_packet_data, ike, tlen);
     }
 
