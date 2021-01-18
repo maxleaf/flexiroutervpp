@@ -21,6 +21,7 @@
  *   - Fixed crash on rekeying. It is already fixed in VPP v21.01
  *   - Fixed crash on changing expiration time. It is partially fixed in VPP v21.01
  *   - Fixed crash on message generation. It is fixed in VPP v21.01
+ *   - Fixed crash on creating child sa request. It is fixed in VPP v21.01
  */
 
 #include <vlib/vlib.h>
@@ -1150,7 +1151,11 @@ ikev2_process_create_child_sa_req (vlib_main_t * vm, ikev2_sa_t * sa,
       rekey->tsi = tsi;
       rekey->tsr = tsr;
       /* update Nr */
+#ifdef FLEXIWAN_FIX
+      vec_reset_length (sa->r_nonce);
+#else
       vec_free (sa->r_nonce);
+#endif
       vec_add (sa->r_nonce, nonce, IKEV2_NONCE_SIZE);
       child_sa = ikev2_sa_get_child (sa, rekey->ispi, IKEV2_PROTOCOL_ESP, 1);
       if (child_sa)
@@ -1177,11 +1182,19 @@ ikev2_process_create_child_sa_req (vlib_main_t * vm, ikev2_sa_t * sa,
       rekey->tsi = tsi;
       rekey->tsr = tsr;
       /* update Ni */
+#ifdef FLEXIWAN_FIX
+      vec_reset_length (sa->i_nonce);
+#else
       vec_free (sa->i_nonce);
+#endif
       vec_add (sa->i_nonce, nonce, IKEV2_NONCE_SIZE);
       /* generate new Nr */
+#ifdef FLEXIWAN_FIX
+      vec_validate (sa->r_nonce, IKEV2_NONCE_SIZE - 1);
+#else
       vec_free (sa->r_nonce);
       sa->r_nonce = vec_new (u8, IKEV2_NONCE_SIZE);
+#endif
       RAND_bytes ((u8 *) sa->r_nonce, IKEV2_NONCE_SIZE);
     }
 
