@@ -17,8 +17,9 @@
  *  Copyright (C) 2020 flexiWAN Ltd.
  *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
  *   - Use GRE tunnel instead of IPIP inside IKEv2
- *   - Fixed crash on cleaning up timed out connection. It is already fixed in VPP v21.01
+ *   - Fixed crash on cleaning up timed out connection. It is partially fixed in VPP v21.01
  *   - Fixed crash on rekeying. It is already fixed in VPP v21.01
+ *   - Fixed crash on changing expiration time. It is partially fixed in VPP v21.01
  */
 
 #include <vlib/vlib.h>
@@ -3845,7 +3846,7 @@ ikev2_mngr_process_child_sa (ikev2_sa_t * sa, ikev2_child_sa_t * csa,
   u8 res = 0;
 
 #ifdef FLEXIWAN_FIX
-  if (sa->profile_index != ~0)
+  if (sa->profile_index != ~0 && !pool_is_free_index(km->profiles, sa->profile_index))
 #else
   if (sa->is_profile_index_set)
 #endif
@@ -4014,7 +4015,11 @@ ikev2_mngr_process_ipsec_sa (ipsec_sa_t * ipsec_sa)
   vlib_get_combined_counter (&ipsec_sa_counters,
 			     ipsec_sa->stat_index, &counts);
 
+#ifdef FLEXIWAN_FIX
+  if (fsa && fsa->profile_index != ~0 && fsa->is_initiator && !pool_is_free_index(km->profiles, fsa->profile_index))
+#else
   if (fsa && fsa->is_profile_index_set)
+#endif
     p = pool_elt_at_index (km->profiles, fsa->profile_index);
 
   if (fchild && p && p->lifetime_maxdata)
@@ -4166,7 +4171,8 @@ ikev2_mngr_process_fn (vlib_main_t * vm, vlib_node_runtime_t * rt,
 	  hash_unset (tkm->sa_by_rspi, sa->rspi);
 	  pool_put (tkm->sas, sa);
 
-	  if (sa->is_initiator && sa->is_profile_index_set)
+	  if (sa->is_initiator && sa->is_profile_index_set &&
+        !pool_is_free_index(km->profiles, sa->profile_index))
 	    {
 	      p = pool_elt_at_index (km->profiles, sa->profile_index);
 	      if (p)
