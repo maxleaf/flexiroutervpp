@@ -12,6 +12,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - enable enforcement of interface, where VXLAN tunnel should send unicast
+ *     packets from. This is need for the FlexiWAN Multi-link feature.
+ *   - Add destination port for vxlan tunnle, if remote device is behind NAT. Port is
+ *     provisioned by fleximanage when creating the tunnel.
+ */
+
 #include <vnet/vxlan/vxlan.h>
 #include <vnet/ip/format.h>
 #include <vnet/fib/fib_entry.h>
@@ -61,12 +71,21 @@ format_vxlan_tunnel (u8 * s, va_list * args)
 {
   vxlan_tunnel_t *t = va_arg (*args, vxlan_tunnel_t *);
 
-  s = format (s,
-	      "[%d] instance %d src %U dst %U vni %d fib-idx %d sw-if-idx %d ",
+#ifdef FLEXIWAN_FEATURE
+     s = format (s,
+	      "[%d] instance %d src %U dst %U vni %d fib-idx %d sw-if-idx %d dest_port %d ",
+	      t->dev_instance, t->user_instance,
+	      format_ip46_address, &t->src, IP46_TYPE_ANY,
+	      format_ip46_address, &t->dst, IP46_TYPE_ANY,
+	      t->vni, t->encap_fib_index, t->sw_if_index, t->dest_port);
+#else
+     s = format (s,
+	      "[%d] instance %d src %U dst %U vni %d fib-idx %d sw-if-idx %d",
 	      t->dev_instance, t->user_instance,
 	      format_ip46_address, &t->src, IP46_TYPE_ANY,
 	      format_ip46_address, &t->dst, IP46_TYPE_ANY,
 	      t->vni, t->encap_fib_index, t->sw_if_index);
+#endif
 
   s = format (s, "encap-dpo-idx %d ", t->next_dpo.dpoi_index);
 
@@ -79,6 +98,14 @@ format_vxlan_tunnel (u8 * s, va_list * args)
   if (t->flow_index != ~0)
     s = format (s, "flow-index %d [%U]", t->flow_index,
 		format_flow_enabled_hw, t->flow_index);
+
+#ifdef FLEXIWAN_FEATURE
+  if (t->fib_pl_index != INDEX_INVALID)
+  {
+    s = format (s, "next hope: pathlist-index %d", t->fib_pl_index);
+    s = format (s, "%U", format_fib_path_list, t->fib_pl_index, 4);
+  }
+#endif /* FLEXIWAN_FEATURE */
 
   return s;
 }
@@ -143,7 +170,23 @@ vxlan_tunnel_restack_dpo (vxlan_tunnel_t * t)
   dpo_id_t dpo = DPO_INVALID;
   fib_forward_chain_type_t forw_type = is_ip4 ?
     FIB_FORW_CHAIN_TYPE_UNICAST_IP4 : FIB_FORW_CHAIN_TYPE_UNICAST_IP6;
-
+#ifdef FLEXIWAN_FEATURE
+  if (t->fib_pl_index != INDEX_INVALID)
+  {
+    fib_path_list_contribute_forwarding (
+        t->fib_pl_index, forw_type, FIB_PATH_LIST_FWD_FLAG_COLLAPSE, &dpo);
+    /*
+     * Path-list  should brings DPO attached to next-hope. It is supposed to be
+     * of DPO_LOAD_BALANCE with one DPO in list of DPO_ADJACENCY /
+     * DPO_ADJACENCY_INCOMPLETE type.
+     * Therefor there is no need for games with load balance.
+     * Just use FIB_PATH_LIST_FWD_FLAG_COLLAPSE to get the final DPO_ADJACENCY
+     * DPO.
+     */
+  }
+  else
+  {
+#endif /* FLEXIWAN_FEATURE */
   fib_entry_contribute_forwarding (t->fib_entry_index, forw_type, &dpo);
 
   /* vxlan uses the payload hash as the udp source port
@@ -157,6 +200,9 @@ vxlan_tunnel_restack_dpo (vxlan_tunnel_t * t)
 
       dpo_copy (&dpo, load_balance_get_bucket_i (lb, 0));
     }
+#ifdef FLEXIWAN_FEATURE
+  }
+#endif /* FLEXIWAN_FEATURE */
 
   u32 encap_index = is_ip4 ?
     vxlan4_encap_node.index : vxlan6_encap_node.index;
@@ -227,7 +273,8 @@ _(mcast_sw_if_index)                            \
 _(encap_fib_index)                              \
 _(decap_next_index)                             \
 _(src)                                          \
-_(dst)
+_(dst)                                          \
+_(dest_port)
 
 static void
 vxlan_rewrite (vxlan_tunnel_t * t, bool is_ip6)
@@ -273,7 +320,11 @@ vxlan_rewrite (vxlan_tunnel_t * t, bool is_ip6)
 
   /* UDP header, randomize src port on something, maybe? */
   udp->src_port = clib_host_to_net_u16 (4789);
+#ifdef FLEXIWAN_FEATURE
+  udp->dst_port = clib_host_to_net_u16(t->dest_port);
+#else
   udp->dst_port = clib_host_to_net_u16 (UDP_DST_PORT_vxlan);
+#endif
 
   /* VXLAN header */
   vnet_set_vni_and_flags (vxlan, t->vni);
@@ -486,6 +537,25 @@ int vnet_vxlan_add_del_tunnel
 	   * re-stack accordingly
 	   */
 	  vtep_addr_ref (&vxm->vtep_table, t->encap_fib_index, &t->src);
+#ifdef FLEXIWAN_FEATURE
+    /*
+     * If tunnel packets should be sent out of specific interface,
+     * as in case of Flexiwan Multi-link feature, don't use FIB LOOKUP results.
+     * Instead use DPO of that interface directly.
+     */
+    t->fib_pl_index = INDEX_INVALID;
+    if (!(ip46_address_is_zero(&a->next_hop.frp_addr)))
+    {
+      memcpy(&t->rpath, &a->next_hop, sizeof(a->next_hop));
+      t->pl_flags      = FIB_PATH_LIST_FLAG_SHARED;
+      t->fib_pl_index  = fib_path_list_create (t->pl_flags, &t->rpath);
+      t->sibling_index = fib_path_list_child_add (
+                              t->fib_pl_index, FIB_NODE_TYPE_VXLAN_TUNNEL, dev_instance);
+      vxlan_tunnel_restack_dpo (t);
+    }
+    else
+    {
+#endif /* FLEXIWAN_FEATURE */
 	  t->fib_entry_index = fib_entry_track (t->encap_fib_index,
 						&tun_dst_pfx,
 						FIB_NODE_TYPE_VXLAN_TUNNEL,
@@ -493,6 +563,9 @@ int vnet_vxlan_add_del_tunnel
 						&t->sibling_index);
 	  vxlan_tunnel_restack_dpo (t);
 	}
+#ifdef FLEXIWAN_FEATURE
+  }
+#endif /* FLEXIWAN_FEATURE */
       else
 	{
 	  /* Multicast tunnel -
@@ -593,7 +666,25 @@ int vnet_vxlan_add_del_tunnel
 	    vnet_flow_del (vnm, t->flow_index);
 
 	  vtep_addr_unref (&vxm->vtep_table, t->encap_fib_index, &t->src);
+#ifdef FLEXIWAN_FEATURE
+    if (t->fib_pl_index != INDEX_INVALID)
+    {
+      fib_node_index_t old_pl;
+      old_pl = t->fib_pl_index;
+
+      t->fib_pl_index =
+      fib_path_list_copy_and_path_remove(t->fib_pl_index, t->pl_flags, &t->rpath);
+      ASSERT(t->fib_pl_index==INDEX_INVALID);
+      fib_path_list_child_remove (old_pl, t->sibling_index);
+      t->sibling_index = ~0;
+    }
+    else
+    {
+#endif /* FLEXIWAN_FEATURE */
 	  fib_entry_untrack (t->fib_entry_index, t->sibling_index);
+#ifdef FLEXIWAN_FEATURE
+    }
+#endif /* FLEXIWAN_FEATURE */
 	}
       else if (vtep_addr_unref (&vxm->vtep_table,
 				t->encap_fib_index, &t->dst) == 0)
@@ -676,6 +767,9 @@ vxlan_add_del_tunnel_command_fn (vlib_main_t * vm,
   u32 mcast_sw_if_index = ~0;
   u32 decap_next_index = VXLAN_INPUT_NEXT_L2_INPUT;
   u32 vni = 0;
+#ifdef FLEXIWAN_FEATURE
+  u16 dest_port = 0;
+#endif
   u32 table_id;
   clib_error_t *parse_error = NULL;
 
@@ -721,6 +815,10 @@ vxlan_add_del_tunnel_command_fn (vlib_main_t * vm,
 	;
       else if (unformat (line_input, "vni %d", &vni))
 	;
+#ifdef FLEXIWAN_FEATURE
+      else if (unformat (line_input, "dest_port %d", &dest_port))
+  ;
+#endif
       else
 	{
 	  parse_error = clib_error_return (0, "parse error: '%U'",
@@ -766,6 +864,11 @@ vxlan_add_del_tunnel_command_fn (vlib_main_t * vm,
 
   if (vni >> 24)
     return clib_error_return (0, "vni %d out of range", vni);
+
+#ifdef FLEXIWAN_FEATURE
+  if (dest_port == 0)
+    return clib_error_return (0, "dest_port not specified");
+#endif
 
   vnet_vxlan_add_del_tunnel_args_t a = {
     .is_add = is_add,
@@ -834,6 +937,9 @@ VLIB_CLI_COMMAND (create_vxlan_tunnel_command, static) = {
   .short_help =
   "create vxlan tunnel src <local-vtep-addr>"
   " {dst <remote-vtep-addr>|group <mcast-vtep-addr> <intf-name>} vni <nn>"
+#ifdef FLEXIWAN_FEATURE
+  " dest_port <nn>"
+#endif
   " [instance <id>]"
   " [encap-vrf-id <nn>] [decap-next [l2|node <name>]] [del]",
   .function = vxlan_add_del_tunnel_command_fn,
@@ -1120,7 +1226,11 @@ vnet_vxlan_add_del_rx_flow (u32 hw_if_index, u32 t_index, int is_add)
 			  .dst_addr.addr = t->src.ip4,
 			  .src_addr.mask.as_u32 = ~0,
 			  .dst_addr.mask.as_u32 = ~0,
-			  .dst_port.port = UDP_DST_PORT_vxlan,
+#ifdef FLEXIWAN_FEATURE
+        .dst_port = t->dest_port,
+#else
+			  .dst_port = UDP_DST_PORT_vxlan,
+#endif
 			  .dst_port.mask = 0xFF,
 			  .vni = t->vni,
 			  }

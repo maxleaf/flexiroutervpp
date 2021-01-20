@@ -27,6 +27,12 @@
  * adjacency to match the path's description.
  */
 
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *   - Use route preference size the same as Linux metric, i.e. u32
+ */
+
 #ifndef __FIB_PATH_H__
 #define __FIB_PATH_H__
 
@@ -207,7 +213,11 @@ extern int fib_path_recursive_loop_detect(fib_node_index_t path_index,
 extern u32 fib_path_get_resolving_interface(fib_node_index_t fib_entry_index);
 extern index_t fib_path_get_resolving_index(fib_node_index_t path_index);
 extern u16 fib_path_get_weight(fib_node_index_t path_index);
+#ifdef FLEXIWAN_FEATURE
+extern u32 fib_path_get_preference(fib_node_index_t path_index);
+#else
 extern u16 fib_path_get_preference(fib_node_index_t path_index);
+#endif
 extern u32 fib_path_get_rpf_id(fib_node_index_t path_index);
 
 extern void fib_path_module_init(void);
