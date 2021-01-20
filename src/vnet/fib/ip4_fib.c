@@ -900,7 +900,7 @@ ip4_show_lookup (vlib_main_t * vm,
             break;
     }
 
-    pool_foreach (fib_table, im4->fibs,
+    pool_foreach (fib_table, im4->fibs)
       {
         ip4_fib_t*            fib = pool_elt_at_index(im4->v4_fibs, fib_table->ft_index);
         ip4_fib_mtrie_t*      mtrie;
@@ -929,7 +929,7 @@ ip4_show_lookup (vlib_main_t * vm,
           }
         vlib_cli_output (vm, "fib:");
         ip4_fib_table_show_one(fib, vm, &addr, 32 /*matching_mask*/, 1);
-    });
+    };
   return 0;
 }
 #endif /*FLEXIWAN_FIX*/

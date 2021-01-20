@@ -72,6 +72,8 @@
 #include <vnet/dpo/dpo.h>
 #include <vnet/dpo/drop_dpo.h>
 #include <vnet/plugin/plugin.h>
+#include <vnet/ip/ip4_inlines.h>
+#include <vnet/ip/ip6_inlines.h>
 
 
 /**
@@ -803,10 +805,10 @@ abf_show_policy_cmd (vlib_main_t * vm,
   if (INDEX_INVALID == policy_id)
     {
       /* *INDENT-OFF* */
-      pool_foreach(p, abf_policy_pool,
-      ({
+      pool_foreach(p, abf_policy_pool)
+      {
         vlib_cli_output(vm, "%U", format_abf, p);
-      }));
+      };
       /* *INDENT-ON* */
     }
   else

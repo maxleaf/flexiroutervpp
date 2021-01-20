@@ -55,6 +55,10 @@
 
 #include <vlibapi/api_helper_macros.h>
 
+#ifdef FLEXIWAN_FEATURE
+#include <vnet/udp/udp_local.h>
+#endif
+
 #define foreach_vpe_api_msg                             \
 _(SW_INTERFACE_SET_VXLAN_BYPASS, sw_interface_set_vxlan_bypass)         \
 _(VXLAN_ADD_DEL_TUNNEL, vxlan_add_del_tunnel)                           \

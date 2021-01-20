@@ -68,6 +68,8 @@
 #include <vnet/fib/ip4_fib.h>
 #include <vnet/ip/ip4_mtrie.h>
 #include <vnet/fib/ip6_fib.h>
+#include <vnet/ip/ip4_inlines.h>
+#include <vnet/ip/ip6_inlines.h>
 #include <plugins/acl/exports.h>
 
 /**
