@@ -2730,9 +2730,9 @@ snat_get_worker_in2out_cb (ip4_header_t * ip0, u32 rx_fib_index0)
     (ip0->src_address.as_u32 >> 16) + (ip0->src_address.as_u32 >> 24);
 
   if (PREDICT_TRUE (is_pow2 (_vec_len (sm->workers))))
-    next_worker_index += sm->workers[hash & (_vec_len (sm->workers) - 1)];
+    next_worker_index += hash & (_vec_len (sm->workers) - 1);
   else
-    next_worker_index += sm->workers[hash % _vec_len (sm->workers)];
+    next_worker_index += hash % _vec_len (sm->workers);
 
   return next_worker_index;
 }
