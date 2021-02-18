@@ -52,20 +52,21 @@ static void
   vl_api_session_enable_disable_reply_t_handler
   (vl_api_session_enable_disable_reply_t * mp)
 {
+  vcl_worker_t *wrk = vcl_worker_get (0);
+
   if (mp->retval)
     {
       clib_warning ("VCL<%d>: session_enable_disable failed: %U", getpid (),
 		    format_api_error, ntohl (mp->retval));
     }
   else
-    vcm->bapi_app_state = STATE_APP_ENABLED;
+    wrk->bapi_app_state = STATE_APP_ENABLED;
 }
 
 static void
 vl_api_app_attach_reply_t_handler (vl_api_app_attach_reply_t * mp)
 {
   vcl_worker_t *wrk = vcl_worker_get (0);
-  svm_msg_q_t *ctrl_mq;
   u64 segment_handle;
   int *fds = 0, i, rv;
   u32 n_fds = 0;
@@ -77,9 +78,8 @@ vl_api_app_attach_reply_t_handler (vl_api_app_attach_reply_t * mp)
       goto failed;
     }
 
-  wrk->app_event_queue = uword_to_pointer (mp->app_mq, svm_msg_q_t *);
-  ctrl_mq = uword_to_pointer (mp->vpp_ctrl_mq, svm_msg_q_t *);
-  vcm->ctrl_mq = wrk->ctrl_mq = ctrl_mq;
+  vcl_set_worker_index (0);
+
   segment_handle = clib_net_to_host_u64 (mp->segment_handle);
   if (segment_handle == VCL_INVALID_SEGMENT_HANDLE)
     {
@@ -111,13 +111,22 @@ vl_api_app_attach_reply_t_handler (vl_api_app_attach_reply_t * mp)
 	    goto failed;
 	}
 
+      vcl_segment_attach_mq (segment_handle, mp->app_mq, 0,
+			     &wrk->app_event_queue);
 
       if (mp->fd_flags & SESSION_FD_F_MQ_EVENTFD)
 	{
-	  svm_msg_q_set_consumer_eventfd (wrk->app_event_queue, fds[n_fds]);
+	  svm_msg_q_set_eventfd (wrk->app_event_queue, fds[n_fds]);
 	  vcl_mq_epoll_add_evfd (wrk, wrk->app_event_queue);
 	  n_fds++;
 	}
+
+      vcl_segment_discover_mqs (vcl_vpp_worker_segment_handle (0), fds + n_fds,
+				mp->n_fds - n_fds);
+      vcl_segment_attach_mq (vcl_vpp_worker_segment_handle (0),
+			     mp->vpp_ctrl_mq, mp->vpp_ctrl_mq_thread,
+			     &wrk->ctrl_mq);
+      vcm->ctrl_mq = wrk->ctrl_mq;
 
       vec_free (fds);
     }
@@ -133,11 +142,11 @@ vl_api_app_attach_reply_t_handler (vl_api_app_attach_reply_t * mp)
     }
 
   vcm->app_index = clib_net_to_host_u32 (mp->app_index);
-  vcm->bapi_app_state = STATE_APP_ATTACHED;
+  wrk->bapi_app_state = STATE_APP_ATTACHED;
   return;
 
 failed:
-  vcm->bapi_app_state = STATE_APP_FAILED;
+  wrk->bapi_app_state = STATE_APP_FAILED;
   for (i = clib_max (n_fds - 1, 0); i < vec_len (fds); i++)
     close (fds[i]);
   vec_free (fds);
@@ -153,13 +162,6 @@ vl_api_app_worker_add_del_reply_t_handler (vl_api_app_worker_add_del_reply_t *
   u32 wrk_index;
   char *segment_name = 0;
 
-  if (mp->retval)
-    {
-      clib_warning ("VCL<%d>: add/del worker failed: %U", getpid (),
-		    format_api_error, ntohl (mp->retval));
-      goto failed;
-    }
-
   if (!mp->is_add)
     return;
 
@@ -168,9 +170,15 @@ vl_api_app_worker_add_del_reply_t_handler (vl_api_app_worker_add_del_reply_t *
   if (!wrk)
     return;
 
+  if (mp->retval)
+    {
+      clib_warning ("VCL<%d>: add/del worker failed: %U", getpid (),
+		    format_api_error, ntohl (mp->retval));
+      goto failed;
+    }
+
+  vcl_set_worker_index (wrk_index);
   wrk->vpp_wrk_index = clib_net_to_host_u32 (mp->wrk_index);
-  wrk->app_event_queue = uword_to_pointer (mp->app_event_queue_address,
-					   svm_msg_q_t *);
   wrk->ctrl_mq = vcm->ctrl_mq;
 
   segment_handle = clib_net_to_host_u64 (mp->segment_handle);
@@ -204,9 +212,12 @@ vl_api_app_worker_add_del_reply_t_handler (vl_api_app_worker_add_del_reply_t *
 	    goto failed;
 	}
 
+      vcl_segment_attach_mq (segment_handle, mp->app_event_queue_address, 0,
+			     &wrk->app_event_queue);
+
       if (mp->fd_flags & SESSION_FD_F_MQ_EVENTFD)
 	{
-	  svm_msg_q_set_consumer_eventfd (wrk->app_event_queue, fds[n_fds]);
+	  svm_msg_q_set_eventfd (wrk->app_event_queue, fds[n_fds]);
 	  vcl_mq_epoll_add_evfd (wrk, wrk->app_event_queue);
 	  n_fds++;
 	}
@@ -223,41 +234,51 @@ vl_api_app_worker_add_del_reply_t_handler (vl_api_app_worker_add_del_reply_t *
       if (rv != 0)
 	goto failed;
     }
-  vcm->bapi_app_state = STATE_APP_READY;
+  wrk->bapi_app_state = STATE_APP_READY;
   VDBG (0, "worker %u vpp-worker %u added", wrk_index, wrk->vpp_wrk_index);
   return;
 
 failed:
-  vcm->bapi_app_state = STATE_APP_FAILED;
+  wrk->bapi_app_state = STATE_APP_FAILED;
   for (i = clib_max (n_fds - 1, 0); i < vec_len (fds); i++)
     close (fds[i]);
   vec_free (fds);
 }
 
 static void
-  vl_api_application_tls_cert_add_reply_t_handler
-  (vl_api_application_tls_cert_add_reply_t * mp)
+vl_api_app_add_cert_key_pair_reply_t_handler (
+  vl_api_app_add_cert_key_pair_reply_t *mp)
 {
+  vcl_worker_t *wrk = vcl_worker_get_current ();
+
   if (mp->retval)
-    VDBG (0, "add cert failed: %U", format_api_error, ntohl (mp->retval));
-  vcm->bapi_app_state = STATE_APP_READY;
+    {
+      VDBG (0, "Adding cert and key failed: %U", format_api_error,
+	    ntohl (mp->retval));
+      return;
+    }
+  wrk->bapi_return = clib_net_to_host_u32 (mp->index);
+  wrk->bapi_app_state = STATE_APP_READY;
 }
 
 static void
-  vl_api_application_tls_key_add_reply_t_handler
-  (vl_api_application_tls_key_add_reply_t * mp)
+vl_api_app_del_cert_key_pair_reply_t_handler (
+  vl_api_app_del_cert_key_pair_reply_t *mp)
 {
   if (mp->retval)
-    VDBG (0, "add key failed: %U", format_api_error, ntohl (mp->retval));
-  vcm->bapi_app_state = STATE_APP_READY;
+    {
+      VDBG (0, "Deleting cert and key failed: %U", format_api_error,
+	    ntohl (mp->retval));
+      return;
+    }
 }
 
-#define foreach_sock_msg                                        	\
-_(SESSION_ENABLE_DISABLE_REPLY, session_enable_disable_reply)   	\
-_(APP_ATTACH_REPLY, app_attach_reply)           			\
-_(APPLICATION_TLS_CERT_ADD_REPLY, application_tls_cert_add_reply)  	\
-_(APPLICATION_TLS_KEY_ADD_REPLY, application_tls_key_add_reply)  	\
-_(APP_WORKER_ADD_DEL_REPLY, app_worker_add_del_reply)			\
+#define foreach_sock_msg                                                      \
+  _ (SESSION_ENABLE_DISABLE_REPLY, session_enable_disable_reply)              \
+  _ (APP_ATTACH_REPLY, app_attach_reply)                                      \
+  _ (APP_ADD_CERT_KEY_PAIR_REPLY, app_add_cert_key_pair_reply)                \
+  _ (APP_DEL_CERT_KEY_PAIR_REPLY, app_del_cert_key_pair_reply)                \
+  _ (APP_WORKER_ADD_DEL_REPLY, app_worker_add_del_reply)
 
 static void
 vcl_bapi_hookup (void)
@@ -387,38 +408,41 @@ vcl_bapi_send_child_worker_del (vcl_worker_t * child_wrk)
   vl_msg_api_send_shmem (wrk->vl_input_queue, (u8 *) & mp);
 }
 
-void
-vcl_bapi_send_application_tls_cert_add (vcl_session_t * session, char *cert,
-					u32 cert_len)
+static void
+vcl_bapi_send_app_add_cert_key_pair (vppcom_cert_key_pair_t *ckpair)
 {
   vcl_worker_t *wrk = vcl_worker_get_current ();
-  vl_api_application_tls_cert_add_t *cert_mp;
+  u32 cert_len = test_srv_crt_rsa_len;
+  u32 key_len = test_srv_key_rsa_len;
+  vl_api_app_add_cert_key_pair_t *bmp;
 
-  cert_mp = vl_msg_api_alloc (sizeof (*cert_mp) + cert_len);
-  clib_memset (cert_mp, 0, sizeof (*cert_mp));
-  cert_mp->_vl_msg_id = ntohs (VL_API_APPLICATION_TLS_CERT_ADD);
-  cert_mp->client_index = wrk->api_client_handle;
-  cert_mp->context = session->session_index;
-  cert_mp->cert_len = clib_host_to_net_u16 (cert_len);
-  clib_memcpy_fast (cert_mp->cert, cert, cert_len);
-  vl_msg_api_send_shmem (wrk->vl_input_queue, (u8 *) & cert_mp);
+  bmp = vl_msg_api_alloc (sizeof (*bmp) + cert_len + key_len);
+  clib_memset (bmp, 0, sizeof (*bmp) + cert_len + key_len);
+
+  bmp->_vl_msg_id = ntohs (VL_API_APP_ADD_CERT_KEY_PAIR);
+  bmp->client_index = wrk->api_client_handle;
+  bmp->context = wrk->wrk_index;
+  bmp->cert_len = clib_host_to_net_u16 (cert_len);
+  bmp->certkey_len = clib_host_to_net_u16 (key_len + cert_len);
+  clib_memcpy_fast (bmp->certkey, test_srv_crt_rsa, cert_len);
+  clib_memcpy_fast (bmp->certkey + cert_len, test_srv_key_rsa, key_len);
+
+  vl_msg_api_send_shmem (wrk->vl_input_queue, (u8 *) &bmp);
 }
 
-void
-vcl_bapi_send_application_tls_key_add (vcl_session_t * session, char *key,
-				       u32 key_len)
+static void
+vcl_bapi_send_app_del_cert_key_pair (u32 ckpair_index)
 {
   vcl_worker_t *wrk = vcl_worker_get_current ();
-  vl_api_application_tls_key_add_t *key_mp;
+  vl_api_app_del_cert_key_pair_t *bmp;
+  bmp = vl_msg_api_alloc (sizeof (*bmp));
+  clib_memset (bmp, 0, sizeof (*bmp));
 
-  key_mp = vl_msg_api_alloc (sizeof (*key_mp) + key_len);
-  clib_memset (key_mp, 0, sizeof (*key_mp));
-  key_mp->_vl_msg_id = ntohs (VL_API_APPLICATION_TLS_KEY_ADD);
-  key_mp->client_index = wrk->api_client_handle;
-  key_mp->context = session->session_index;
-  key_mp->key_len = clib_host_to_net_u16 (key_len);
-  clib_memcpy_fast (key_mp->key, key, key_len);
-  vl_msg_api_send_shmem (wrk->vl_input_queue, (u8 *) & key_mp);
+  bmp->_vl_msg_id = ntohs (VL_API_APP_DEL_CERT_KEY_PAIR);
+  bmp->client_index = wrk->api_client_handle;
+  bmp->context = wrk->wrk_index;
+  bmp->index = clib_host_to_net_u32 (ckpair_index);
+  vl_msg_api_send_shmem (wrk->vl_input_queue, (u8 *) &bmp);
 }
 
 u32
@@ -553,16 +577,16 @@ vcl_bapi_app_state_str (vcl_bapi_app_state_t state)
 }
 
 static int
-vcl_bapi_wait_for_app_state_change (vcl_bapi_app_state_t app_state)
+vcl_bapi_wait_for_wrk_state_change (vcl_bapi_app_state_t app_state)
 {
   vcl_worker_t *wrk = vcl_worker_get_current ();
   f64 timeout = clib_time_now (&wrk->clib_time) + vcm->cfg.app_timeout;
 
   while (clib_time_now (&wrk->clib_time) < timeout)
     {
-      if (vcm->bapi_app_state == app_state)
+      if (wrk->bapi_app_state == app_state)
 	return VPPCOM_OK;
-      if (vcm->bapi_app_state == STATE_APP_FAILED)
+      if (wrk->bapi_app_state == STATE_APP_FAILED)
 	return VPPCOM_ECONNABORTED;
     }
   VDBG (0, "timeout waiting for state %s (%d)",
@@ -575,12 +599,13 @@ vcl_bapi_wait_for_app_state_change (vcl_bapi_app_state_t app_state)
 static int
 vcl_bapi_session_enable (void)
 {
+  vcl_worker_t *wrk = vcl_worker_get_current ();
   int rv;
 
-  if (vcm->bapi_app_state != STATE_APP_ENABLED)
+  if (wrk->bapi_app_state != STATE_APP_ENABLED)
     {
       vcl_bapi_send_session_enable_disable (1 /* is_enabled == TRUE */ );
-      rv = vcl_bapi_wait_for_app_state_change (STATE_APP_ENABLED);
+      rv = vcl_bapi_wait_for_wrk_state_change (STATE_APP_ENABLED);
       if (PREDICT_FALSE (rv))
 	{
 	  VDBG (0, "application session enable timed out! returning %d (%s)",
@@ -594,9 +619,10 @@ vcl_bapi_session_enable (void)
 static int
 vcl_bapi_init (void)
 {
+  vcl_worker_t *wrk = vcl_worker_get_current ();
   int rv;
 
-  vcm->bapi_app_state = STATE_APP_START;
+  wrk->bapi_app_state = STATE_APP_START;
   vcl_bapi_init_error_string_table ();
   rv = vcl_bapi_connect_to_vpp ();
   if (rv)
@@ -625,7 +651,7 @@ vcl_bapi_attach (void)
     return rv;
 
   vcl_bapi_send_attach ();
-  rv = vcl_bapi_wait_for_app_state_change (STATE_APP_ATTACHED);
+  rv = vcl_bapi_wait_for_wrk_state_change (STATE_APP_ATTACHED);
   if (PREDICT_FALSE (rv))
     {
       VDBG (0, "application attach timed out! returning %d (%s)", rv,
@@ -639,12 +665,14 @@ vcl_bapi_attach (void)
 int
 vcl_bapi_app_worker_add (void)
 {
+  vcl_worker_t *wrk = vcl_worker_get_current ();
+
   if (vcl_bapi_connect_to_vpp ())
     return -1;
 
-  vcm->bapi_app_state = STATE_APP_ADDING_WORKER;
+  wrk->bapi_app_state = STATE_APP_ADDING_WORKER;
   vcl_bapi_send_app_worker_add_del (1 /* is_add */ );
-  if (vcl_bapi_wait_for_app_state_change (STATE_APP_READY))
+  if (vcl_bapi_wait_for_wrk_state_change (STATE_APP_READY))
     return -1;
   return 0;
 }
@@ -681,48 +709,27 @@ vcl_bapi_recv_fds (vcl_worker_t * wrk, int *fds, int n_fds)
 }
 
 int
-vppcom_session_tls_add_cert (uint32_t session_handle, char *cert,
-			     uint32_t cert_len)
+vcl_bapi_add_cert_key_pair (vppcom_cert_key_pair_t *ckpair)
 {
-
   vcl_worker_t *wrk = vcl_worker_get_current ();
-  vcl_session_t *session = 0;
 
-  session = vcl_session_get_w_handle (wrk, session_handle);
-  if (!session)
-    return VPPCOM_EBADFD;
+  if (ckpair->key_len == 0 || ckpair->key_len == ~0)
+    return VPPCOM_EINVAL;
 
-  if (cert_len == 0 || cert_len == ~0)
-    return VPPCOM_EBADFD;
-
-  /*
-   * Send listen request to vpp and wait for reply
-   */
-  vcl_bapi_send_application_tls_cert_add (session, cert, cert_len);
-  vcm->bapi_app_state = STATE_APP_ADDING_TLS_DATA;
-  vcl_bapi_wait_for_app_state_change (STATE_APP_READY);
-  return VPPCOM_OK;
+  vcl_bapi_send_app_add_cert_key_pair (ckpair);
+  wrk->bapi_app_state = STATE_APP_ADDING_TLS_DATA;
+  vcl_bapi_wait_for_wrk_state_change (STATE_APP_READY);
+  if (wrk->bapi_app_state == STATE_APP_READY)
+    return wrk->bapi_return;
+  return VPPCOM_EFAULT;
 }
 
 int
-vppcom_session_tls_add_key (uint32_t session_handle, char *key,
-			    uint32_t key_len)
+vcl_bapi_del_cert_key_pair (u32 ckpair_index)
 {
-
-  vcl_worker_t *wrk = vcl_worker_get_current ();
-  vcl_session_t *session = 0;
-
-  session = vcl_session_get_w_handle (wrk, session_handle);
-  if (!session)
-    return VPPCOM_EBADFD;
-
-  if (key_len == 0 || key_len == ~0)
-    return VPPCOM_EBADFD;
-
-  vcl_bapi_send_application_tls_key_add (session, key, key_len);
-  vcm->bapi_app_state = STATE_APP_ADDING_TLS_DATA;
-  vcl_bapi_wait_for_app_state_change (STATE_APP_READY);
-  return VPPCOM_OK;
+  /* Don't wait for reply */
+  vcl_bapi_send_app_del_cert_key_pair (ckpair_index);
+  return 0;
 }
 
 int

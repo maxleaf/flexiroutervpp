@@ -106,8 +106,9 @@ ip_interface_get_first_address (ip_lookup_main_t * lm, u32 sw_if_index,
 }
 
 int
-ip_interface_get_first_ip_address (lisp_cp_main_t * lcm, u32 sw_if_index,
-				   u8 version, ip_address_t * result)
+ip_interface_get_first_ip_address (lisp_cp_main_t *lcm, u32 sw_if_index,
+				   ip_address_family_t version,
+				   ip_address_t *result)
 {
   ip_lookup_main_t *lm;
   void *addr;
@@ -149,7 +150,7 @@ ip_fib_get_first_egress_ip_for_dst (lisp_cp_main_t * lcm, ip_address_t * dst,
   u32 si;
   ip_lookup_main_t *lm;
   void *addr = 0;
-  u8 ipver;
+  ip_address_family_t ipver;
 
   ASSERT (result != 0);
 
@@ -1131,9 +1132,6 @@ remove_mapping_if_needed (u32 mi, void *arg)
   locator_set_t *ls;
 
   m = pool_elt_at_index (lcm->mapping_pool, mi);
-  if (!m)
-    return;
-
   ls = pool_elt_at_index (lcm->locator_set_pool, m->locator_set_index);
 
   if (a->is_negative)
@@ -4171,9 +4169,6 @@ send_map_reply (lisp_cp_main_t * lcm, u32 mi, ip_address_t * dst,
   mapping_t *records = 0, *m;
 
   m = pool_elt_at_index (lcm->mapping_pool, mi);
-  if (!m)
-    return -1;
-
   vec_add1 (records, m[0]);
   add_locators (lcm, &records[0], m->locator_set_index, probed_loc);
   clib_memset (&src, 0, sizeof (src));

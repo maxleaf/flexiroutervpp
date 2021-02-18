@@ -480,9 +480,9 @@ unformat_policer_rate_type (unformat_input_t * input, va_list * args)
   u8 *r = va_arg (*args, u8 *);
 
   if (unformat (input, "kbps"))
-    *r = SSE2_QOS_RATE_KBPS;
+    *r = QOS_RATE_KBPS;
   else if (unformat (input, "pps"))
-    *r = SSE2_QOS_RATE_PPS;
+    *r = QOS_RATE_PPS;
   else
     return 0;
   return 1;
@@ -494,11 +494,11 @@ unformat_policer_round_type (unformat_input_t * input, va_list * args)
   u8 *r = va_arg (*args, u8 *);
 
   if (unformat (input, "closest"))
-    *r = SSE2_QOS_ROUND_TO_CLOSEST;
+    *r = QOS_ROUND_TO_CLOSEST;
   else if (unformat (input, "up"))
-    *r = SSE2_QOS_ROUND_TO_UP;
+    *r = QOS_ROUND_TO_UP;
   else if (unformat (input, "down"))
-    *r = SSE2_QOS_ROUND_TO_DOWN;
+    *r = QOS_ROUND_TO_DOWN;
   else
     return 0;
   return 1;
@@ -510,15 +510,15 @@ unformat_policer_type (unformat_input_t * input, va_list * args)
   u8 *r = va_arg (*args, u8 *);
 
   if (unformat (input, "1r2c"))
-    *r = SSE2_QOS_POLICER_TYPE_1R2C;
+    *r = QOS_POLICER_TYPE_1R2C;
   else if (unformat (input, "1r3c"))
-    *r = SSE2_QOS_POLICER_TYPE_1R3C_RFC_2697;
+    *r = QOS_POLICER_TYPE_1R3C_RFC_2697;
   else if (unformat (input, "2r3c-2698"))
-    *r = SSE2_QOS_POLICER_TYPE_2R3C_RFC_2698;
+    *r = QOS_POLICER_TYPE_2R3C_RFC_2698;
   else if (unformat (input, "2r3c-4115"))
-    *r = SSE2_QOS_POLICER_TYPE_2R3C_RFC_4115;
+    *r = QOS_POLICER_TYPE_2R3C_RFC_4115;
   else if (unformat (input, "2r3c-mef5cf1"))
-    *r = SSE2_QOS_POLICER_TYPE_2R3C_RFC_MEF5CF1;
+    *r = QOS_POLICER_TYPE_2R3C_RFC_MEF5CF1;
   else
     return 0;
   return 1;
@@ -530,26 +530,24 @@ unformat_dscp (unformat_input_t * input, va_list * va)
   u8 *r = va_arg (*va, u8 *);
 
   if (0);
-#define _(v,f,str) else if (unformat (input, str)) *r = VNET_DSCP_##f;
-  foreach_vnet_dscp
+#define _(v, f) else if (unformat (input, #f)) *r = IP_DSCP_##f;
+  foreach_ip_dscp
 #undef _
-    else
-    return 0;
+    else return 0;
   return 1;
 }
 
 static uword
 unformat_policer_action_type (unformat_input_t * input, va_list * va)
 {
-  sse2_qos_pol_action_params_st *a
-    = va_arg (*va, sse2_qos_pol_action_params_st *);
+  qos_pol_action_params_st *a = va_arg (*va, qos_pol_action_params_st *);
 
   if (unformat (input, "drop"))
-    a->action_type = SSE2_QOS_ACTION_DROP;
+    a->action_type = QOS_ACTION_DROP;
   else if (unformat (input, "transmit"))
-    a->action_type = SSE2_QOS_ACTION_TRANSMIT;
+    a->action_type = QOS_ACTION_TRANSMIT;
   else if (unformat (input, "mark-and-transmit %U", unformat_dscp, &a->dscp))
-    a->action_type = SSE2_QOS_ACTION_MARK_AND_TRANSMIT;
+    a->action_type = QOS_ACTION_MARK_AND_TRANSMIT;
   else
     return 0;
   return 1;
@@ -2431,6 +2429,41 @@ static void vl_api_create_vhost_user_if_reply_t_handler_json
   vam->result_ready = 1;
 }
 
+static void vl_api_create_vhost_user_if_v2_reply_t_handler
+  (vl_api_create_vhost_user_if_v2_reply_t * mp)
+{
+  vat_main_t *vam = &vat_main;
+  i32 retval = ntohl (mp->retval);
+  if (vam->async_mode)
+    {
+      vam->async_errors += (retval < 0);
+    }
+  else
+    {
+      vam->retval = retval;
+      vam->sw_if_index = ntohl (mp->sw_if_index);
+      vam->result_ready = 1;
+    }
+  vam->regenerate_interface_table = 1;
+}
+
+static void vl_api_create_vhost_user_if_v2_reply_t_handler_json
+  (vl_api_create_vhost_user_if_v2_reply_t * mp)
+{
+  vat_main_t *vam = &vat_main;
+  vat_json_node_t node;
+
+  vat_json_init_object (&node);
+  vat_json_object_add_int (&node, "retval", ntohl (mp->retval));
+  vat_json_object_add_uint (&node, "sw_if_index", ntohl (mp->sw_if_index));
+
+  vat_json_print (vam->ofp, &node);
+  vat_json_free (&node);
+
+  vam->retval = ntohl (mp->retval);
+  vam->result_ready = 1;
+}
+
 static void vl_api_ip_address_details_t_handler
   (vl_api_ip_address_details_t * mp)
 {
@@ -2647,15 +2680,15 @@ format_policer_type (u8 * s, va_list * va)
 {
   u32 i = va_arg (*va, u32);
 
-  if (i == SSE2_QOS_POLICER_TYPE_1R2C)
+  if (i == QOS_POLICER_TYPE_1R2C)
     s = format (s, "1r2c");
-  else if (i == SSE2_QOS_POLICER_TYPE_1R3C_RFC_2697)
+  else if (i == QOS_POLICER_TYPE_1R3C_RFC_2697)
     s = format (s, "1r3c");
-  else if (i == SSE2_QOS_POLICER_TYPE_2R3C_RFC_2698)
+  else if (i == QOS_POLICER_TYPE_2R3C_RFC_2698)
     s = format (s, "2r3c-2698");
-  else if (i == SSE2_QOS_POLICER_TYPE_2R3C_RFC_4115)
+  else if (i == QOS_POLICER_TYPE_2R3C_RFC_4115)
     s = format (s, "2r3c-4115");
-  else if (i == SSE2_QOS_POLICER_TYPE_2R3C_RFC_MEF5CF1)
+  else if (i == QOS_POLICER_TYPE_2R3C_RFC_MEF5CF1)
     s = format (s, "2r3c-mef5cf1");
   else
     s = format (s, "ILLEGAL");
@@ -2667,9 +2700,9 @@ format_policer_rate_type (u8 * s, va_list * va)
 {
   u32 i = va_arg (*va, u32);
 
-  if (i == SSE2_QOS_RATE_KBPS)
+  if (i == QOS_RATE_KBPS)
     s = format (s, "kbps");
-  else if (i == SSE2_QOS_RATE_PPS)
+  else if (i == QOS_RATE_PPS)
     s = format (s, "pps");
   else
     s = format (s, "ILLEGAL");
@@ -2681,11 +2714,11 @@ format_policer_round_type (u8 * s, va_list * va)
 {
   u32 i = va_arg (*va, u32);
 
-  if (i == SSE2_QOS_ROUND_TO_CLOSEST)
+  if (i == QOS_ROUND_TO_CLOSEST)
     s = format (s, "closest");
-  else if (i == SSE2_QOS_ROUND_TO_UP)
+  else if (i == QOS_ROUND_TO_UP)
     s = format (s, "up");
-  else if (i == SSE2_QOS_ROUND_TO_DOWN)
+  else if (i == QOS_ROUND_TO_DOWN)
     s = format (s, "down");
   else
     s = format (s, "ILLEGAL");
@@ -2697,11 +2730,11 @@ format_policer_action_type (u8 * s, va_list * va)
 {
   u32 i = va_arg (*va, u32);
 
-  if (i == SSE2_QOS_ACTION_DROP)
+  if (i == QOS_ACTION_DROP)
     s = format (s, "drop");
-  else if (i == SSE2_QOS_ACTION_TRANSMIT)
+  else if (i == QOS_ACTION_TRANSMIT)
     s = format (s, "transmit");
-  else if (i == SSE2_QOS_ACTION_MARK_AND_TRANSMIT)
+  else if (i == QOS_ACTION_MARK_AND_TRANSMIT)
     s = format (s, "mark-and-transmit");
   else
     s = format (s, "ILLEGAL");
@@ -2716,14 +2749,14 @@ format_dscp (u8 * s, va_list * va)
 
   switch (i)
     {
-#define _(v,f,str) case VNET_DSCP_##f: t = str; break;
-      foreach_vnet_dscp
+#define _(v, f)                                                               \
+  case IP_DSCP_##f:                                                           \
+    return (format (s, "%s", #f));
+      foreach_ip_dscp
 #undef _
-    default:
-      return format (s, "ILLEGAL");
     }
   s = format (s, "%s", t);
-  return s;
+  return (format (s, "ILLEGAL"));
 }
 
 static void
@@ -3249,6 +3282,7 @@ _(l2_fib_clear_table_reply)                             \
 _(l2_interface_efp_filter_reply)                        \
 _(l2_interface_vlan_tag_rewrite_reply)                  \
 _(modify_vhost_user_if_reply)                           \
+_(modify_vhost_user_if_v2_reply)                        \
 _(delete_vhost_user_if_reply)                           \
 _(want_l2_macs_events_reply)                            \
 _(input_acl_set_interface_reply)                        \
@@ -3256,8 +3290,6 @@ _(ipsec_spd_add_del_reply)                              \
 _(ipsec_interface_add_del_spd_reply)                    \
 _(ipsec_spd_entry_add_del_reply)                        \
 _(ipsec_sad_entry_add_del_reply)                        \
-_(ipsec_tunnel_if_add_del_reply)                        \
-_(ipsec_tunnel_if_set_sa_reply)                         \
 _(delete_loopback_reply)                                \
 _(bd_ip_mac_add_del_reply)                              \
 _(bd_ip_mac_flush_reply)                                \
@@ -3422,6 +3454,8 @@ _(L2_INTERFACE_VLAN_TAG_REWRITE_REPLY, l2_interface_vlan_tag_rewrite_reply) \
 _(SW_INTERFACE_VHOST_USER_DETAILS, sw_interface_vhost_user_details)     \
 _(CREATE_VHOST_USER_IF_REPLY, create_vhost_user_if_reply)               \
 _(MODIFY_VHOST_USER_IF_REPLY, modify_vhost_user_if_reply)               \
+_(CREATE_VHOST_USER_IF_V2_REPLY, create_vhost_user_if_v2_reply)         \
+_(MODIFY_VHOST_USER_IF_V2_REPLY, modify_vhost_user_if_v2_reply)		\
 _(DELETE_VHOST_USER_IF_REPLY, delete_vhost_user_if_reply)               \
 _(SHOW_VERSION_REPLY, show_version_reply)                               \
 _(SHOW_THREADS_REPLY, show_threads_reply)                               \
@@ -3439,8 +3473,6 @@ _(IPSEC_INTERFACE_ADD_DEL_SPD_REPLY, ipsec_interface_add_del_spd_reply) \
 _(IPSEC_SPD_ENTRY_ADD_DEL_REPLY, ipsec_spd_entry_add_del_reply)         \
 _(IPSEC_SAD_ENTRY_ADD_DEL_REPLY, ipsec_sad_entry_add_del_reply)         \
 _(IPSEC_SA_DETAILS, ipsec_sa_details)                                   \
-_(IPSEC_TUNNEL_IF_ADD_DEL_REPLY, ipsec_tunnel_if_add_del_reply)         \
-_(IPSEC_TUNNEL_IF_SET_SA_REPLY, ipsec_tunnel_if_set_sa_reply)           \
 _(DELETE_LOOPBACK_REPLY, delete_loopback_reply)                         \
 _(BD_IP_MAC_ADD_DEL_REPLY, bd_ip_mac_add_del_reply)                     \
 _(BD_IP_MAC_FLUSH_REPLY, bd_ip_mac_flush_reply)                         \
@@ -9863,13 +9895,11 @@ api_create_vhost_user_if (vat_main_t * vam)
   mp->disable_indirect_desc = disable_indirect_desc;
   mp->enable_gso = enable_gso;
   mp->enable_packed = enable_packed;
+  mp->custom_dev_instance = ntohl (custom_dev_instance);
   clib_memcpy (mp->sock_filename, file_name, vec_len (file_name));
   vec_free (file_name);
   if (custom_dev_instance != ~0)
-    {
-      mp->renumber = 1;
-      mp->custom_dev_instance = ntohl (custom_dev_instance);
-    }
+    mp->renumber = 1;
 
   mp->use_custom_mac = use_custom_mac;
   clib_memcpy (mp->mac_address, hwaddr, 6);
@@ -9944,13 +9974,176 @@ api_modify_vhost_user_if (vat_main_t * vam)
   mp->is_server = is_server;
   mp->enable_gso = enable_gso;
   mp->enable_packed = enable_packed;
+  mp->custom_dev_instance = ntohl (custom_dev_instance);
   clib_memcpy (mp->sock_filename, file_name, vec_len (file_name));
   vec_free (file_name);
   if (custom_dev_instance != ~0)
+    mp->renumber = 1;
+
+  S (mp);
+  W (ret);
+  return ret;
+}
+
+static int
+api_create_vhost_user_if_v2 (vat_main_t * vam)
+{
+  unformat_input_t *i = vam->input;
+  vl_api_create_vhost_user_if_v2_t *mp;
+  u8 *file_name;
+  u8 is_server = 0;
+  u8 file_name_set = 0;
+  u32 custom_dev_instance = ~0;
+  u8 hwaddr[6];
+  u8 use_custom_mac = 0;
+  u8 disable_mrg_rxbuf = 0;
+  u8 disable_indirect_desc = 0;
+  u8 *tag = 0;
+  u8 enable_gso = 0;
+  u8 enable_packed = 0;
+  u8 enable_event_idx = 0;
+  int ret;
+
+  /* Shut up coverity */
+  clib_memset (hwaddr, 0, sizeof (hwaddr));
+
+  while (unformat_check_input (i) != UNFORMAT_END_OF_INPUT)
     {
-      mp->renumber = 1;
-      mp->custom_dev_instance = ntohl (custom_dev_instance);
+      if (unformat (i, "socket %s", &file_name))
+	{
+	  file_name_set = 1;
+	}
+      else if (unformat (i, "renumber %" PRIu32, &custom_dev_instance))
+	;
+      else if (unformat (i, "mac %U", unformat_ethernet_address, hwaddr))
+	use_custom_mac = 1;
+      else if (unformat (i, "server"))
+	is_server = 1;
+      else if (unformat (i, "disable_mrg_rxbuf"))
+	disable_mrg_rxbuf = 1;
+      else if (unformat (i, "disable_indirect_desc"))
+	disable_indirect_desc = 1;
+      else if (unformat (i, "gso"))
+	enable_gso = 1;
+      else if (unformat (i, "packed"))
+	enable_packed = 1;
+      else if (unformat (i, "event-idx"))
+	enable_event_idx = 1;
+      else if (unformat (i, "tag %s", &tag))
+	;
+      else
+	break;
     }
+
+  if (file_name_set == 0)
+    {
+      errmsg ("missing socket file name");
+      return -99;
+    }
+
+  if (vec_len (file_name) > 255)
+    {
+      errmsg ("socket file name too long");
+      return -99;
+    }
+  vec_add1 (file_name, 0);
+
+  M (CREATE_VHOST_USER_IF_V2, mp);
+
+  mp->is_server = is_server;
+  mp->disable_mrg_rxbuf = disable_mrg_rxbuf;
+  mp->disable_indirect_desc = disable_indirect_desc;
+  mp->enable_gso = enable_gso;
+  mp->enable_packed = enable_packed;
+  mp->enable_event_idx = enable_event_idx;
+  mp->custom_dev_instance = ntohl (custom_dev_instance);
+  clib_memcpy (mp->sock_filename, file_name, vec_len (file_name));
+  vec_free (file_name);
+  if (custom_dev_instance != ~0)
+    mp->renumber = 1;
+
+  mp->use_custom_mac = use_custom_mac;
+  clib_memcpy (mp->mac_address, hwaddr, 6);
+  if (tag)
+    strncpy ((char *) mp->tag, (char *) tag, ARRAY_LEN (mp->tag) - 1);
+  vec_free (tag);
+
+  S (mp);
+  W (ret);
+  return ret;
+}
+
+static int
+api_modify_vhost_user_if_v2 (vat_main_t * vam)
+{
+  unformat_input_t *i = vam->input;
+  vl_api_modify_vhost_user_if_v2_t *mp;
+  u8 *file_name;
+  u8 is_server = 0;
+  u8 file_name_set = 0;
+  u32 custom_dev_instance = ~0;
+  u8 sw_if_index_set = 0;
+  u32 sw_if_index = (u32) ~ 0;
+  u8 enable_gso = 0;
+  u8 enable_packed = 0;
+  u8 enable_event_idx = 0;
+  int ret;
+
+  while (unformat_check_input (i) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (i, "%U", api_unformat_sw_if_index, vam, &sw_if_index))
+	sw_if_index_set = 1;
+      else if (unformat (i, "sw_if_index %d", &sw_if_index))
+	sw_if_index_set = 1;
+      else if (unformat (i, "socket %s", &file_name))
+	{
+	  file_name_set = 1;
+	}
+      else if (unformat (i, "renumber %" PRIu32, &custom_dev_instance))
+	;
+      else if (unformat (i, "server"))
+	is_server = 1;
+      else if (unformat (i, "gso"))
+	enable_gso = 1;
+      else if (unformat (i, "packed"))
+	enable_packed = 1;
+      else if (unformat (i, "event-idx"))
+	enable_event_idx = 1;
+      else
+	break;
+    }
+
+  if (sw_if_index_set == 0)
+    {
+      errmsg ("missing sw_if_index or interface name");
+      return -99;
+    }
+
+  if (file_name_set == 0)
+    {
+      errmsg ("missing socket file name");
+      return -99;
+    }
+
+  if (vec_len (file_name) > 255)
+    {
+      errmsg ("socket file name too long");
+      return -99;
+    }
+  vec_add1 (file_name, 0);
+
+  M (MODIFY_VHOST_USER_IF_V2, mp);
+
+  mp->sw_if_index = ntohl (sw_if_index);
+  mp->is_server = is_server;
+  mp->enable_gso = enable_gso;
+  mp->enable_packed = enable_packed;
+  mp->enable_event_idx = enable_event_idx;
+  mp->custom_dev_instance = ntohl (custom_dev_instance);
+  clib_memcpy (mp->sock_filename, file_name, vec_len (file_name));
+  vec_free (file_name);
+  if (custom_dev_instance != ~0)
+    mp->renumber = 1;
 
   S (mp);
   W (ret);
@@ -10004,10 +10197,9 @@ static void vl_api_sw_interface_vhost_user_details_t_handler
 						    (mp->features_last_32) <<
 						    32);
 
-  print (vam->ofp, "%-25s %3" PRIu32 " %6" PRIu32 " %8x %6d %7d %s",
-	 (char *) mp->interface_name,
-	 ntohl (mp->sw_if_index), ntohl (mp->virtio_net_hdr_sz),
-	 features, mp->is_server,
+  print (vam->ofp, "%-25s %3" PRIu32 " %6" PRIu32 " %16llx %6d %7d %s",
+	 (char *) mp->interface_name, ntohl (mp->sw_if_index),
+	 ntohl (mp->virtio_net_hdr_sz), features, mp->is_server,
 	 ntohl (mp->num_regions), (char *) mp->sock_filename);
   print (vam->ofp, "    Status: '%s'", strerror (ntohl (mp->sock_errno)));
 }
@@ -10060,8 +10252,8 @@ api_sw_interface_vhost_user_dump (vat_main_t * vam)
 	break;
     }
 
-  print (vam->ofp,
-	 "Interface name            idx hdr_sz features server regions filename");
+  print (vam->ofp, "Interface name            idx hdr_sz         features "
+		   "server regions filename");
 
   /* Get list of vhost-user interfaces */
   M (SW_INTERFACE_VHOST_USER_DUMP, mp);
@@ -10983,206 +11175,6 @@ api_ipsec_sad_entry_add_del (vat_main_t * vam)
   return ret;
 }
 
-static int
-api_ipsec_tunnel_if_add_del (vat_main_t * vam)
-{
-  unformat_input_t *i = vam->input;
-  vl_api_ipsec_tunnel_if_add_del_t *mp;
-  u32 local_spi = 0, remote_spi = 0;
-  u32 crypto_alg = 0, integ_alg = 0;
-  u8 *lck = NULL, *rck = NULL;
-  u8 *lik = NULL, *rik = NULL;
-  vl_api_address_t local_ip = { 0 };
-  vl_api_address_t remote_ip = { 0 };
-  f64 before = 0;
-  u8 is_add = 1;
-  u8 esn = 0;
-  u8 anti_replay = 0;
-  u8 renumber = 0;
-  u32 instance = ~0;
-  u32 count = 1, jj;
-  int ret = -1;
-
-  while (unformat_check_input (i) != UNFORMAT_END_OF_INPUT)
-    {
-      if (unformat (i, "del"))
-	is_add = 0;
-      else if (unformat (i, "esn"))
-	esn = 1;
-      else if (unformat (i, "anti-replay"))
-	anti_replay = 1;
-      else if (unformat (i, "count %d", &count))
-	;
-      else if (unformat (i, "local_spi %d", &local_spi))
-	;
-      else if (unformat (i, "remote_spi %d", &remote_spi))
-	;
-      else
-	if (unformat (i, "local_ip %U", unformat_vl_api_address, &local_ip))
-	;
-      else
-	if (unformat (i, "remote_ip %U", unformat_vl_api_address, &remote_ip))
-	;
-      else if (unformat (i, "local_crypto_key %U", unformat_hex_string, &lck))
-	;
-      else
-	if (unformat (i, "remote_crypto_key %U", unformat_hex_string, &rck))
-	;
-      else if (unformat (i, "local_integ_key %U", unformat_hex_string, &lik))
-	;
-      else if (unformat (i, "remote_integ_key %U", unformat_hex_string, &rik))
-	;
-      else
-	if (unformat
-	    (i, "crypto_alg %U", unformat_ipsec_api_crypto_alg, &crypto_alg))
-	{
-	  if (crypto_alg >= IPSEC_CRYPTO_N_ALG)
-	    {
-	      errmsg ("unsupported crypto-alg: '%U'\n",
-		      format_ipsec_crypto_alg, crypto_alg);
-	      return -99;
-	    }
-	}
-      else
-	if (unformat
-	    (i, "integ_alg %U", unformat_ipsec_api_integ_alg, &integ_alg))
-	{
-	  if (integ_alg >= IPSEC_INTEG_N_ALG)
-	    {
-	      errmsg ("unsupported integ-alg: '%U'\n",
-		      format_ipsec_integ_alg, integ_alg);
-	      return -99;
-	    }
-	}
-      else if (unformat (i, "instance %u", &instance))
-	renumber = 1;
-      else
-	{
-	  errmsg ("parse error '%U'\n", format_unformat_error, i);
-	  return -99;
-	}
-    }
-
-  if (count > 1)
-    {
-      /* Turn on async mode */
-      vam->async_mode = 1;
-      vam->async_errors = 0;
-      before = vat_time_now (vam);
-    }
-
-  for (jj = 0; jj < count; jj++)
-    {
-      M (IPSEC_TUNNEL_IF_ADD_DEL, mp);
-
-      mp->is_add = is_add;
-      mp->esn = esn;
-      mp->anti_replay = anti_replay;
-
-      if (jj > 0)
-	increment_address (&remote_ip);
-
-      clib_memcpy (&mp->local_ip, &local_ip, sizeof (local_ip));
-      clib_memcpy (&mp->remote_ip, &remote_ip, sizeof (remote_ip));
-
-      mp->local_spi = htonl (local_spi + jj);
-      mp->remote_spi = htonl (remote_spi + jj);
-      mp->crypto_alg = (u8) crypto_alg;
-
-      mp->local_crypto_key_len = 0;
-      if (lck)
-	{
-	  mp->local_crypto_key_len = vec_len (lck);
-	  if (mp->local_crypto_key_len > sizeof (mp->local_crypto_key))
-	    mp->local_crypto_key_len = sizeof (mp->local_crypto_key);
-	  clib_memcpy (mp->local_crypto_key, lck, mp->local_crypto_key_len);
-	}
-
-      mp->remote_crypto_key_len = 0;
-      if (rck)
-	{
-	  mp->remote_crypto_key_len = vec_len (rck);
-	  if (mp->remote_crypto_key_len > sizeof (mp->remote_crypto_key))
-	    mp->remote_crypto_key_len = sizeof (mp->remote_crypto_key);
-	  clib_memcpy (mp->remote_crypto_key, rck, mp->remote_crypto_key_len);
-	}
-
-      mp->integ_alg = (u8) integ_alg;
-
-      mp->local_integ_key_len = 0;
-      if (lik)
-	{
-	  mp->local_integ_key_len = vec_len (lik);
-	  if (mp->local_integ_key_len > sizeof (mp->local_integ_key))
-	    mp->local_integ_key_len = sizeof (mp->local_integ_key);
-	  clib_memcpy (mp->local_integ_key, lik, mp->local_integ_key_len);
-	}
-
-      mp->remote_integ_key_len = 0;
-      if (rik)
-	{
-	  mp->remote_integ_key_len = vec_len (rik);
-	  if (mp->remote_integ_key_len > sizeof (mp->remote_integ_key))
-	    mp->remote_integ_key_len = sizeof (mp->remote_integ_key);
-	  clib_memcpy (mp->remote_integ_key, rik, mp->remote_integ_key_len);
-	}
-
-      if (renumber)
-	{
-	  mp->renumber = renumber;
-	  mp->show_instance = ntohl (instance);
-	}
-      S (mp);
-    }
-
-  /* When testing multiple add/del ops, use a control-ping to sync */
-  if (count > 1)
-    {
-      vl_api_control_ping_t *mp_ping;
-      f64 after;
-      f64 timeout;
-
-      /* Shut off async mode */
-      vam->async_mode = 0;
-
-      MPING (CONTROL_PING, mp_ping);
-      S (mp_ping);
-
-      timeout = vat_time_now (vam) + 1.0;
-      while (vat_time_now (vam) < timeout)
-	if (vam->result_ready == 1)
-	  goto out;
-      vam->retval = -99;
-
-    out:
-      if (vam->retval == -99)
-	errmsg ("timeout");
-
-      if (vam->async_errors > 0)
-	{
-	  errmsg ("%d asynchronous errors", vam->async_errors);
-	  vam->retval = -98;
-	}
-      vam->async_errors = 0;
-      after = vat_time_now (vam);
-
-      /* slim chance, but we might have eaten SIGTERM on the first iteration */
-      if (jj > 0)
-	count = jj;
-
-      print (vam->ofp, "%d tunnels in %.6f secs, %.2f tunnels/sec",
-	     count, after - before, count / (after - before));
-    }
-  else
-    {
-      /* Wait for a reply... */
-      W (ret);
-      return ret;
-    }
-
-  return ret;
-}
-
 static void
 vl_api_ipsec_sa_details_t_handler (vl_api_ipsec_sa_details_t * mp)
 {
@@ -11288,57 +11280,6 @@ api_ipsec_sa_dump (vat_main_t * vam)
   S (mp_ping);
 
   W (ret);
-  return ret;
-}
-
-static int
-api_ipsec_tunnel_if_set_sa (vat_main_t * vam)
-{
-  unformat_input_t *i = vam->input;
-  vl_api_ipsec_tunnel_if_set_sa_t *mp;
-  u32 sw_if_index = ~0;
-  u32 sa_id = ~0;
-  u8 is_outbound = (u8) ~ 0;
-  int ret;
-
-  while (unformat_check_input (i) != UNFORMAT_END_OF_INPUT)
-    {
-      if (unformat (i, "%U", api_unformat_sw_if_index, vam, &sw_if_index))
-	;
-      else if (unformat (i, "sa_id %d", &sa_id))
-	;
-      else if (unformat (i, "outbound"))
-	is_outbound = 1;
-      else if (unformat (i, "inbound"))
-	is_outbound = 0;
-      else
-	{
-	  clib_warning ("parse error '%U'", format_unformat_error, i);
-	  return -99;
-	}
-    }
-
-  if (sw_if_index == ~0)
-    {
-      errmsg ("interface must be specified");
-      return -99;
-    }
-
-  if (sa_id == ~0)
-    {
-      errmsg ("SA ID must be specified");
-      return -99;
-    }
-
-  M (IPSEC_TUNNEL_IF_SET_SA, mp);
-
-  mp->sw_if_index = htonl (sw_if_index);
-  mp->sa_id = htonl (sa_id);
-  mp->is_outbound = is_outbound;
-
-  S (mp);
-  W (ret);
-
   return ret;
 }
 
@@ -11640,14 +11581,14 @@ api_policer_add_del (vat_main_t * vam)
   u8 round_type = 0;
   u8 type = 0;
   u8 color_aware = 0;
-  sse2_qos_pol_action_params_st conform_action, exceed_action, violate_action;
+  qos_pol_action_params_st conform_action, exceed_action, violate_action;
   int ret;
 
-  conform_action.action_type = SSE2_QOS_ACTION_TRANSMIT;
+  conform_action.action_type = QOS_ACTION_TRANSMIT;
   conform_action.dscp = 0;
-  exceed_action.action_type = SSE2_QOS_ACTION_MARK_AND_TRANSMIT;
+  exceed_action.action_type = QOS_ACTION_MARK_AND_TRANSMIT;
   exceed_action.dscp = 0;
-  violate_action.action_type = SSE2_QOS_ACTION_DROP;
+  violate_action.action_type = QOS_ACTION_DROP;
   violate_action.dscp = 0;
 
   while (unformat_check_input (i) != UNFORMAT_END_OF_INPUT)
@@ -11711,11 +11652,14 @@ api_policer_add_del (vat_main_t * vam)
   mp->rate_type = rate_type;
   mp->round_type = round_type;
   mp->type = type;
-  mp->conform_action.type = conform_action.action_type;
+  mp->conform_action.type =
+    (vl_api_sse2_qos_action_type_t) conform_action.action_type;
   mp->conform_action.dscp = conform_action.dscp;
-  mp->exceed_action.type = exceed_action.action_type;
+  mp->exceed_action.type =
+    (vl_api_sse2_qos_action_type_t) exceed_action.action_type;
   mp->exceed_action.dscp = exceed_action.dscp;
-  mp->violate_action.type = violate_action.action_type;
+  mp->violate_action.type =
+    (vl_api_sse2_qos_action_type_t) violate_action.action_type;
   mp->violate_action.dscp = violate_action.dscp;
   mp->color_aware = color_aware;
 
@@ -15035,6 +14979,13 @@ _(create_vhost_user_if,                                                 \
 _(modify_vhost_user_if,                                                 \
         "<intfc> | sw_if_index <nn> socket <filename>\n"                \
         "[server] [renumber <dev_instance>] [gso] [packed]")            \
+_(create_vhost_user_if_v2,                                              \
+        "socket <filename> [server] [renumber <dev_instance>] "         \
+        "[disable_mrg_rxbuf] [disable_indirect_desc] [gso] "            \
+        "[mac <mac_address>] [packed] [event-idx]")                     \
+_(modify_vhost_user_if_v2,                                              \
+        "<intfc> | sw_if_index <nn> socket <filename>\n"                \
+        "[server] [renumber <dev_instance>] [gso] [packed] [event-idx]")\
 _(delete_vhost_user_if, "<intfc> | sw_if_index <nn>")                   \
 _(sw_interface_vhost_user_dump, "<intfc> | sw_if_index <nn>")           \
 _(show_version, "")                                                     \
@@ -15064,13 +15015,7 @@ _(ipsec_spd_entry_add_del, "spd_id <n> priority <n> action <action>\n"  \
   "  (inbound|outbound) [sa_id <n>] laddr_start <ip4|ip6>\n"            \
   "  laddr_stop <ip4|ip6> raddr_start <ip4|ip6> raddr_stop <ip4|ip6>\n" \
   "  [lport_start <n> lport_stop <n>] [rport_start <n> rport_stop <n>]" ) \
-_(ipsec_tunnel_if_add_del, "local_spi <n> remote_spi <n>\n"             \
-  "  crypto_alg <alg> local_crypto_key <hex> remote_crypto_key <hex>\n" \
-  "  integ_alg <alg> local_integ_key <hex> remote_integ_key <hex>\n"    \
-  "  local_ip <addr> remote_ip <addr> [esn] [anti_replay] [del]\n"      \
-  "  [instance <n>]")     \
 _(ipsec_sa_dump, "[sa_id <n>]")                                         \
-_(ipsec_tunnel_if_set_sa, "<intfc> sa_id <n> <inbound|outbound>\n")     \
 _(delete_loopback,"sw_if_index <nn>")                                   \
 _(bd_ip_mac_add_del, "bd_id <bridge-domain-id> <ip4/6-addr> <mac-addr> [del]") \
 _(bd_ip_mac_flush, "bd_id <bridge-domain-id>")                          \

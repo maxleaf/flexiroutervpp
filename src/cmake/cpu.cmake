@@ -80,6 +80,10 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64.*|x86_64.*|AMD64.*")
   if(compiler_flag_march_haswell)
     list(APPEND MARCH_VARIANTS "hsw\;-march=haswell -mtune=haswell")
   endif()
+  check_c_compiler_flag("-march=tremont" compiler_flag_march_tremont)
+  if(compiler_flag_march_tremont)
+    list(APPEND MARCH_VARIANTS "trm\;-march=tremont -mtune=tremont")
+  endif()
   if (GNU_ASSEMBLER_AVX512_BUG)
      message(WARNING "AVX-512 multiarch variant(s) disabled due to GNU Assembler bug")
   else()
@@ -121,14 +125,21 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64.*|AARCH64.*)")
   endif()
 endif()
 
-macro(vpp_library_set_multiarch_sources lib deps)
+macro(vpp_library_set_multiarch_sources lib)
+  cmake_parse_arguments(ARG
+    ""
+    ""
+    "SOURCES;DEPENDS"
+    ${ARGN}
+  )
+
   foreach(V ${MARCH_VARIANTS})
     list(GET V 0 VARIANT)
     list(GET V 1 VARIANT_FLAGS)
     set(l ${lib}_${VARIANT})
-    add_library(${l} OBJECT ${ARGN})
-    if("${deps}")
-      add_dependencies(${l} ${deps})
+    add_library(${l} OBJECT ${ARG_SOURCES})
+    if(ARG_DEPENDS)
+      add_dependencies(${l} ${ARG_DEPENDS})
     endif()
     set_target_properties(${l} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_options(${l} PUBLIC "-DCLIB_MARCH_VARIANT=${VARIANT}")

@@ -1417,9 +1417,10 @@ ip4_local_l4_csum_validate (vlib_main_t * vm, vlib_buffer_t * p,
     }
 }
 
-#define ip4_local_csum_is_offloaded(_b)					\
-    _b->flags & VNET_BUFFER_F_OFFLOAD_TCP_CKSUM				\
-	|| _b->flags & VNET_BUFFER_F_OFFLOAD_UDP_CKSUM
+#define ip4_local_csum_is_offloaded(_b)                                       \
+  ((_b->flags & VNET_BUFFER_F_OFFLOAD) &&                                     \
+   (vnet_buffer2 (_b)->oflags &                                               \
+    (VNET_BUFFER_OFFLOAD_F_TCP_CKSUM | VNET_BUFFER_OFFLOAD_F_UDP_CKSUM)))
 
 #define ip4_local_need_csum_check(is_tcp_udp, _b) 			\
     (is_tcp_udp && !(_b->flags & VNET_BUFFER_F_L4_CHECKSUM_COMPUTED 	\
@@ -2066,7 +2067,7 @@ ip4_ttl_and_checksum_check (vlib_buffer_t * b, ip4_header_t * ip, u16 * next,
 
   /* Verify checksum. */
   ASSERT (ip4_header_checksum_is_valid (ip) ||
-	  (b->flags & VNET_BUFFER_F_OFFLOAD_IP_CKSUM));
+	  (vnet_buffer2 (b)->oflags & VNET_BUFFER_OFFLOAD_F_IP_CKSUM));
 }
 
 
@@ -2771,24 +2772,6 @@ VLIB_CLI_COMMAND (lookup_test_command, static) =
 };
 /* *INDENT-ON* */
 
-#ifndef CLIB_MARCH_VARIANT
-int
-vnet_set_ip4_flow_hash (u32 table_id, u32 flow_hash_config)
-{
-  u32 fib_index;
-
-  fib_index = fib_table_find (FIB_PROTOCOL_IP4, table_id);
-
-  if (~0 == fib_index)
-    return VNET_API_ERROR_NO_SUCH_FIB;
-
-  fib_table_set_flow_hash_config (fib_index, FIB_PROTOCOL_IP4,
-				  flow_hash_config);
-
-  return 0;
-}
-#endif
-
 static clib_error_t *
 set_ip_flow_hash_command_fn (vlib_main_t * vm,
 			     unformat_input_t * input,
@@ -2803,8 +2786,12 @@ set_ip_flow_hash_command_fn (vlib_main_t * vm,
     {
       if (unformat (input, "table %d", &table_id))
 	matched = 1;
-#define _(a,v) \
-    else if (unformat (input, #a)) { flow_hash_config |= v; matched=1;}
+#define _(a, b, v)                                                            \
+  else if (unformat (input, #a))                                              \
+  {                                                                           \
+    flow_hash_config |= v;                                                    \
+    matched = 1;                                                              \
+  }
       foreach_flow_hash_bit
 #undef _
 	else
@@ -2815,7 +2802,7 @@ set_ip_flow_hash_command_fn (vlib_main_t * vm,
     return clib_error_return (0, "unknown input `%U'",
 			      format_unformat_error, input);
 
-  rv = vnet_set_ip4_flow_hash (table_id, flow_hash_config);
+  rv = ip_flow_hash_set (AF_IP4, table_id, flow_hash_config);
   switch (rv)
     {
     case 0:

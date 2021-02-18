@@ -15,15 +15,6 @@
  * limitations under the License.
  */
 
-/*
- *  Copyright (C) 2020 flexiWAN Ltd.
- *  Flexiwan addition (denoted by FLEXIWAN_FIX flag):
- *  1. Fix to vxlan_input: when we send STUN request from port 4789, we receive a reposnse on
- *     port 4789 which is registered to vxlan. However, this is not a tunneled packet, but a
- *     regular one. So we need to restore location in packet processing back to L3 header, and
- *     forward this reply to IPx_PUNT node so it can be processed as a regular packet.
- */
-
 #include <vlib/vlib.h>
 #include <vnet/vxlan/vxlan.h>
 #include <vnet/udp/udp_local.h>
@@ -77,12 +68,15 @@ vxlan4_find_tunnel (vxlan_main_t * vxm, last_tunnel_cache4 * cache,
   if (PREDICT_FALSE (vxlan0->flags != VXLAN_FLAGS_I))
     return decap_bad_flags;
 
-  /* Make sure VXLAN tunnel exist according to packet S/D IP, VRF, and VNI */
+  /* Make sure VXLAN tunnel exist according to packet S/D IP, UDP port, VRF,
+   * and VNI */
   u32 dst = ip4_0->dst_address.as_u32;
   u32 src = ip4_0->src_address.as_u32;
+  udp_header_t *udp = ip4_next_header (ip4_0);
   vxlan4_tunnel_key_t key4 = {
     .key[0] = ((u64) dst << 32) | src,
-    .key[1] = ((u64) fib_index << 32) | vxlan0->vni_reserved,
+    .key[1] = ((u64) udp->dst_port << 48) | ((u64) fib_index << 32) |
+	      vxlan0->vni_reserved,
   };
 
   if (PREDICT_TRUE
@@ -136,11 +130,14 @@ vxlan6_find_tunnel (vxlan_main_t * vxm, last_tunnel_cache6 * cache,
   if (PREDICT_FALSE (vxlan0->flags != VXLAN_FLAGS_I))
     return decap_bad_flags;
 
-  /* Make sure VXLAN tunnel exist according to packet SIP and VNI */
+  /* Make sure VXLAN tunnel exist according to packet SIP, UDP port, VRF, and
+   * VNI */
+  udp_header_t *udp = ip6_next_header (ip6_0);
   vxlan6_tunnel_key_t key6 = {
     .key[0] = ip6_0->src_address.as_u64[0],
     .key[1] = ip6_0->src_address.as_u64[1],
-    .key[2] = (((u64) fib_index) << 32) | vxlan0->vni_reserved,
+    .key[2] = ((u64) udp->dst_port << 48) | ((u64) fib_index << 32) |
+	      vxlan0->vni_reserved,
   };
 
   if (PREDICT_FALSE
@@ -286,18 +283,8 @@ vxlan_input (vlib_main_t * vm,
 	    }
 	  else
 	    {
-#ifdef FLEXIWAN_FIX
-          /* Stun reply fix, please refer to file header for description */
-          /* restore packet pointer */
-         u32 offset_back = sizeof(vxlan_header_t) + sizeof(udp_header_t);
-
-          offset_back += is_ip4 ? sizeof(ip4_header_t) : sizeof(ip6_header_t);
-          vlib_buffer_advance (b[0], -(word) offset_back);
-         next[0] = is_ip4 ? VXLAN_INPUT_NEXT_PUNT4 : VXLAN_INPUT_NEXT_PUNT6;
-#else
 	      b[0]->error = node->errors[di0.error];
 	      pkts_dropped++;
-#endif
 	    }
 
 	  if (di1.error == 0)
@@ -309,18 +296,8 @@ vxlan_input (vlib_main_t * vm,
 	    }
 	  else
 	    {
-#ifdef FLEXIWAN_FIX
-          /* Stun reply fix, please refer to file header for description */
-          /* restore packet pointer */
-          u32 offset_back = sizeof(vxlan_header_t) + sizeof(udp_header_t);
-
-          offset_back += is_ip4 ? sizeof(ip4_header_t) : sizeof(ip6_header_t);
-          vlib_buffer_advance (b[1], -(word) offset_back);
-          next[1] = is_ip4 ? VXLAN_INPUT_NEXT_PUNT4 : VXLAN_INPUT_NEXT_PUNT6;
-#else
 	      b[1]->error = node->errors[di1.error];
 	      pkts_dropped++;
-#endif
 	    }
 	}
 
@@ -388,18 +365,8 @@ vxlan_input (vlib_main_t * vm,
 	}
       else
 	{
-#ifdef FLEXIWAN_FIX
-        /* Stun reply fix, please refer to file header for description */
-        /* restore packet pointer */
-        u32 offset_back = sizeof(vxlan_header_t) + sizeof(udp_header_t);
-
-        offset_back += is_ip4 ? sizeof(ip4_header_t) : sizeof(ip6_header_t);
-        vlib_buffer_advance (b[0], -(word) offset_back);
-    	next[0] = is_ip4 ? VXLAN_INPUT_NEXT_PUNT4 : VXLAN_INPUT_NEXT_PUNT6;
-#else
 	  b[0]->error = node->errors[di0.error];
 	  pkts_dropped++;
-#endif
 	}
 
       if (PREDICT_FALSE (b[0]->flags & VLIB_BUFFER_IS_TRACED))
@@ -499,6 +466,9 @@ ip_vxlan_bypass_inline (vlib_main_t * vm,
 				   matching a local VTEP address */
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
 
+  last_tunnel_cache4 last4;
+  last_tunnel_cache6 last6;
+
 #ifdef CLIB_HAVE_VEC512
   vtep4_cache_t vtep4_u512;
   clib_memset (&vtep4_u512, 0, sizeof (vtep4_u512));
@@ -514,9 +484,15 @@ ip_vxlan_bypass_inline (vlib_main_t * vm,
     ip4_forward_next_trace (vm, node, frame, VLIB_TX);
 
   if (is_ip4)
-    vtep4_key_init (&last_vtep4);
+    {
+      vtep4_key_init (&last_vtep4);
+      clib_memset (&last4, 0xff, sizeof last4);
+    }
   else
-    vtep6_key_init (&last_vtep6);
+    {
+      vtep6_key_init (&last_vtep6);
+      clib_memset (&last6, 0xff, sizeof last6);
+    }
 
   while (n_left_from > 0)
     {
@@ -528,11 +504,13 @@ ip_vxlan_bypass_inline (vlib_main_t * vm,
 	  ip4_header_t *ip40, *ip41;
 	  ip6_header_t *ip60, *ip61;
 	  udp_header_t *udp0, *udp1;
+	  vxlan_header_t *vxlan0, *vxlan1;
 	  u32 bi0, ip_len0, udp_len0, flags0, next0;
 	  u32 bi1, ip_len1, udp_len1, flags1, next1;
 	  i32 len_diff0, len_diff1;
 	  u8 error0, good_udp0, proto0;
 	  u8 error1, good_udp1, proto1;
+	  u32 stats_if0 = ~0, stats_if1 = ~0;
 
 	  /* Prefetch next iteration. */
 	  {
@@ -590,8 +568,17 @@ ip_vxlan_bypass_inline (vlib_main_t * vm,
 	  else
 	    udp0 = ip6_next_header (ip60);
 
-	  if (udp0->dst_port != clib_host_to_net_u16 (UDP_DST_PORT_vxlan))
-	    goto exit0;		/* not VXLAN packet */
+	  u32 fi0 = vlib_buffer_get_ip_fib_index (b0, is_ip4);
+	  vxlan0 = vlib_buffer_get_current (b0) + sizeof (udp_header_t) +
+		   sizeof (ip4_header_t);
+
+	  vxlan_decap_info_t di0 =
+	    is_ip4 ?
+	      vxlan4_find_tunnel (vxm, &last4, fi0, ip40, vxlan0, &stats_if0) :
+	      vxlan6_find_tunnel (vxm, &last6, fi0, ip60, vxlan0, &stats_if0);
+
+	  if (PREDICT_FALSE (di0.sw_if_index == ~0))
+	    goto exit0; /* unknown interface */
 
 	  /* Validate DIP against VTEPs */
 	  if (is_ip4)
@@ -669,8 +656,17 @@ ip_vxlan_bypass_inline (vlib_main_t * vm,
 	  else
 	    udp1 = ip6_next_header (ip61);
 
-	  if (udp1->dst_port != clib_host_to_net_u16 (UDP_DST_PORT_vxlan))
-	    goto exit1;		/* not VXLAN packet */
+	  u32 fi1 = vlib_buffer_get_ip_fib_index (b1, is_ip4);
+	  vxlan1 = vlib_buffer_get_current (b1) + sizeof (udp_header_t) +
+		   sizeof (ip4_header_t);
+
+	  vxlan_decap_info_t di1 =
+	    is_ip4 ?
+	      vxlan4_find_tunnel (vxm, &last4, fi1, ip41, vxlan1, &stats_if1) :
+	      vxlan6_find_tunnel (vxm, &last6, fi1, ip61, vxlan1, &stats_if1);
+
+	  if (PREDICT_FALSE (di1.sw_if_index == ~0))
+	    goto exit1; /* unknown interface */
 
 	  /* Validate DIP against VTEPs */
 	  if (is_ip4)
@@ -750,9 +746,11 @@ ip_vxlan_bypass_inline (vlib_main_t * vm,
 	  ip4_header_t *ip40;
 	  ip6_header_t *ip60;
 	  udp_header_t *udp0;
+	  vxlan_header_t *vxlan0;
 	  u32 bi0, ip_len0, udp_len0, flags0, next0;
 	  i32 len_diff0;
 	  u8 error0, good_udp0, proto0;
+	  u32 stats_if0 = ~0;
 
 	  bi0 = to_next[0] = from[0];
 	  from += 1;
@@ -785,8 +783,17 @@ ip_vxlan_bypass_inline (vlib_main_t * vm,
 	  else
 	    udp0 = ip6_next_header (ip60);
 
-	  if (udp0->dst_port != clib_host_to_net_u16 (UDP_DST_PORT_vxlan))
-	    goto exit;		/* not VXLAN packet */
+	  u32 fi0 = vlib_buffer_get_ip_fib_index (b0, is_ip4);
+	  vxlan0 = vlib_buffer_get_current (b0) + sizeof (udp_header_t) +
+		   sizeof (ip4_header_t);
+
+	  vxlan_decap_info_t di0 =
+	    is_ip4 ?
+	      vxlan4_find_tunnel (vxm, &last4, fi0, ip40, vxlan0, &stats_if0) :
+	      vxlan6_find_tunnel (vxm, &last6, fi0, ip60, vxlan0, &stats_if0);
+
+	  if (PREDICT_FALSE (di0.sw_if_index == ~0))
+	    goto exit; /* unknown interface */
 
 	  /* Validate DIP against VTEPs */
 	  if (is_ip4)

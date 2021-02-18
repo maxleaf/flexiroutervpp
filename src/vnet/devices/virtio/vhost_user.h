@@ -22,7 +22,14 @@
 
 #define VHOST_MEMORY_MAX_NREGIONS       8
 #define VHOST_USER_MSG_HDR_SZ           12
-#define VHOST_VRING_MAX_N               16	//8TX + 8RX
+#define VHOST_VRING_INIT_MQ_PAIR_SZ     8	//8TX + 8RX
+
+/*
+ * qid is one byte in size in the spec. Please see VHOST_USER_SET_VRING_CALL,
+ * VHOST_USER_SET_VRING_KICK, and VHOST_USER_SET_VRING_ERR.
+ * The max number for q pair is naturally 128.
+ */
+#define VHOST_VRING_MAX_MQ_PAIR_SZ      128
 #define VHOST_VRING_IDX_RX(qid)         (2*qid)
 #define VHOST_VRING_IDX_TX(qid)         (2*qid + 1)
 
@@ -90,16 +97,28 @@ typedef enum
   (FEATURE_VIRTIO_NET_F_HOST_TSO_FEATURE_BITS |		 \
    FEATURE_VIRTIO_NET_F_GUEST_TSO_FEATURE_BITS)
 
+
+typedef struct
+{
+  char *sock_filename;
+  u64 feature_mask;
+  u32 custom_dev_instance;
+  u8 hwaddr[6];
+  u8 renumber;
+  u8 is_server;
+  u8 enable_gso;
+  u8 enable_packed;
+  u8 enable_event_idx;
+  u8 use_custom_mac;
+
+  /* return */
+  u32 sw_if_index;
+} vhost_user_create_if_args_t;
+
 int vhost_user_create_if (vnet_main_t * vnm, vlib_main_t * vm,
-			  const char *sock_filename, u8 is_server,
-			  u32 * sw_if_index, u64 feature_mask,
-			  u8 renumber, u32 custom_dev_instance, u8 * hwaddr,
-			  u8 enable_gso, u8 enable_packed);
+			  vhost_user_create_if_args_t * args);
 int vhost_user_modify_if (vnet_main_t * vnm, vlib_main_t * vm,
-			  const char *sock_filename, u8 is_server,
-			  u32 sw_if_index, u64 feature_mask,
-			  u8 renumber, u32 custom_dev_instance,
-			  u8 enable_gso, u8 enable_packed);
+			  vhost_user_create_if_args_t * args);
 int vhost_user_delete_if (vnet_main_t * vnm, vlib_main_t * vm,
 			  u32 sw_if_index);
 
@@ -187,6 +206,8 @@ typedef struct
   u8 started;
   u8 enabled;
   u8 log_used;
+  clib_spinlock_t vring_lock;
+
   //Put non-runtime in a different cache line
     CLIB_CACHE_LINE_ALIGN_MARK (cacheline1);
   int errfd;
@@ -207,6 +228,9 @@ typedef struct
 
   u16 used_wrap_counter;
   u16 avail_wrap_counter;
+  u16 last_kick;
+  u8 first_kick;
+  u32 queue_index;
 } vhost_user_vring_t;
 
 #define VHOST_USER_EVENT_START_TIMER 1
@@ -238,8 +262,15 @@ typedef struct
   u32 region_mmap_fd[VHOST_MEMORY_MAX_NREGIONS];
 
   //Virtual rings
-  vhost_user_vring_t vrings[VHOST_VRING_MAX_N];
-  volatile u32 *vring_locks[VHOST_VRING_MAX_N];
+  vhost_user_vring_t *vrings;
+
+  /*
+   * vrings is a dynamic array. It may have more elements than it is
+   * currently used. num_qid indicates the current total qid's in the
+   * vrings. For example, vec_len(vrings) = 64, num_qid = 60, so the
+   * current valid/used qid is (0, 59) in the vrings array.
+   */
+  u32 num_qid;
 
   int virtio_net_hdr_sz;
   int is_any_layout;
@@ -256,6 +287,7 @@ typedef struct
   /* Packed ring configured */
   u8 enable_packed;
 
+  u8 enable_event_idx;
 } vhost_user_intf_t;
 
 typedef struct

@@ -50,33 +50,38 @@
 
 #include <vlibapi/api_helper_macros.h>
 
-#define foreach_vpe_api_msg                                 \
-_(L2_XCONNECT_DUMP, l2_xconnect_dump)                       \
-_(L2_FIB_CLEAR_TABLE, l2_fib_clear_table)                   \
-_(L2_FIB_TABLE_DUMP, l2_fib_table_dump)                     \
-_(L2FIB_FLUSH_ALL, l2fib_flush_all)                         \
-_(L2FIB_FLUSH_INT, l2fib_flush_int)                         \
-_(L2FIB_FLUSH_BD, l2fib_flush_bd)                           \
-_(L2FIB_ADD_DEL, l2fib_add_del)                             \
-_(WANT_L2_MACS_EVENTS, want_l2_macs_events)		    \
-_(L2_FLAGS, l2_flags)                                       \
-_(SW_INTERFACE_SET_L2_XCONNECT, sw_interface_set_l2_xconnect)   \
-_(SW_INTERFACE_SET_L2_BRIDGE, sw_interface_set_l2_bridge)       \
-_(L2_PATCH_ADD_DEL, l2_patch_add_del)				\
-_(L2_INTERFACE_EFP_FILTER, l2_interface_efp_filter)             \
-_(BD_IP_MAC_ADD_DEL, bd_ip_mac_add_del)                         \
-_(BD_IP_MAC_FLUSH, bd_ip_mac_flush)                             \
-_(BD_IP_MAC_DUMP, bd_ip_mac_dump)				\
-_(BRIDGE_DOMAIN_ADD_DEL, bridge_domain_add_del)                 \
-_(BRIDGE_DOMAIN_DUMP, bridge_domain_dump)                       \
-_(BRIDGE_FLAGS, bridge_flags)                                   \
-_(L2_INTERFACE_VLAN_TAG_REWRITE, l2_interface_vlan_tag_rewrite) \
-_(L2_INTERFACE_PBB_TAG_REWRITE, l2_interface_pbb_tag_rewrite)   \
-_(BRIDGE_DOMAIN_SET_MAC_AGE, bridge_domain_set_mac_age)         \
-_(SW_INTERFACE_SET_VPATH, sw_interface_set_vpath)               \
-_(BVI_CREATE, bvi_create)                                       \
-_(BVI_DELETE, bvi_delete)                                       \
-_(WANT_L2_ARP_TERM_EVENTS, want_l2_arp_term_events)
+#define foreach_vpe_api_msg                                                   \
+  _ (L2_XCONNECT_DUMP, l2_xconnect_dump)                                      \
+  _ (L2_FIB_CLEAR_TABLE, l2_fib_clear_table)                                  \
+  _ (L2_FIB_TABLE_DUMP, l2_fib_table_dump)                                    \
+  _ (L2FIB_FLUSH_ALL, l2fib_flush_all)                                        \
+  _ (L2FIB_FLUSH_INT, l2fib_flush_int)                                        \
+  _ (L2FIB_FLUSH_BD, l2fib_flush_bd)                                          \
+  _ (L2FIB_ADD_DEL, l2fib_add_del)                                            \
+  _ (L2FIB_SET_SCAN_DELAY, l2fib_set_scan_delay)                              \
+  _ (WANT_L2_MACS_EVENTS, want_l2_macs_events)                                \
+  _ (WANT_L2_MACS_EVENTS2, want_l2_macs_events2)                              \
+  _ (L2_FLAGS, l2_flags)                                                      \
+  _ (SW_INTERFACE_SET_L2_XCONNECT, sw_interface_set_l2_xconnect)              \
+  _ (SW_INTERFACE_SET_L2_BRIDGE, sw_interface_set_l2_bridge)                  \
+  _ (L2_PATCH_ADD_DEL, l2_patch_add_del)                                      \
+  _ (L2_INTERFACE_EFP_FILTER, l2_interface_efp_filter)                        \
+  _ (BD_IP_MAC_ADD_DEL, bd_ip_mac_add_del)                                    \
+  _ (BD_IP_MAC_FLUSH, bd_ip_mac_flush)                                        \
+  _ (BD_IP_MAC_DUMP, bd_ip_mac_dump)                                          \
+  _ (BRIDGE_DOMAIN_ADD_DEL, bridge_domain_add_del)                            \
+  _ (BRIDGE_DOMAIN_DUMP, bridge_domain_dump)                                  \
+  _ (BRIDGE_FLAGS, bridge_flags)                                              \
+  _ (L2_INTERFACE_VLAN_TAG_REWRITE, l2_interface_vlan_tag_rewrite)            \
+  _ (L2_INTERFACE_PBB_TAG_REWRITE, l2_interface_pbb_tag_rewrite)              \
+  _ (BRIDGE_DOMAIN_SET_MAC_AGE, bridge_domain_set_mac_age)                    \
+  _ (SW_INTERFACE_SET_VPATH, sw_interface_set_vpath)                          \
+  _ (BVI_CREATE, bvi_create)                                                  \
+  _ (BVI_DELETE, bvi_delete)                                                  \
+  _ (WANT_L2_ARP_TERM_EVENTS, want_l2_arp_term_events)                        \
+  _ (BRIDGE_DOMAIN_SET_LEARN_LIMIT, bridge_domain_set_learn_limit)            \
+  _ (BRIDGE_DOMAIN_SET_DEFAULT_LEARN_LIMIT,                                   \
+     bridge_domain_set_default_learn_limit)
 
 static void
 send_l2_xconnect_details (vl_api_registration_t * reg, u32 context,
@@ -98,10 +103,8 @@ static void
 vl_api_l2_xconnect_dump_t_handler (vl_api_l2_xconnect_dump_t * mp)
 {
   vl_api_registration_t *reg;
-  vnet_main_t *vnm = vnet_get_main ();
-  vnet_interface_main_t *im = &vnm->interface_main;
   l2input_main_t *l2im = &l2input_main;
-  vnet_sw_interface_t *swif;
+  u32 sw_if_index;
   l2_input_config_t *config;
 
   reg = vl_api_client_index_to_registration (mp->client_index);
@@ -109,13 +112,13 @@ vl_api_l2_xconnect_dump_t_handler (vl_api_l2_xconnect_dump_t * mp)
     return;
 
   /* *INDENT-OFF* */
-  pool_foreach (swif, im->sw_interfaces)
-   {
-    config = vec_elt_at_index (l2im->configs, swif->sw_if_index);
-    if (l2_input_is_xconnect(config))
-      send_l2_xconnect_details (reg, mp->context, swif->sw_if_index,
-                                config->output_sw_if_index);
-  }
+  vec_foreach_index (sw_if_index, l2im->configs)
+    {
+      config = vec_elt_at_index (l2im->configs, sw_if_index);
+      if (l2_input_is_xconnect (config))
+	send_l2_xconnect_details (reg, mp->context, sw_if_index,
+				  config->output_sw_if_index);
+    }
   /* *INDENT-ON* */
 }
 
@@ -259,22 +262,18 @@ vl_api_l2fib_add_del_t_handler (vl_api_l2fib_add_del_t * mp)
 }
 
 static void
-vl_api_want_l2_macs_events_t_handler (vl_api_want_l2_macs_events_t * mp)
+vl_api_want_l2_macs_events2_t_handler (vl_api_want_l2_macs_events2_t *mp)
 {
   int rv = 0;
-  vl_api_want_l2_macs_events_reply_t *rmp;
+  vl_api_want_l2_macs_events2_reply_t *rmp;
   l2learn_main_t *lm = &l2learn_main;
   l2fib_main_t *fm = &l2fib_main;
   u32 pid = ntohl (mp->pid);
-  u32 learn_limit = ntohl (mp->learn_limit);
 
   if (mp->enable_disable)
     {
-      if (lm->client_pid == 0)
+      if ((lm->client_pid == 0) || (lm->client_pid == pid))
 	{
-	  lm->client_pid = pid;
-	  lm->client_index = mp->client_index;
-
 	  if (mp->max_macs_in_event)
 	    fm->max_macs_in_event = mp->max_macs_in_event * 10;
 	  else
@@ -283,23 +282,12 @@ vl_api_want_l2_macs_events_t_handler (vl_api_want_l2_macs_events_t * mp)
 	      goto exit;
 	    }
 
-	  if (mp->scan_delay)
-	    fm->event_scan_delay = (f64) (mp->scan_delay) * 10e-3;
-	  else
-	    {
-	      rv = VNET_API_ERROR_INVALID_VALUE;
-	      goto exit;
-	    }
+	  /* if scan_delay was not set before */
+	  if (fm->event_scan_delay == 0.0)
+	    fm->event_scan_delay = (f64) (10) * 10e-3;
 
-	  /* change learn limit and flush all learned MACs */
-	  if (learn_limit && (learn_limit < L2LEARN_DEFAULT_LIMIT))
-	    lm->global_learn_limit = learn_limit;
-	  else
-	    {
-	      rv = VNET_API_ERROR_INVALID_VALUE;
-	      goto exit;
-	    }
-
+	  lm->client_pid = pid;
+	  lm->client_index = mp->client_index;
 	  l2fib_flush_all_mac (vlib_get_main ());
 	}
       else if (lm->client_pid != pid)
@@ -312,7 +300,53 @@ vl_api_want_l2_macs_events_t_handler (vl_api_want_l2_macs_events_t * mp)
     {
       lm->client_pid = 0;
       lm->client_index = 0;
-      if (learn_limit && (learn_limit < L2LEARN_DEFAULT_LIMIT))
+    }
+
+exit:
+  REPLY_MACRO (VL_API_WANT_L2_MACS_EVENTS2_REPLY);
+}
+
+static void
+vl_api_want_l2_macs_events_t_handler (vl_api_want_l2_macs_events_t *mp)
+{
+  int rv = 0;
+  vl_api_want_l2_macs_events_reply_t *rmp;
+  l2learn_main_t *lm = &l2learn_main;
+  l2fib_main_t *fm = &l2fib_main;
+  u32 pid = ntohl (mp->pid);
+  u32 learn_limit = ntohl (mp->learn_limit);
+
+  if (mp->enable_disable)
+    {
+      if ((lm->client_pid == 0) || (lm->client_pid == pid))
+	{
+	  if ((mp->max_macs_in_event == 0) || (mp->scan_delay == 0) ||
+	      (learn_limit == 0) || (learn_limit > L2LEARN_DEFAULT_LIMIT))
+	    {
+	      rv = VNET_API_ERROR_INVALID_VALUE;
+	      goto exit;
+	    }
+	  lm->client_pid = pid;
+	  lm->client_index = mp->client_index;
+
+	  fm->max_macs_in_event = mp->max_macs_in_event * 10;
+	  fm->event_scan_delay = (f64) (mp->scan_delay) * 10e-3;
+
+	  /* change learn limit and flush all learned MACs */
+	  lm->global_learn_limit = learn_limit;
+	  l2fib_flush_all_mac (vlib_get_main ());
+	}
+      else if (lm->client_pid != pid)
+	{
+	  rv = VNET_API_ERROR_L2_MACS_EVENT_CLINET_PRESENT;
+	  goto exit;
+	}
+    }
+  else if (lm->client_pid)
+    {
+      lm->client_pid = 0;
+      lm->client_index = 0;
+      if (learn_limit && (learn_limit <= L2LEARN_DEFAULT_LIMIT))
 	lm->global_learn_limit = learn_limit;
       else
 	lm->global_learn_limit = L2LEARN_DEFAULT_LIMIT;
@@ -369,6 +403,29 @@ out:
 }
 
 static void
+vl_api_l2fib_set_scan_delay_t_handler (vl_api_l2fib_set_scan_delay_t *mp)
+{
+  int rv = 0;
+  l2fib_main_t *fm = &l2fib_main;
+  vl_api_l2fib_set_scan_delay_reply_t *rmp;
+  u16 scan_delay = ntohs (mp->scan_delay);
+
+  if (mp->scan_delay)
+    {
+      fm->event_scan_delay = (f64) (scan_delay) *10e-3;
+      l2fib_flush_all_mac (vlib_get_main ());
+    }
+  else
+    {
+      rv = VNET_API_ERROR_INVALID_VALUE;
+      goto exit;
+    }
+
+exit:
+  REPLY_MACRO (VL_API_L2FIB_SET_SCAN_DELAY_REPLY);
+}
+
+static void
 vl_api_l2_flags_t_handler (vl_api_l2_flags_t * mp)
 {
   vl_api_l2_flags_reply_t *rmp;
@@ -406,6 +463,45 @@ vl_api_l2_flags_t_handler (vl_api_l2_flags_t * mp)
     rmp->resulting_feature_bitmap = ntohl(rbm);
   }));
   /* *INDENT-ON* */
+}
+
+static void
+vl_api_bridge_domain_set_default_learn_limit_t_handler (
+  vl_api_bridge_domain_set_default_learn_limit_t *mp)
+{
+  vl_api_bridge_domain_set_default_learn_limit_reply_t *rmp;
+  int rv = 0;
+
+  l2learn_main.bd_default_learn_limit = ntohl (mp->learn_limit);
+  REPLY_MACRO (VL_API_BRIDGE_DOMAIN_SET_DEFAULT_LEARN_LIMIT_REPLY);
+}
+
+static void
+vl_api_bridge_domain_set_learn_limit_t_handler (
+  vl_api_bridge_domain_set_learn_limit_t *mp)
+{
+  vlib_main_t *vm = vlib_get_main ();
+  bd_main_t *bdm = &bd_main;
+  vl_api_bridge_domain_set_learn_limit_reply_t *rmp;
+  int rv = 0;
+  u32 bd_id = ntohl (mp->bd_id);
+  uword *p;
+
+  if (bd_id == 0)
+    {
+      rv = VNET_API_ERROR_BD_NOT_MODIFIABLE;
+      goto out;
+    }
+
+  p = hash_get (bdm->bd_index_by_bd_id, bd_id);
+  if (p == 0)
+    {
+      rv = VNET_API_ERROR_NO_SUCH_ENTRY;
+      goto out;
+    }
+  bd_set_learn_limit (vm, *p, ntohl (mp->learn_limit));
+out:
+  REPLY_MACRO (VL_API_BRIDGE_DOMAIN_SET_LEARN_LIMIT_REPLY);
 }
 
 static void

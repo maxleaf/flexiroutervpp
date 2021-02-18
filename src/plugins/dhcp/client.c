@@ -12,15 +12,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-/*
- *  Copyright (C) 2020 flexiWAN Ltd.
- *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
- *   - CLI command to enable DHCP detect feature in order to not drop
-*      DHCP packets. This is needed when Linux DHCP client is used and
-*      not DHCP client from VPP.
- */
-
 #include <vlib/vlib.h>
 #include <vlibmemory/api.h>
 #include <dhcp/client.h>
@@ -1240,48 +1231,6 @@ VLIB_CLI_COMMAND (dhcp_client_set_command, static) = {
   .function = dhcp_client_set_command_fn,
 };
 /* *INDENT-ON* */
-
-#ifdef FLEXIWAN_FEATURE
-static clib_error_t *
-dhcp_detect_set_command_fn (vlib_main_t * vm,
-			    unformat_input_t * input,
-			    vlib_cli_command_t * cmd)
-{
-
-  dhcp_client_main_t *dcm = &dhcp_client_main;
-  u32 sw_if_index;
-  u8 sw_if_index_set = 0;
-  int is_add = 1;
-
-  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
-    {
-      if (unformat (input, "intfc %U",
-                    unformat_vnet_sw_interface, dcm->vnet_main, &sw_if_index))
-        sw_if_index_set = 1;
-      else if (unformat (input, "del"))
-        is_add = 0;
-      else
-        break;
-    }
-
-  if (sw_if_index_set == 0)
-    return clib_error_return (0, "interface not specified");
-
-  vnet_feature_enable_disable ("ip4-unicast",
-                               "ip4-dhcp-client-detect",
-                               sw_if_index, is_add , 0, 0);
-
-  return 0;
-}
-
-/* *INDENT-OFF* */
-VLIB_CLI_COMMAND (dhcp_set_detect_command, static) = {
-  .path = "set dhcp detect",
-  .short_help = "set dhcp detect [del] intfc <interface>",
-  .function = dhcp_detect_set_command_fn,
-};
-/* *INDENT-ON* */
-#endif
 
 static clib_error_t *
 dhcp_client_init (vlib_main_t * vm)

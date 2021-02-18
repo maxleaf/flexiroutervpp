@@ -78,7 +78,7 @@ session_send_evt_to_thread (void *data, void *args, u32 thread_index,
 int
 session_send_io_evt_to_thread (svm_fifo_t * f, session_evt_type_t evt_type)
 {
-  return session_send_evt_to_thread (&f->master_session_index, 0,
+  return session_send_evt_to_thread (&f->shr->master_session_index, 0,
 				     f->master_thread_index, evt_type);
 }
 
@@ -227,9 +227,6 @@ session_is_valid (u32 si, u8 thread_index)
   transport_connection_t *tc;
 
   s = pool_elt_at_index (session_main.wrk[thread_index].sessions, si);
-
-  if (!s)
-    return 1;
 
   if (s->thread_index != thread_index || s->session_index != si)
     return 0;
@@ -436,8 +433,8 @@ session_fifo_tuning (session_t * s, svm_fifo_t * f,
 	{
 	  segment_manager_t *sm;
 	  sm = segment_manager_get (f->segment_manager);
-	  ASSERT (f->size >= 4096);
-	  ASSERT (f->size <= sm->max_fifo_size);
+	  ASSERT (f->shr->size >= 4096);
+	  ASSERT (f->shr->size <= sm->max_fifo_size);
 	}
     }
 }
@@ -611,9 +608,9 @@ session_notify_subscribers (u32 app_index, session_t * s,
   if (!app)
     return -1;
 
-  for (i = 0; i < f->n_subscribers; i++)
+  for (i = 0; i < f->shr->n_subscribers; i++)
     {
-      app_wrk = application_get_worker (app, f->subscribers[i]);
+      app_wrk = application_get_worker (app, f->shr->subscribers[i]);
       if (!app_wrk)
 	continue;
       if (app_worker_lock_and_send_event (app_wrk, s, evt_type))
@@ -723,7 +720,7 @@ session_dequeue_notify (session_t * s)
 						     SESSION_IO_EVT_TX)))
     return -1;
 
-  if (PREDICT_FALSE (s->tx_fifo->n_subscribers))
+  if (PREDICT_FALSE (s->tx_fifo->shr->n_subscribers))
     return session_notify_subscribers (app_wrk->app_index, s,
 				       s->tx_fifo, SESSION_IO_EVT_TX);
 
@@ -854,22 +851,11 @@ static void
 session_switch_pool_reply (void *arg)
 {
   u32 session_index = pointer_to_uword (arg);
-  segment_manager_t *sm;
-  app_worker_t *app_wrk;
   session_t *s;
 
   s = session_get_if_valid (session_index, vlib_get_thread_index ());
   if (!s)
     return;
-
-  app_wrk = app_worker_get_if_valid (s->app_wrk_index);
-  if (!app_wrk)
-    return;
-
-  /* Attach fifos to the right session and segment slice */
-  sm = app_worker_get_connect_segment_manager (app_wrk);
-  segment_manager_attach_fifo (sm, s->rx_fifo, s);
-  segment_manager_attach_fifo (sm, s->tx_fifo, s);
 
   /* Notify app that it has data on the new session */
   session_enqueue_notify (s);
@@ -910,8 +896,8 @@ session_switch_pool (void *cb_args)
     {
       /* Cleanup fifo segment slice state for fifos */
       sm = app_worker_get_connect_segment_manager (app_wrk);
-      segment_manager_detach_fifo (sm, s->rx_fifo);
-      segment_manager_detach_fifo (sm, s->tx_fifo);
+      segment_manager_detach_fifo (sm, &s->rx_fifo);
+      segment_manager_detach_fifo (sm, &s->tx_fifo);
 
       /* Notify app, using old session, about the migration event */
       app_worker_migrate_notify (app_wrk, s, new_sh);
@@ -935,6 +921,8 @@ session_dgram_connect_notify (transport_connection_t * tc,
 {
   session_t *new_s;
   session_switch_pool_args_t *rpc_args;
+  segment_manager_t *sm;
+  app_worker_t *app_wrk;
 
   /*
    * Clone half-open session to the right thread.
@@ -944,7 +932,17 @@ session_dgram_connect_notify (transport_connection_t * tc,
   new_s->session_state = SESSION_STATE_READY;
   new_s->flags |= SESSION_F_IS_MIGRATING;
 
-  session_lookup_add_connection (tc, session_handle (new_s));
+  if (!(tc->flags & TRANSPORT_CONNECTION_F_NO_LOOKUP))
+    session_lookup_add_connection (tc, session_handle (new_s));
+
+  app_wrk = app_worker_get_if_valid (new_s->app_wrk_index);
+  if (app_wrk)
+    {
+      /* New set of fifos attached to the same shared memory */
+      sm = app_worker_get_connect_segment_manager (app_wrk);
+      segment_manager_attach_fifo (sm, &new_s->rx_fifo, new_s);
+      segment_manager_attach_fifo (sm, &new_s->tx_fifo, new_s);
+    }
 
   /*
    * Ask thread owning the old session to clean it up and make us the tx
@@ -1505,10 +1503,9 @@ void
 session_vpp_event_queues_allocate (session_main_t * smm)
 {
   u32 evt_q_length = 2048, evt_size = sizeof (session_event_t);
-  ssvm_private_t *eqs = &smm->evt_qs_segment;
+  fifo_segment_t *eqs = &smm->evt_qs_segment;
   uword eqs_size = 64 << 20;
   pid_t vpp_pid = getpid ();
-  void *oldheap;
   int i;
 
   if (smm->configured_event_queue_length)
@@ -1517,19 +1514,22 @@ session_vpp_event_queues_allocate (session_main_t * smm)
   if (smm->evt_qs_segment_size)
     eqs_size = smm->evt_qs_segment_size;
 
-  eqs->ssvm_size = eqs_size;
-  eqs->my_pid = vpp_pid;
-  eqs->name = format (0, "%s%c", "session: evt-qs-segment", 0);
+  eqs->ssvm.ssvm_size = eqs_size;
+  eqs->ssvm.my_pid = vpp_pid;
+  eqs->ssvm.name = format (0, "%s%c", "session: evt-qs-segment", 0);
   /* clib_mem_vm_map_shared consumes first page before requested_va */
-  eqs->requested_va = smm->session_baseva + clib_mem_get_page_size ();
+  eqs->ssvm.requested_va = smm->session_baseva + clib_mem_get_page_size ();
 
-  if (ssvm_server_init (eqs, SSVM_SEGMENT_MEMFD))
+  if (ssvm_server_init (&eqs->ssvm, SSVM_SEGMENT_MEMFD))
     {
       clib_warning ("failed to initialize queue segment");
       return;
     }
 
-  oldheap = ssvm_push_heap (eqs->sh);
+  fifo_segment_init (eqs);
+
+  /* Special fifo segment that's filled only with mqs */
+  eqs->h->n_mqs = vec_len (smm->wrk);
 
   for (i = 0; i < vec_len (smm->wrk); i++)
     {
@@ -1543,15 +1543,12 @@ session_vpp_event_queues_allocate (session_main_t * smm)
       cfg->n_rings = 2;
       cfg->q_nitems = evt_q_length;
       cfg->ring_cfgs = rc;
-      smm->wrk[i].vpp_event_queue = svm_msg_q_alloc (cfg);
-      if (svm_msg_q_alloc_consumer_eventfd (smm->wrk[i].vpp_event_queue))
-	clib_warning ("eventfd returned");
-    }
 
-  ssvm_pop_heap (oldheap);
+      smm->wrk[i].vpp_event_queue = fifo_segment_msg_q_alloc (eqs, i, cfg);
+    }
 }
 
-ssvm_private_t *
+fifo_segment_t *
 session_main_get_evt_q_segment (void)
 {
   return &session_main.evt_qs_segment;
@@ -1668,11 +1665,9 @@ session_queue_run_on_main_thread (vlib_main_t * vm)
 static clib_error_t *
 session_manager_main_enable (vlib_main_t * vm)
 {
-  segment_manager_main_init_args_t _sm_args = { 0 }, *sm_args = &_sm_args;
   session_main_t *smm = &session_main;
   vlib_thread_main_t *vtm = vlib_get_thread_main ();
   u32 num_threads, preallocated_sessions_per_worker;
-  uword margin = 8 << 12;
   session_worker_t *wrk;
   int i;
 
@@ -1706,10 +1701,8 @@ session_manager_main_enable (vlib_main_t * vm)
   /* Allocate vpp event queues segment and queue */
   session_vpp_event_queues_allocate (smm);
 
-  /* Initialize fifo segment main baseva and timeout */
-  sm_args->baseva = smm->session_baseva + smm->evt_qs_segment_size + margin;
-  sm_args->size = smm->session_va_space_size;
-  segment_manager_main_init (sm_args);
+  /* Initialize segment manager properties */
+  segment_manager_main_init ();
 
   /* Preallocate sessions */
   if (smm->preallocated_sessions)
@@ -1829,7 +1822,7 @@ session_main_init (vlib_main_t * vm)
   smm->evt_qs_segment_size = 1 << 20;
 #endif
 
-  smm->last_transport_proto_type = TRANSPORT_PROTO_QUIC;
+  smm->last_transport_proto_type = TRANSPORT_PROTO_DTLS;
 
   return 0;
 }

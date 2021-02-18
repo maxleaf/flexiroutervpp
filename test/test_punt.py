@@ -26,12 +26,13 @@ from scapy.layers.ipsec import ESP
 import scapy.layers.inet6 as inet6
 from scapy.layers.inet6 import IPv6, ICMPv6DestUnreach
 from scapy.contrib.ospf import OSPF_Hdr, OSPFv3_Hello
+from framework import tag_fixme_vpp_workers
 from framework import VppTestCase, VppTestRunner
 
 from vpp_ip import DpoProto
 from vpp_ip_route import VppIpRoute, VppRoutePath
+from vpp_ipsec import VppIpsecSA, VppIpsecTunProtect, VppIpsecInterface
 from vpp_papi import VppEnum
-from vpp_ipsec_tun_interface import VppIpsecTunInterface
 
 NUM_PKTS = 67
 
@@ -857,25 +858,30 @@ class TestExceptionPuntSocket(TestPuntSocket):
         #
         # add some tunnels, make sure it still punts
         #
-        VppIpsecTunInterface(self, self.pg0, 1000, 1000,
-                             (VppEnum.vl_api_ipsec_crypto_alg_t.
-                              IPSEC_API_CRYPTO_ALG_AES_CBC_128),
-                             b"0123456701234567",
-                             b"0123456701234567",
-                             (VppEnum.vl_api_ipsec_integ_alg_t.
-                              IPSEC_API_INTEG_ALG_SHA1_96),
-                             b"0123456701234567",
-                             b"0123456701234567").add_vpp_config()
-        VppIpsecTunInterface(self, self.pg1, 1000, 1000,
-                             (VppEnum.vl_api_ipsec_crypto_alg_t.
-                              IPSEC_API_CRYPTO_ALG_AES_CBC_128),
-                             b"0123456701234567",
-                             b"0123456701234567",
-                             (VppEnum.vl_api_ipsec_integ_alg_t.
-                              IPSEC_API_INTEG_ALG_SHA1_96),
-                             b"0123456701234567",
-                             b"0123456701234567",
-                             udp_encap=True).add_vpp_config()
+        tun = VppIpsecInterface(self).add_vpp_config()
+        sa_in = VppIpsecSA(self, 11, 11,
+                           (VppEnum.vl_api_ipsec_integ_alg_t.
+                            IPSEC_API_INTEG_ALG_SHA1_96),
+                           b"0123456701234567",
+                           (VppEnum.vl_api_ipsec_crypto_alg_t.
+                            IPSEC_API_CRYPTO_ALG_AES_CBC_128),
+                           b"0123456701234567",
+                           50,
+                           self.pg0.local_ip4,
+                           self.pg0.remote_ip4).add_vpp_config()
+        sa_out = VppIpsecSA(self, 22, 22,
+                            (VppEnum.vl_api_ipsec_integ_alg_t.
+                             IPSEC_API_INTEG_ALG_SHA1_96),
+                            b"0123456701234567",
+                            (VppEnum.vl_api_ipsec_crypto_alg_t.
+                             IPSEC_API_CRYPTO_ALG_AES_CBC_128),
+                            b"0123456701234567",
+                            50,
+                            self.pg0.local_ip4,
+                            self.pg0.remote_ip4).add_vpp_config()
+        protect = VppIpsecTunProtect(self, tun,
+                                     sa_out,
+                                     [sa_in]).add_vpp_config()
 
         #
         # send packets for each SPI we expect to be punted
@@ -1041,6 +1047,7 @@ class TestIpProtoPuntSocket(TestPuntSocket):
         self.vapi.punt_socket_deregister(punt_ospf)
 
 
+@tag_fixme_vpp_workers
 class TestPunt(VppTestCase):
     """ Exception Punt Test Case """
 

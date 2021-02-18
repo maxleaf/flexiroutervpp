@@ -313,6 +313,7 @@ typedef struct
 #define IP6_PACKET_TC_MASK 0x0FF00000
 #define IP6_PACKET_DSCP_MASK 0x0FC00000
 #define IP6_PACKET_ECN_MASK 0x00300000
+#define IP6_PACKET_FL_MASK   0x000FFFFF
 
 always_inline ip_dscp_t
 ip6_traffic_class (const ip6_header_t * i)
@@ -368,8 +369,38 @@ ip6_set_ecn_network_order (ip6_header_t * ip6, ip_ecn_t ecn)
   u32 tmp =
     clib_net_to_host_u32 (ip6->ip_version_traffic_class_and_flow_label);
   tmp &= 0xffcfffff;
-  tmp |= (ecn << 20);
+  tmp |= ((0x3 & ecn) << 20);
   ip6->ip_version_traffic_class_and_flow_label = clib_host_to_net_u32 (tmp);
+}
+
+static_always_inline u32
+ip6_flow_label_network_order (const ip6_header_t *ip6)
+{
+  u32 tmp =
+    clib_net_to_host_u32 (ip6->ip_version_traffic_class_and_flow_label);
+  return (tmp & 0xfffff);
+}
+
+static_always_inline void
+ip6_set_flow_label_network_order (ip6_header_t *ip6, u32 flow_label)
+{
+  u32 tmp =
+    clib_net_to_host_u32 (ip6->ip_version_traffic_class_and_flow_label);
+  tmp &= 0xfff00000;
+  tmp |= flow_label & 0x000fffff;
+  ip6->ip_version_traffic_class_and_flow_label = clib_host_to_net_u32 (tmp);
+}
+
+static_always_inline u32
+ip6_hop_limit_network_order (const ip6_header_t *ip6)
+{
+  return (ip6->hop_limit);
+}
+
+static_always_inline void
+ip6_set_hop_limit_network_order (ip6_header_t *ip6, u8 hop_limit)
+{
+  ip6->hop_limit = hop_limit;
 }
 
 always_inline void *

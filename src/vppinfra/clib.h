@@ -35,22 +35,8 @@
   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-/*
- *  Copyright (C) 2020 flexiWAN Ltd.
- *  o Define preprocessor flags:
- *      - FLEXIWAN
- *      - FLEXIWAN_FEATURE
- *      - FLEXIWAN_FIX
- */
-
 #ifndef included_clib_h
 #define included_clib_h
-
-#ifndef FLEXIWAN
-#define FLEXIWAN
-#define FLEXIWAN_FEATURE
-#define FLEXIWAN_FIX
-#endif /*#ifndef FLEXIWAN*/
 
 #include <stddef.h>
 #include <vppinfra/config.h>

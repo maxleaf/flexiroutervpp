@@ -36,6 +36,8 @@ list(APPEND VNET_SOURCES
   interface_cli.c
   interface_format.c
   interface_output.c
+  interface/rx_queue.c
+  interface/runtime.c
   interface_stats.c
   misc.c
 )
@@ -55,6 +57,7 @@ list(APPEND VNET_HEADERS
   flow/flow.h
   global_funcs.h
   handoff.h
+  interface/rx_queue_funcs.h
   interface.h
   interface_funcs.h
   interface_output.h
@@ -412,6 +415,8 @@ list(APPEND VNET_SOURCES
   ip/ip_interface.c
   ip/ip_init.c
   ip/ip_in_out_acl.c
+  ip/ip_path_mtu.c
+  ip/ip_path_mtu_node.c
   ip/ip_punt_drop.c
   ip/ip_types.c
   ip/lookup.c
@@ -434,6 +439,7 @@ list(APPEND VNET_MULTIARCH_SOURCES
   ip/ip6_punt_drop.c
   ip/punt_node.c
   ip/ip_in_out_acl.c
+  ip/ip_path_mtu_node.c
 )
 
 list(APPEND VNET_HEADERS

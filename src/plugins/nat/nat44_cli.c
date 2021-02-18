@@ -24,7 +24,9 @@
 #include <nat/nat44/inlines.h>
 #include <nat/nat_affinity.h>
 #include <vnet/fib/fib_table.h>
-#include <nat/nat_ha.h>
+
+#include <nat/nat44-ei/nat44_ei_ha.h>
+#include <nat/nat44-ei/nat44_ei.h>
 
 #define UNSUPPORTED_IN_ED_MODE_STR \
   "This command is unsupported in endpoint dependent mode"
@@ -42,8 +44,6 @@ nat44_enable_command_fn (vlib_main_t * vm,
   nat44_config_t c = { 0 };
   u8 mode_set = 0;
 
-  // TODO: check this also inside the function so it can be
-  //       safely called from anyplace, also sanity checking required
   if (sm->enabled)
     return clib_error_return (0, "nat44 already enabled");
 
@@ -300,22 +300,20 @@ nat44_show_hash_command_fn (vlib_main_t * vm, unformat_input_t * input,
   vlib_cli_output (vm, "%U",
 		   format_bihash_8_8, &sm->static_mapping_by_external,
 		   verbose);
-  vlib_cli_output (vm, "%U", format_bihash_16_8, &sm->out2in_ed, verbose);
+  if (sm->endpoint_dependent)
+    {
+      vlib_cli_output (vm, "%U", format_bihash_16_8, &sm->flow_hash, verbose);
+    }
+  else
+    {
+      vlib_cli_output (vm, "%U", format_bihash_8_8, &sm->in2out, verbose);
+      vlib_cli_output (vm, "%U", format_bihash_8_8, &sm->out2in, verbose);
+    }
   vec_foreach_index (i, sm->per_thread_data)
   {
     tsm = vec_elt_at_index (sm->per_thread_data, i);
     vlib_cli_output (vm, "-------- thread %d %s --------\n",
 		     i, vlib_worker_threads[i].name);
-    if (sm->endpoint_dependent)
-      {
-	vlib_cli_output (vm, "%U", format_bihash_16_8, &tsm->in2out_ed,
-			 verbose);
-      }
-    else
-      {
-	vlib_cli_output (vm, "%U", format_bihash_8_8, &tsm->in2out, verbose);
-	vlib_cli_output (vm, "%U", format_bihash_8_8, &tsm->out2in, verbose);
-      }
     vlib_cli_output (vm, "%U", format_bihash_8_8, &tsm->user_hash, verbose);
   }
 
@@ -354,13 +352,13 @@ nat44_set_alloc_addr_and_port_alg_command_fn (vlib_main_t * vm,
   while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
     {
       if (unformat (line_input, "default"))
-	nat_set_alloc_addr_and_port_default ();
+	nat44_ei_set_alloc_default ();
       else
 	if (unformat
 	    (line_input, "map-e psid %d psid-offset %d psid-len %d", &psid,
 	     &psid_offset, &psid_length))
-	nat_set_alloc_addr_and_port_mape ((u16) psid, (u16) psid_offset,
-					  (u16) psid_length);
+	nat44_ei_set_alloc_mape ((u16) psid, (u16) psid_offset,
+				 (u16) psid_length);
       else
 	if (unformat
 	    (line_input, "port-range %d - %d", &port_start, &port_end))
@@ -372,8 +370,7 @@ nat44_set_alloc_addr_and_port_alg_command_fn (vlib_main_t * vm,
 				   "The end-port must be greater than start-port");
 	      goto done;
 	    }
-	  nat_set_alloc_addr_and_port_range ((u16) port_start,
-					     (u16) port_end);
+	  nat44_ei_set_alloc_range ((u16) port_start, (u16) port_end);
 	}
       else
 	{
@@ -1147,11 +1144,10 @@ add_static_mapping_command_fn (vlib_main_t * vm,
       goto done;
     }
 
-  rv = snat_add_static_mapping (l_addr, e_addr, clib_host_to_net_u16 (l_port),
-				clib_host_to_net_u16 (e_port),
-				vrf_id, addr_only, sw_if_index, proto, is_add,
-				twice_nat, out2in_only, 0, 0, exact_addr,
-				exact);
+  rv = snat_add_static_mapping (
+    l_addr, e_addr, clib_host_to_net_u16 (l_port),
+    clib_host_to_net_u16 (e_port), vrf_id, addr_only, sw_if_index, proto,
+    is_add, twice_nat, out2in_only, 0, 0, exact_addr, exact);
 
   switch (rv)
     {
@@ -1229,11 +1225,9 @@ add_identity_mapping_command_fn (vlib_main_t * vm,
 	}
     }
 
-  rv =
-    snat_add_static_mapping (addr, addr, clib_host_to_net_u16 (port),
-			     clib_host_to_net_u16 (port), vrf_id, addr_only,
-			     sw_if_index, proto, is_add, 0, 0, 0, 1,
-			     pool_addr, 0);
+  rv = snat_add_static_mapping (
+    addr, addr, clib_host_to_net_u16 (port), clib_host_to_net_u16 (port),
+    vrf_id, addr_only, sw_if_index, proto, is_add, 0, 0, 0, 1, pool_addr, 0);
 
   switch (rv)
     {
@@ -1778,9 +1772,8 @@ nat44_del_session_command_fn (vlib_main_t * vm,
 			    clib_host_to_net_u16 (eh_port),
 			    nat_proto_to_ip_proto (proto), vrf_id, is_in);
   else
-    rv =
-      nat44_del_session (sm, &addr, clib_host_to_net_u16 (port), proto,
-			 vrf_id, is_in);
+    rv = nat44_ei_del_session (sm, &addr, clib_host_to_net_u16 (port), proto,
+			       vrf_id, is_in);
 
   switch (rv)
     {
@@ -1896,6 +1889,42 @@ nat_show_timeouts_command_fn (vlib_main_t * vm,
   vlib_cli_output (vm, "icmp timeout: %dsec", sm->timeouts.icmp);
 
   return 0;
+}
+
+static clib_error_t *
+set_frame_queue_nelts_command_fn (vlib_main_t *vm, unformat_input_t *input,
+				  vlib_cli_command_t *cmd)
+{
+  unformat_input_t _line_input, *line_input = &_line_input;
+  clib_error_t *error = 0;
+  u32 frame_queue_nelts = 0;
+  /* Get a line of input. */
+  if (!unformat_user (input, unformat_line_input, line_input))
+    return 0;
+  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (line_input, "%u", &frame_queue_nelts))
+	;
+      else
+	{
+	  error = clib_error_return (0, "unknown input '%U'",
+				     format_unformat_error, line_input);
+	  goto done;
+	}
+    }
+  if (!frame_queue_nelts)
+    {
+      error = clib_error_return (0, "frame_queue_nelts cannot be zero");
+      goto done;
+    }
+  if (snat_set_frame_queue_nelts (frame_queue_nelts) != 0)
+    {
+      error = clib_error_return (0, "snat_set_frame_queue_nelts failed");
+      goto done;
+    }
+done:
+  unformat_free (line_input);
+  return error;
 }
 
 static clib_error_t *
@@ -2070,6 +2099,18 @@ VLIB_CLI_COMMAND (nat_show_timeouts_command, static) = {
   .path = "show nat timeouts",
   .short_help = "show nat timeouts",
   .function = nat_show_timeouts_command_fn,
+};
+
+/*?
+ * @cliexpar
+ * @cliexstart{set nat frame-queue-nelts}
+ * Set number of worker handoff frame queue elements.
+ * @cliexend
+?*/
+VLIB_CLI_COMMAND (set_frame_queue_nelts_command, static) = {
+  .path = "set nat frame-queue-nelts",
+  .function = set_frame_queue_nelts_command_fn,
+  .short_help = "set nat frame-queue-nelts <number>",
 };
 
 /*?

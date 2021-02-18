@@ -42,6 +42,7 @@
 #include <vnet/l2/l2_input.h>
 #include <vnet/l2/l2_output.h>
 #include <vnet/l2/l2_vtr.h>
+#include <vnet/interface/rx_queue_funcs.h>
 
 u8 *
 format_vtr (u8 * s, va_list * args)
@@ -191,6 +192,21 @@ format_vnet_hw_interface (u8 * s, va_list * args)
 
   s = format (s, "\n%ULink speed: %U", format_white_space, indent + 2,
 	      format_vnet_hw_interface_link_speed, hi->link_speed);
+
+  if (vec_len (hi->rx_queue_indices))
+    {
+      s = format (s, "\n%URX Queues:", format_white_space, indent + 2);
+      s = format (s, "\n%U%-6s%-15s%-10s", format_white_space, indent + 4,
+		  "queue", "thread", "mode");
+      for (int i = 0; i < vec_len (hi->rx_queue_indices); i++)
+	{
+	  vnet_hw_if_rx_queue_t *rxq;
+	  rxq = vnet_hw_if_get_rx_queue (vnm, hi->rx_queue_indices[i]);
+	  s = format (s, "\n%U%-6u%-15U%-10U", format_white_space, indent + 4,
+		      rxq->queue_id, format_vlib_thread_name_and_index,
+		      rxq->thread_index, format_vnet_hw_if_rx_mode, rxq->mode);
+	}
+    }
 
   if (hi->rss_queues)
     {
@@ -706,7 +722,7 @@ unformat_vnet_buffer_flags (unformat_input_t * input, va_list * args)
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
       /* Red herring, there is no such buffer flag */
-      if (unformat (input, "avail8"))
+      if (unformat (input, "avail10"))
 	return 0;
 #define _(bit,enum,str,verbose)                                 \
       else if (unformat (input, str))                           \
@@ -721,6 +737,32 @@ unformat_vnet_buffer_flags (unformat_input_t * input, va_list * args)
     }
   if (rv)
     *flagp = flags;
+  return rv;
+}
+
+uword
+unformat_vnet_buffer_offload_flags (unformat_input_t *input, va_list *args)
+{
+  u32 *flagp = va_arg (*args, u32 *);
+  int rv = 0;
+  u32 oflags = 0;
+
+  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (0)
+	;
+#define _(bit, enum, str, verbose)                                            \
+  else if (unformat (input, str))                                             \
+  {                                                                           \
+    oflags |= (1 << bit);                                                     \
+    rv = 1;                                                                   \
+  }
+      foreach_vnet_buffer_offload_flag
+#undef _
+	else break;
+    }
+  if (rv)
+    *flagp = oflags;
   return rv;
 }
 

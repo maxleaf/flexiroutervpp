@@ -120,22 +120,23 @@ session_debug_init (void)
 void
 dump_thread_0_event_queue (void)
 {
-  session_main_t *smm = vnet_get_session_main ();
   vlib_main_t *vm = &vlib_global_main;
   u32 my_thread_index = vm->thread_index;
   session_event_t _e, *e = &_e;
+  svm_msg_q_shared_queue_t *sq;
   svm_msg_q_ring_t *ring;
   session_t *s0;
   svm_msg_q_msg_t *msg;
   svm_msg_q_t *mq;
   int i, index;
 
-  mq = smm->wrk[my_thread_index].vpp_event_queue;
-  index = mq->q->head;
+  mq = session_main_get_vpp_event_queue (my_thread_index);
+  sq = mq->q.shr;
+  index = sq->head;
 
-  for (i = 0; i < mq->q->cursize; i++)
+  for (i = 0; i < sq->cursize; i++)
     {
-      msg = (svm_msg_q_msg_t *) (&mq->q->data[0] + mq->q->elsize * index);
+      msg = (svm_msg_q_msg_t *) (&sq->data[0] + sq->elsize * index);
       ring = svm_msg_q_ring (mq, msg->ring_index);
       clib_memcpy_fast (e, svm_msg_q_msg_data (mq, msg), ring->elsize);
 
@@ -171,7 +172,7 @@ dump_thread_0_event_queue (void)
 
       index++;
 
-      if (index == mq->q->maxsize)
+      if (index == sq->maxsize)
 	index = 0;
     }
 }
@@ -187,7 +188,7 @@ session_node_cmp_event (session_event_t * e, svm_fifo_t * f)
     case SESSION_IO_EVT_BUILTIN_RX:
     case SESSION_IO_EVT_BUILTIN_TX:
     case SESSION_IO_EVT_TX_FLUSH:
-      if (e->session_index == f->master_session_index)
+      if (e->session_index == f->shr->master_session_index)
 	return 1;
       break;
     case SESSION_CTRL_EVT_CLOSE:
@@ -211,6 +212,7 @@ session_node_cmp_event (session_event_t * e, svm_fifo_t * f)
 u8
 session_node_lookup_fifo_event (svm_fifo_t * f, session_event_t * e)
 {
+  svm_msg_q_shared_queue_t *sq;
   session_evt_elt_t *elt;
   session_worker_t *wrk;
   int i, index, found = 0;
@@ -227,16 +229,17 @@ session_node_lookup_fifo_event (svm_fifo_t * f, session_event_t * e)
    * Search evt queue
    */
   mq = wrk->vpp_event_queue;
-  index = mq->q->head;
-  for (i = 0; i < mq->q->cursize; i++)
+  sq = mq->q.shr;
+  index = sq->head;
+  for (i = 0; i < sq->cursize; i++)
     {
-      msg = (svm_msg_q_msg_t *) (&mq->q->data[0] + mq->q->elsize * index);
+      msg = (svm_msg_q_msg_t *) (&sq->data[0] + sq->elsize * index);
       ring = svm_msg_q_ring (mq, msg->ring_index);
       clib_memcpy_fast (e, svm_msg_q_msg_data (mq, msg), ring->elsize);
       found = session_node_cmp_event (e, f);
       if (found)
 	return 1;
-      index = (index + 1) % mq->q->maxsize;
+      index = (index + 1) % sq->maxsize;
     }
   /*
    * Search pending events vector

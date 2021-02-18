@@ -13,6 +13,9 @@
  * limitations under the License.
  */
 
+#ifndef SRC_PLUGINS_TLSOPENSSL_TLS_OPENSSL_H_
+#define SRC_PLUGINS_TLSOPENSSL_TLS_OPENSSL_H_
+
 #include <openssl/ssl.h>
 #include <openssl/conf.h>
 #include <openssl/err.h>
@@ -20,6 +23,11 @@
 #include <vnet/plugin/plugin.h>
 #include <vpp/app/version.h>
 #include <vnet/tls/tls.h>
+
+#define TLSO_CTRL_BYTES 1000
+#define TLSO_MIN_ENQ_SPACE (1 << 16)
+
+#define DTLSO_MAX_DGRAM 2000
 
 typedef struct tls_ctx_openssl_
 {
@@ -45,6 +53,9 @@ typedef struct openssl_main_
   openssl_ctx_t ***ctx_pool;
   openssl_listen_ctx_t *lctx_pool;
 
+  u8 **rx_bufs;
+  u8 **tx_bufs;
+
   /* API message ID base */
   u16 msg_id_base;
 
@@ -69,6 +80,8 @@ void openssl_async_node_enable_disable (u8 is_en);
 clib_error_t *tls_openssl_api_init (vlib_main_t * vm);
 int tls_openssl_set_ciphers (char *ciphers);
 int vpp_openssl_is_inflight (tls_ctx_t * ctx);
+
+#endif /* SRC_PLUGINS_TLSOPENSSL_TLS_OPENSSL_H_ */
 
 /*
  * fd.io coding-style-patch-verification: ON

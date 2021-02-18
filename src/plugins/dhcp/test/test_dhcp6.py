@@ -8,7 +8,9 @@ from scapy.layers.dhcp6 import DHCP6_Advertise, DHCP6OptClientId, \
 from scapy.layers.inet6 import IPv6, Ether, UDP
 from scapy.utils6 import in6_mactoifaceid
 
+from framework import tag_fixme_vpp_workers
 from framework import VppTestCase
+from framework import tag_run_solo
 from vpp_papi import VppEnum
 import util
 import os
@@ -220,12 +222,9 @@ class TestDHCPv6DataPlane(VppTestCase):
         self.vapi.dhcp6_clients_enable_disable(enable=0)
 
 
+@tag_run_solo
 class TestDHCPv6IANAControlPlane(VppTestCase):
     """ DHCPv6 IA NA Control Plane Test Case """
-
-    @classmethod
-    def force_solo(cls):
-        return True
 
     @classmethod
     def setUpClass(cls):
@@ -477,6 +476,7 @@ class TestDHCPv6IANAControlPlane(VppTestCase):
         self.assertEqual(len(new_addresses), 0)
 
 
+@tag_fixme_vpp_workers
 class TestDHCPv6PDControlPlane(VppTestCase):
     """ DHCPv6 PD Control Plane Test Case """
 

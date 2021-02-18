@@ -12,19 +12,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-/*
- *  Copyright (C) 2020 flexiWAN Ltd.
- *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
- *   - enable enforcement of interface, where VXLAN tunnel should send unicast
- *     packets from. This is need for the FlexiWAN Multi-link feature.
- *   - Add destination port for vxlan tunnel, if remote device is behind NAT. Port is
- *     provisioned by fleximanage when creating the tunnel.
- *
- *  List of fixes made for FlexiWAN (demoted by FLEXIWAN_FIX flag):
- *  - For none vxlan packet received on port 4789, add ipx_punt node to next_nodes.
- */
-
 #ifndef included_vnet_vxlan_h
 #define included_vnet_vxlan_h
 
@@ -45,9 +32,6 @@
 #include <vnet/udp/udp_packet.h>
 #include <vnet/dpo/dpo.h>
 #include <vnet/adj/adj_types.h>
-#ifdef FLEXIWAN_FEATURE
-#include <vnet/fib/fib_path_list.h>
-#endif
 
 /* *INDENT-OFF* */
 typedef CLIB_PACKED (struct {
@@ -109,6 +93,10 @@ typedef struct
   ip46_address_t src;
   ip46_address_t dst;
 
+  /* udp-ports */
+  u16 src_port;
+  u16 dst_port;
+
   /* mcast packet output intfc index (used only if dst is mcast) */
   u32 mcast_sw_if_index;
 
@@ -134,21 +122,6 @@ typedef struct
   fib_node_index_t fib_entry_index;
   adj_index_t mcast_adj_index;
 
-#ifdef FLEXIWAN_FEATURE
-  /*
-   * Enforce specific tx interface for tunnel packets, if next hop for tunnel
-   * was provided by user on tunnel creation. In this case no FIB LOOKUP is
-   * needed. Just use the path of attached-next-hop type to get the adjacency
-   * to be used for forwarding.
-   */
-  fib_node_index_t      fib_pl_index;
-  fib_path_list_flags_t pl_flags;
-  fib_route_path_t      rpath;
-#endif
-#ifdef FLEXIWAN_FEATURE
-  u16 dest_port;
-#endif
-
   /**
    * The tunnel is a child of the FIB entry for its destination. This is
    * so it receives updates when the forwarding information for that entry
@@ -164,17 +137,9 @@ typedef struct
     VNET_DECLARE_REWRITE;
 } vxlan_tunnel_t;
 
-#ifdef FLEXIWAN_FIX
-#define foreach_vxlan_input_next        \
-_(DROP, "error-drop")                   \
-_(L2_INPUT, "l2-input")                 \
-_(PUNT4, "ip4-punt")                    \
-_(PUNT6, "ip6-punt")
-#else
 #define foreach_vxlan_input_next        \
 _(DROP, "error-drop")                   \
 _(L2_INPUT, "l2-input")
-#endif
 
 typedef enum
 {
@@ -198,8 +163,10 @@ typedef struct
   vxlan_tunnel_t *tunnels;
 
   /* lookup tunnel by key */
-  clib_bihash_16_8_t vxlan4_tunnel_by_key;	/* keyed on ipv4.dst + fib + vni */
-  clib_bihash_24_8_t vxlan6_tunnel_by_key;	/* keyed on ipv6.dst + fib + vni */
+  clib_bihash_16_8_t
+    vxlan4_tunnel_by_key; /* keyed on ipv4.dst + src_port + fib + vni */
+  clib_bihash_24_8_t
+    vxlan6_tunnel_by_key; /* keyed on ipv6.dst + src_port + fib + vni */
 
   /* local VTEP IPs ref count used by vxlan-bypass node to check if
      received VXLAN packet DIP matches any local VTEP address */
@@ -247,13 +214,8 @@ typedef struct
   u32 encap_fib_index;
   u32 decap_next_index;
   u32 vni;
-#ifdef FLEXIWAN_FEATURE
-  fib_route_path_t next_hop;
-#endif
-#ifdef FLEXIWAN_FEATURE
-  /* adding dest port for vxlan tunnel in case destination behind NAT */
-  u16 dest_port;
-#endif
+  u16 src_port;
+  u16 dst_port;
 } vnet_vxlan_add_del_tunnel_args_t;
 
 int vnet_vxlan_add_del_tunnel

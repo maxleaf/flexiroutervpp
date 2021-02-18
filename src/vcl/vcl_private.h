@@ -154,12 +154,14 @@ typedef struct vcl_session_
   vcl_session_msg_t *accept_evts_fifo;
 
   u64 vpp_handle;
+  u64 parent_handle;
   u32 listener_index;		/**< index of parent listener (if any) */
   int n_accepted_sessions;	/**< sessions accepted by this listener */
-  u32 attributes;		/**< see @ref vppcom_session_attr_t */
-  u64 parent_handle;
-  int libc_epfd;
   vppcom_epoll_t vep;
+  u32 attributes;		/**< see @ref vppcom_session_attr_t */
+  int libc_epfd;
+  u32 ckpair_index;
+  u32 vrf;
 
   u32 sndbuf_size;		// VPP-TBD: Hack until support setsockopt(SO_SNDBUF)
   u32 rcvbuf_size;		// VPP-TBD: Hack until support setsockopt(SO_RCVBUF)
@@ -285,6 +287,10 @@ typedef struct vcl_worker_
   socket_client_main_t bapi_sock_ctx;
   api_main_t bapi_api_ctx;
 
+  /* State of the connection, shared between msg RX thread and main thread */
+  volatile vcl_bapi_app_state_t bapi_app_state;
+  volatile uword bapi_return;
+
   /** vcl needs next epoll_create to go to libc_epoll */
   u8 vcl_needs_real_epoll;
   volatile int rpc_done;
@@ -338,9 +344,6 @@ typedef struct vppcom_main_t_
   /*
    * Binary api context
    */
-
-  /* State of the connection, shared between msg RX thread and main thread */
-  volatile vcl_bapi_app_state_t bapi_app_state;
 
   /* VNET_API_ERROR_FOO -> "Foo" hash table */
   uword *error_string_by_error_number;
@@ -536,6 +539,14 @@ vcl_session_is_cl (vcl_session_t * s)
 }
 
 static inline u8
+vcl_session_has_crypto (vcl_session_t *s)
+{
+  return (s->session_type == VPPCOM_PROTO_TLS ||
+	  s->session_type == VPPCOM_PROTO_QUIC ||
+	  s->session_type == VPPCOM_PROTO_DTLS);
+}
+
+static inline u8
 vcl_session_is_ready (vcl_session_t * s)
 {
   return (s->session_state == VCL_STATE_READY
@@ -598,7 +609,7 @@ vcl_ip_copy_to_ep (ip46_address_t * ip, vppcom_endpt_t * ep, u8 is_ip4)
 static inline int
 vcl_proto_is_dgram (uint8_t proto)
 {
-  return proto == VPPCOM_PROTO_UDP;
+  return proto == VPPCOM_PROTO_UDP || proto == VPPCOM_PROTO_DTLS;
 }
 
 static inline u8
@@ -685,6 +696,13 @@ int vcl_segment_attach (u64 segment_handle, char *name,
 void vcl_segment_detach (u64 segment_handle);
 void vcl_send_session_unlisten (vcl_worker_t * wrk, vcl_session_t * s);
 
+int vcl_segment_attach_session (uword segment_handle, uword rxf_offset,
+				uword txf_offset, uword mq_offset, u8 is_ct,
+				vcl_session_t *s);
+int vcl_segment_attach_mq (uword segment_handle, uword mq_offset, u32 mq_index,
+			   svm_msg_q_t **mq);
+int vcl_segment_discover_mqs (uword segment_handle, int *fds, u32 n_fds);
+
 /*
  * VCL Binary API
  */
@@ -693,10 +711,8 @@ int vcl_bapi_app_worker_add (void);
 void vcl_bapi_app_worker_del (vcl_worker_t * wrk);
 void vcl_bapi_disconnect_from_vpp (void);
 int vcl_bapi_recv_fds (vcl_worker_t * wrk, int *fds, int n_fds);
-void vcl_bapi_send_application_tls_cert_add (vcl_session_t * session,
-					     char *cert, u32 cert_len);
-void vcl_bapi_send_application_tls_key_add (vcl_session_t * session,
-					    char *key, u32 key_len);
+int vcl_bapi_add_cert_key_pair (vppcom_cert_key_pair_t *ckpair);
+int vcl_bapi_del_cert_key_pair (u32 ckpair_index);
 u32 vcl_bapi_max_nsid_len (void);
 int vcl_bapi_worker_set (void);
 

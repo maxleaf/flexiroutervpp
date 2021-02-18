@@ -47,8 +47,8 @@ struct avf_ip4_psh
 
 struct avf_ip6_psh
 {
-  u32 src[4];
-  u32 dst[4];
+  ip6_address_t src;
+  ip6_address_t dst;
   u32 l4len;
   u32 proto;
 };
@@ -57,17 +57,17 @@ static_always_inline u64
 avf_tx_prepare_cksum (vlib_buffer_t * b, u8 is_tso)
 {
   u64 flags = 0;
-  if (!is_tso && !(b->flags & ((VNET_BUFFER_F_OFFLOAD_IP_CKSUM |
-				VNET_BUFFER_F_OFFLOAD_TCP_CKSUM |
-				VNET_BUFFER_F_OFFLOAD_UDP_CKSUM))))
+  if (!is_tso && !(b->flags & VNET_BUFFER_F_OFFLOAD))
     return 0;
-  u32 is_tcp = is_tso || b->flags & VNET_BUFFER_F_OFFLOAD_TCP_CKSUM;
-  u32 is_udp = !is_tso && b->flags & VNET_BUFFER_F_OFFLOAD_UDP_CKSUM;
+
+  u32 oflags = vnet_buffer2 (b)->oflags;
+  u32 is_tcp = is_tso || oflags & VNET_BUFFER_OFFLOAD_F_TCP_CKSUM;
+  u32 is_udp = !is_tso && oflags & VNET_BUFFER_OFFLOAD_F_UDP_CKSUM;
   u32 is_ip4 = b->flags & VNET_BUFFER_F_IS_IP4;
   u32 is_ip6 = b->flags & VNET_BUFFER_F_IS_IP6;
   ASSERT (!is_tcp || !is_udp);
   ASSERT (is_ip4 || is_ip6);
-  i16 l2_hdr_offset = vnet_buffer (b)->l2_hdr_offset;
+  i16 l2_hdr_offset = b->current_data;
   i16 l3_hdr_offset = vnet_buffer (b)->l3_hdr_offset;
   i16 l4_hdr_offset = vnet_buffer (b)->l4_hdr_offset;
   u16 l2_len = l3_hdr_offset - l2_hdr_offset;
@@ -113,8 +113,8 @@ avf_tx_prepare_cksum (vlib_buffer_t * b, u8 is_tso)
       else
 	{
 	  struct avf_ip6_psh psh = { 0 };
-	  clib_memcpy_fast (&psh.src, &ip6->src_address, 16);
-	  clib_memcpy_fast (&psh.dst, &ip6->dst_address, 16);
+	  psh.src = ip6->src_address;
+	  psh.dst = ip6->dst_address;
 	  psh.proto = clib_host_to_net_u32 ((u32) ip6->protocol);
 	  psh.l4len = is_tso ? 0 : ip6->payload_length;
 	  sum = ~ip_csum (&psh, sizeof (psh));
@@ -156,9 +156,8 @@ avf_tx_fill_ctx_desc (vlib_main_t * vm, avf_txq_t * txq, avf_tx_desc_t * d,
   /* Acquire a reference on the placeholder buffer */
   ctx_ph->ref_count++;
 
-  u16 l234hdr_sz =
-    vnet_buffer (b)->l4_hdr_offset -
-    vnet_buffer (b)->l2_hdr_offset + vnet_buffer2 (b)->gso_l4_hdr_sz;
+  u16 l234hdr_sz = vnet_buffer (b)->l4_hdr_offset - b->current_data +
+		   vnet_buffer2 (b)->gso_l4_hdr_sz;
   u16 tlen = vlib_buffer_length_in_chain (vm, b) - l234hdr_sz;
   d[0].qword[0] = 0;
   d[0].qword[1] = AVF_TXD_DTYP_CTX | AVF_TXD_CTX_CMD_TSO
@@ -174,9 +173,7 @@ avf_tx_enqueue (vlib_main_t * vm, vlib_node_runtime_t * node, avf_txq_t * txq,
 {
   u16 next = txq->next;
   u64 bits = AVF_TXD_CMD_EOP | AVF_TXD_CMD_RSV;
-  const u32 offload_mask = VNET_BUFFER_F_OFFLOAD_IP_CKSUM |
-    VNET_BUFFER_F_OFFLOAD_TCP_CKSUM | VNET_BUFFER_F_OFFLOAD_UDP_CKSUM |
-    VNET_BUFFER_F_GSO;
+  const u32 offload_mask = VNET_BUFFER_F_OFFLOAD | VNET_BUFFER_F_GSO;
   u64 one_by_one_offload_flags = 0;
   int is_tso;
   u16 n_desc = 0;
@@ -442,7 +439,7 @@ avf_tx_enqueue (vlib_main_t * vm, vlib_node_runtime_t * node, avf_txq_t * txq,
     }
 
   txq->next = next & mask;
-  clib_atomic_store_rel_n (txq->qtx_tail, txq->next);
+  avf_tail_write (txq->qtx_tail, txq->next);
   txq->n_enqueued += n_desc;
   return n_packets - n_packets_left;
 }

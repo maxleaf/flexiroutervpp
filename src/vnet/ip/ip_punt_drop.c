@@ -15,8 +15,6 @@
 
 #include <vnet/ip/ip.h>
 #include <vnet/ip/ip_punt_drop.h>
-#include <vnet/policer/policer.h>
-#include <vnet/policer/police_inlines.h>
 #include <vnet/fib/fib_path_list.h>
 
 ip_punt_redirect_cfg_t ip_punt_redirect_cfg;
@@ -236,6 +234,11 @@ ip_punt_drop_init (vlib_main_t * vm)
 {
   fib_node_register_type (FIB_NODE_TYPE_IP_PUNT_REDIRECT,
 			  &ip_punt_redirect_vft);
+
+  ip4_punt_policer_cfg.fq_index =
+    vlib_frame_queue_main_init (ip4_punt_policer_node.index, 0);
+  ip6_punt_policer_cfg.fq_index =
+    vlib_frame_queue_main_init (ip6_punt_policer_node.index, 0);
 
   return (NULL);
 }

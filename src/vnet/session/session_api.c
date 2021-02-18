@@ -49,8 +49,6 @@ _(SESSION_ENABLE_DISABLE, session_enable_disable)                   	\
 _(APP_NAMESPACE_ADD_DEL, app_namespace_add_del)				\
 _(SESSION_RULE_ADD_DEL, session_rule_add_del)				\
 _(SESSION_RULES_DUMP, session_rules_dump)				\
-_(APPLICATION_TLS_CERT_ADD, application_tls_cert_add)			\
-_(APPLICATION_TLS_KEY_ADD, application_tls_key_add)			\
 _(APP_ADD_CERT_KEY_PAIR, app_add_cert_key_pair)				\
 _(APP_DEL_CERT_KEY_PAIR, app_del_cert_key_pair)				\
 _(APP_WORKER_ADD_DEL, app_worker_add_del)				\
@@ -130,7 +128,8 @@ mq_send_session_accepted_cb (session_t * s)
 {
   app_worker_t *app_wrk = app_worker_get (s->app_wrk_index);
   svm_msg_q_msg_t _msg, *msg = &_msg;
-  svm_msg_q_t *vpp_queue, *app_mq;
+  svm_msg_q_t *app_mq;
+  fifo_segment_t *eq_seg;
   session_t *listener;
   session_accepted_msg_t *mp;
   session_event_t *evt;
@@ -147,10 +146,12 @@ mq_send_session_accepted_cb (session_t * s)
   mp = (session_accepted_msg_t *) evt->data;
   clib_memset (mp, 0, sizeof (*mp));
   mp->context = app->app_index;
-  mp->server_rx_fifo = pointer_to_uword (s->rx_fifo);
-  mp->server_tx_fifo = pointer_to_uword (s->tx_fifo);
+  mp->server_rx_fifo = fifo_segment_fifo_offset (s->rx_fifo);
+  mp->server_tx_fifo = fifo_segment_fifo_offset (s->tx_fifo);
   mp->segment_handle = session_segment_handle (s);
   mp->flags = s->flags;
+
+  eq_seg = session_main_get_evt_q_segment ();
 
   if (session_has_transport (s))
     {
@@ -164,8 +165,9 @@ mq_send_session_accepted_cb (session_t * s)
 	  if (listener)
 	    mp->listener_handle = listen_session_get_handle (listener);
 	}
-      vpp_queue = session_main_get_vpp_event_queue (s->thread_index);
-      mp->vpp_event_queue_address = pointer_to_uword (vpp_queue);
+      mp->vpp_event_queue_address =
+	fifo_segment_msg_q_offset (eq_seg, s->thread_index);
+      mp->mq_index = s->thread_index;
       mp->handle = session_handle (s);
 
       session_get_endpoint (s, &mp->rmt, 0 /* is_lcl */ );
@@ -180,8 +182,9 @@ mq_send_session_accepted_cb (session_t * s)
       mp->rmt.is_ip4 = session_type_is_ip4 (listener->session_type);
       mp->rmt.port = ct->c_rmt_port;
       mp->handle = session_handle (s);
-      vpp_queue = session_main_get_vpp_event_queue (s->thread_index);
-      mp->vpp_event_queue_address = pointer_to_uword (vpp_queue);
+      mp->vpp_event_queue_address =
+	fifo_segment_msg_q_offset (eq_seg, s->thread_index);
+      mp->mq_index = s->thread_index;
     }
   svm_msg_q_add_and_unlock (app_mq, msg);
 
@@ -221,9 +224,9 @@ mq_notify_close_subscribers (u32 app_index, session_handle_t sh,
   if (!app)
     return;
 
-  for (i = 0; i < f->n_subscribers; i++)
+  for (i = 0; i < f->shr->n_subscribers; i++)
     {
-      if (!(app_wrk = application_get_worker (app, f->subscribers[i])))
+      if (!(app_wrk = application_get_worker (app, f->shr->subscribers[i])))
 	continue;
       mq_send_session_close_evt (app_wrk, sh, SESSION_CTRL_EVT_DISCONNECTED);
     }
@@ -262,8 +265,9 @@ mq_send_session_connected_cb (u32 app_wrk_index, u32 api_context,
 {
   svm_msg_q_msg_t _msg, *msg = &_msg;
   session_connected_msg_t *mp;
-  svm_msg_q_t *vpp_mq, *app_mq;
+  svm_msg_q_t *app_mq;
   transport_connection_t *tc;
+  fifo_segment_t *eq_seg;
   app_worker_t *app_wrk;
   session_event_t *evt;
 
@@ -289,6 +293,8 @@ mq_send_session_connected_cb (u32 app_wrk_index, u32 api_context,
   if (err)
     goto done;
 
+  eq_seg = session_main_get_evt_q_segment ();
+
   if (session_has_transport (s))
     {
       tc = session_get_transport (s);
@@ -299,14 +305,14 @@ mq_send_session_connected_cb (u32 app_wrk_index, u32 api_context,
 	  goto done;
 	}
 
-      vpp_mq = session_main_get_vpp_event_queue (s->thread_index);
       mp->handle = session_handle (s);
-      mp->vpp_event_queue_address = pointer_to_uword (vpp_mq);
+      mp->vpp_event_queue_address =
+	fifo_segment_msg_q_offset (eq_seg, s->thread_index);
 
       session_get_endpoint (s, &mp->lcl, 1 /* is_lcl */ );
 
-      mp->server_rx_fifo = pointer_to_uword (s->rx_fifo);
-      mp->server_tx_fifo = pointer_to_uword (s->tx_fifo);
+      mp->server_rx_fifo = fifo_segment_fifo_offset (s->rx_fifo);
+      mp->server_tx_fifo = fifo_segment_fifo_offset (s->tx_fifo);
       mp->segment_handle = session_segment_handle (s);
     }
   else
@@ -318,14 +324,14 @@ mq_send_session_connected_cb (u32 app_wrk_index, u32 api_context,
       mp->handle = session_handle (s);
       mp->lcl.port = cct->c_lcl_port;
       mp->lcl.is_ip4 = cct->c_is_ip4;
-      vpp_mq = session_main_get_vpp_event_queue (s->thread_index);
-      mp->vpp_event_queue_address = pointer_to_uword (vpp_mq);
-      mp->server_rx_fifo = pointer_to_uword (s->rx_fifo);
-      mp->server_tx_fifo = pointer_to_uword (s->tx_fifo);
+      mp->vpp_event_queue_address =
+	fifo_segment_msg_q_offset (eq_seg, s->thread_index);
+      mp->server_rx_fifo = fifo_segment_fifo_offset (s->rx_fifo);
+      mp->server_tx_fifo = fifo_segment_fifo_offset (s->tx_fifo);
       mp->segment_handle = session_segment_handle (s);
       ss = ct_session_get_peer (s);
-      mp->ct_rx_fifo = pointer_to_uword (ss->tx_fifo);
-      mp->ct_tx_fifo = pointer_to_uword (ss->rx_fifo);
+      mp->ct_rx_fifo = fifo_segment_fifo_offset (ss->tx_fifo);
+      mp->ct_tx_fifo = fifo_segment_fifo_offset (ss->rx_fifo);
       mp->ct_segment_handle = session_segment_handle (ss);
     }
 
@@ -341,9 +347,10 @@ mq_send_session_bound_cb (u32 app_wrk_index, u32 api_context,
 			  session_handle_t handle, int rv)
 {
   svm_msg_q_msg_t _msg, *msg = &_msg;
-  svm_msg_q_t *app_mq, *vpp_evt_q;
+  svm_msg_q_t *app_mq;
   transport_endpoint_t tep;
   session_bound_msg_t *mp;
+  fifo_segment_t *eq_seg;
   app_worker_t *app_wrk;
   session_event_t *evt;
   app_listener_t *al;
@@ -381,13 +388,14 @@ mq_send_session_bound_cb (u32 app_wrk_index, u32 api_context,
   mp->lcl_is_ip4 = tep.is_ip4;
   clib_memcpy_fast (mp->lcl_ip, &tep.ip, sizeof (tep.ip));
 
-  vpp_evt_q = session_main_get_vpp_event_queue (0);
-  mp->vpp_evt_q = pointer_to_uword (vpp_evt_q);
+  eq_seg = session_main_get_evt_q_segment ();
+  mp->vpp_evt_q = fifo_segment_msg_q_offset (eq_seg, ls->thread_index);
 
   if (session_transport_service_type (ls) == TRANSPORT_SERVICE_CL)
     {
-      mp->rx_fifo = pointer_to_uword (ls->rx_fifo);
-      mp->tx_fifo = pointer_to_uword (ls->tx_fifo);
+      mp->rx_fifo = fifo_segment_fifo_offset (ls->rx_fifo);
+      mp->tx_fifo = fifo_segment_fifo_offset (ls->tx_fifo);
+      mp->segment_handle = session_segment_handle (ls);
     }
 
 done:
@@ -424,10 +432,14 @@ mq_send_session_migrate_cb (session_t * s, session_handle_t new_sh)
 {
   svm_msg_q_msg_t _msg, *msg = &_msg;
   session_migrated_msg_t *mp;
-  svm_msg_q_t *vpp_evt_q;
+  fifo_segment_t *eq_seg;
   app_worker_t *app_wrk;
   session_event_t *evt;
   svm_msg_q_t *app_mq;
+  u32 thread_index;
+
+  thread_index = session_thread_from_handle (new_sh);
+  eq_seg = session_main_get_evt_q_segment ();
 
   app_wrk = app_worker_get (s->app_wrk_index);
   app_mq = app_wrk->event_queue;
@@ -440,9 +452,9 @@ mq_send_session_migrate_cb (session_t * s, session_handle_t new_sh)
   mp = (session_migrated_msg_t *) evt->data;
   mp->handle = session_handle (s);
   mp->new_handle = new_sh;
-  mp->vpp_thread_index = session_thread_from_handle (new_sh);
-  vpp_evt_q = session_main_get_vpp_event_queue (mp->vpp_thread_index);
-  mp->vpp_evt_q = pointer_to_uword (vpp_evt_q);
+  mp->vpp_thread_index = thread_index;
+  mp->vpp_evt_q = fifo_segment_msg_q_offset (eq_seg, thread_index);
+  mp->segment_handle = SESSION_INVALID_HANDLE;
   svm_msg_q_add_and_unlock (app_mq, msg);
 }
 
@@ -599,11 +611,10 @@ vl_api_app_attach_t_handler (vl_api_app_attach_t * mp)
 {
   int rv = 0, fds[SESSION_N_FD_TYPE], n_fds = 0;
   vl_api_app_attach_reply_t *rmp;
-  ssvm_private_t *segp, *evt_q_segment;
+  fifo_segment_t *segp, *evt_q_segment = 0;
   vnet_app_attach_args_t _a, *a = &_a;
   u8 fd_flags = 0, ctrl_thread;
   vl_api_registration_t *reg;
-  svm_msg_q_t *ctrl_mq;
 
   reg = vl_api_client_index_to_registration (mp->client_index);
   if (!reg)
@@ -643,7 +654,7 @@ vl_api_app_attach_t_handler (vl_api_app_attach_t * mp)
   if ((evt_q_segment = session_main_get_evt_q_segment ()))
     {
       fd_flags |= SESSION_FD_F_VPP_MQ_SEGMENT;
-      fds[n_fds] = evt_q_segment->fd;
+      fds[n_fds] = evt_q_segment->ssvm.fd;
       n_fds += 1;
     }
   /* Send fifo segment fd if needed */
@@ -656,7 +667,7 @@ vl_api_app_attach_t_handler (vl_api_app_attach_t * mp)
   if (a->options[APP_OPTIONS_FLAGS] & APP_OPTIONS_FLAGS_EVT_MQ_USE_EVENTFD)
     {
       fd_flags |= SESSION_FD_F_MQ_EVENTFD;
-      fds[n_fds] = svm_msg_q_get_producer_eventfd (a->app_evt_q);
+      fds[n_fds] = svm_msg_q_get_eventfd (a->app_evt_q);
       n_fds += 1;
     }
 
@@ -666,19 +677,19 @@ done:
     if (!rv)
       {
 	ctrl_thread = vlib_num_workers () ? 1 : 0;
-	ctrl_mq = session_main_get_vpp_event_queue (ctrl_thread);
-	segp = a->segment;
+	segp = (fifo_segment_t *) a->segment;
 	rmp->app_index = clib_host_to_net_u32 (a->app_index);
-	rmp->app_mq = pointer_to_uword (a->app_evt_q);
-	rmp->vpp_ctrl_mq = pointer_to_uword (ctrl_mq);
+	rmp->app_mq = fifo_segment_msg_q_offset (segp, 0);
+	rmp->vpp_ctrl_mq =
+	  fifo_segment_msg_q_offset (evt_q_segment, ctrl_thread);
 	rmp->vpp_ctrl_mq_thread = ctrl_thread;
 	rmp->n_fds = n_fds;
 	rmp->fd_flags = fd_flags;
-	if (vec_len (segp->name))
+	if (vec_len (segp->ssvm.name))
 	  {
-	    vl_api_vec_to_api_string (segp->name, &rmp->segment_name);
+	    vl_api_vec_to_api_string (segp->ssvm.name, &rmp->segment_name);
 	  }
-	rmp->segment_size = segp->ssvm_size;
+	rmp->segment_size = segp->ssvm.ssvm_size;
 	rmp->segment_handle = clib_host_to_net_u64 (a->segment_handle);
       }
   }));
@@ -740,7 +751,7 @@ vl_api_app_worker_add_del_t_handler (vl_api_app_worker_add_del_t * mp)
   if (application_segment_manager_properties (app)->use_mq_eventfd)
     {
       fd_flags |= SESSION_FD_F_MQ_EVENTFD;
-      fds[n_fds] = svm_msg_q_get_producer_eventfd (args.evt_q);
+      fds[n_fds] = svm_msg_q_get_eventfd (args.evt_q);
       n_fds += 1;
     }
 
@@ -752,13 +763,14 @@ done:
     rmp->segment_handle = clib_host_to_net_u64 (args.segment_handle);
     if (!rv && mp->is_add)
       {
+	rmp->app_event_queue_address =
+	  fifo_segment_msg_q_offset ((fifo_segment_t *) args.segment, 0);
+	rmp->n_fds = n_fds;
+	rmp->fd_flags = fd_flags;
 	if (vec_len (args.segment->name))
 	  {
 	    vl_api_vec_to_api_string (args.segment->name, &rmp->segment_name);
 	  }
-	rmp->app_event_queue_address = pointer_to_uword (args.evt_q);
-	rmp->n_fds = n_fds;
-	rmp->fd_flags = fd_flags;
       }
   }));
   /* *INDENT-ON* */
@@ -1051,13 +1063,11 @@ vl_api_app_add_cert_key_pair_t_handler (vl_api_app_add_cert_key_pair_t * mp)
     }
 
   clib_memset (a, 0, sizeof (*a));
-  vec_validate (a->cert, cert_len);
-  vec_validate (a->key, key_len);
-  clib_memcpy_fast (a->cert, mp->certkey, cert_len);
-  clib_memcpy_fast (a->key, mp->certkey + cert_len, key_len);
+  a->cert = mp->certkey;
+  a->key = mp->certkey + cert_len;
+  a->cert_len = cert_len;
+  a->key_len = key_len;
   rv = vnet_app_add_cert_key_pair (a);
-  vec_free (a->cert);
-  vec_free (a->key);
 
 done:
   /* *INDENT-OFF* */
@@ -1084,73 +1094,6 @@ vl_api_app_del_cert_key_pair_t_handler (vl_api_app_del_cert_key_pair_t * mp)
 
 done:
   REPLY_MACRO (VL_API_APP_DEL_CERT_KEY_PAIR_REPLY);
-}
-
-/* ### WILL BE DEPRECATED POST 20.01 ### */
-static void
-vl_api_application_tls_cert_add_t_handler (vl_api_application_tls_cert_add_t *
-					   mp)
-{
-  vl_api_application_tls_cert_add_reply_t *rmp;
-  app_cert_key_pair_t *ckpair;
-  application_t *app;
-  u32 cert_len;
-  int rv = 0;
-  if (session_main_is_enabled () == 0)
-    {
-      rv = VNET_API_ERROR_FEATURE_DISABLED;
-      goto done;
-    }
-  if (!(app = application_lookup (mp->client_index)))
-    {
-      rv = VNET_API_ERROR_APPLICATION_NOT_ATTACHED;
-      goto done;
-    }
-  cert_len = clib_net_to_host_u16 (mp->cert_len);
-  if (cert_len > 10000)
-    {
-      rv = VNET_API_ERROR_INVALID_VALUE;
-      goto done;
-    }
-  ckpair = app_cert_key_pair_get_default ();
-  vec_validate (ckpair->cert, cert_len);
-  clib_memcpy_fast (ckpair->cert, mp->cert, cert_len);
-
-done:
-  REPLY_MACRO (VL_API_APPLICATION_TLS_CERT_ADD_REPLY);
-}
-
-/* ### WILL BE DEPRECATED POST 20.01 ### */
-static void
-vl_api_application_tls_key_add_t_handler (vl_api_application_tls_key_add_t *
-					  mp)
-{
-  vl_api_application_tls_key_add_reply_t *rmp;
-  app_cert_key_pair_t *ckpair;
-  application_t *app;
-  u32 key_len;
-  int rv = 0;
-  if (session_main_is_enabled () == 0)
-    {
-      rv = VNET_API_ERROR_FEATURE_DISABLED;
-      goto done;
-    }
-  if (!(app = application_lookup (mp->client_index)))
-    {
-      rv = VNET_API_ERROR_APPLICATION_NOT_ATTACHED;
-      goto done;
-    }
-  key_len = clib_net_to_host_u16 (mp->key_len);
-  if (key_len > 10000)
-    {
-      rv = VNET_API_ERROR_INVALID_VALUE;
-      goto done;
-    }
-  ckpair = app_cert_key_pair_get_default ();
-  vec_validate (ckpair->key, key_len);
-  clib_memcpy_fast (ckpair->key, mp->key, key_len);
-done:
-  REPLY_MACRO (VL_API_APPLICATION_TLS_KEY_ADD_REPLY);
 }
 
 static clib_error_t *
@@ -1333,12 +1276,11 @@ session_api_attach_handler (app_namespace_t * app_ns, clib_socket_t * cs,
   int rv = 0, fds[SESSION_N_FD_TYPE], n_fds = 0;
   vnet_app_attach_args_t _a, *a = &_a;
   app_sapi_attach_reply_msg_t *rmp;
-  ssvm_private_t *evt_q_segment;
+  fifo_segment_t *evt_q_segment;
   u8 fd_flags = 0, ctrl_thread;
   app_ns_api_handle_t *handle;
   app_sapi_msg_t msg = { 0 };
   app_worker_t *app_wrk;
-  svm_msg_q_t *ctrl_mq;
   application_t *app;
 
   /* Make sure name is null terminated */
@@ -1362,7 +1304,7 @@ session_api_attach_handler (app_namespace_t * app_ns, clib_socket_t * cs,
   if ((evt_q_segment = session_main_get_evt_q_segment ()))
     {
       fd_flags |= SESSION_FD_F_VPP_MQ_SEGMENT;
-      fds[n_fds] = evt_q_segment->fd;
+      fds[n_fds] = evt_q_segment->ssvm.fd;
       n_fds += 1;
     }
   /* Send fifo segment fd if needed */
@@ -1375,7 +1317,7 @@ session_api_attach_handler (app_namespace_t * app_ns, clib_socket_t * cs,
   if (a->options[APP_OPTIONS_FLAGS] & APP_OPTIONS_FLAGS_EVT_MQ_USE_EVENTFD)
     {
       fd_flags |= SESSION_FD_F_MQ_EVENTFD;
-      fds[n_fds] = svm_msg_q_get_producer_eventfd (a->app_evt_q);
+      fds[n_fds] = svm_msg_q_get_eventfd (a->app_evt_q);
       n_fds += 1;
     }
 
@@ -1387,10 +1329,11 @@ done:
   if (!rv)
     {
       ctrl_thread = vlib_num_workers ()? 1 : 0;
-      ctrl_mq = session_main_get_vpp_event_queue (ctrl_thread);
       rmp->app_index = a->app_index;
-      rmp->app_mq = pointer_to_uword (a->app_evt_q);
-      rmp->vpp_ctrl_mq = pointer_to_uword (ctrl_mq);
+      rmp->app_mq =
+	fifo_segment_msg_q_offset ((fifo_segment_t *) a->segment, 0);
+      rmp->vpp_ctrl_mq =
+	fifo_segment_msg_q_offset (evt_q_segment, ctrl_thread);
       rmp->vpp_ctrl_mq_thread = ctrl_thread;
       rmp->n_fds = n_fds;
       rmp->fd_flags = fd_flags;
@@ -1483,7 +1426,7 @@ sapi_add_del_worker_handler (app_namespace_t * app_ns,
   if (application_segment_manager_properties (app)->use_mq_eventfd)
     {
       fd_flags |= SESSION_FD_F_MQ_EVENTFD;
-      fds[n_fds] = svm_msg_q_get_producer_eventfd (args.evt_q);
+      fds[n_fds] = svm_msg_q_get_eventfd (args.evt_q);
       n_fds += 1;
     }
 
@@ -1499,7 +1442,8 @@ done:
   if (!rv && mp->is_add)
     {
       /* No segment name and size. This supports only memfds */
-      rmp->app_event_queue_address = pointer_to_uword (args.evt_q);
+      rmp->app_event_queue_address =
+	fifo_segment_msg_q_offset ((fifo_segment_t *) args.segment, 0);
       rmp->n_fds = n_fds;
       rmp->fd_flags = fd_flags;
 

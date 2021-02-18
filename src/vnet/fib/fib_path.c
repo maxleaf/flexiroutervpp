@@ -13,12 +13,6 @@
  * limitations under the License.
  */
 
-/*
- *  Copyright (C) 2020 flexiWAN Ltd.
- *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
- *   - Use route preference size the same as Linux metric, i.e. u32
- */
-
 #include <vlib/vlib.h>
 #include <vnet/vnet.h>
 #include <vnet/ip/format.h>
@@ -229,11 +223,7 @@ typedef struct fib_path_t_ {
      * Only paths of the best preference, that are 'up', are considered
      * for forwarding.
      */
-#ifdef FLEXIWAN_FEATURE
-    u32 fp_preference;
-#else
     u8 fp_preference;
-#endif
 
     /**
      * per-type union of the data required to resolve the path
@@ -1009,6 +999,7 @@ fib_path_back_walk_notify (fib_node_t *node,
 		&path->fp_dpo);
 	}
 	if ((FIB_NODE_BW_REASON_FLAG_ADJ_UPDATE & ctx->fnbw_reason) ||
+            (FIB_NODE_BW_REASON_FLAG_ADJ_MTU    & ctx->fnbw_reason) ||
             (FIB_NODE_BW_REASON_FLAG_ADJ_DOWN   & ctx->fnbw_reason))
 	{
 	    /*
@@ -2249,13 +2240,8 @@ fib_path_get_weight (fib_node_index_t path_index)
     return (path->fp_weight);
 }
 
-#ifdef FLEXIWAN_FEATURE
-u32
-fib_path_get_preference (fib_node_index_t path_index)
-#else
 u16
 fib_path_get_preference (fib_node_index_t path_index)
-#endif
 {
     fib_path_t *path;
 

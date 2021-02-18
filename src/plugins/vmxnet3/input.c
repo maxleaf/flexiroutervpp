@@ -23,7 +23,7 @@
 #include <vnet/ip/ip6_packet.h>
 #include <vnet/ip/ip4_packet.h>
 #include <vnet/udp/udp_packet.h>
-
+#include <vnet/interface/rx_queue_funcs.h>
 #include <vmxnet3/vmxnet3.h>
 
 #define foreach_vmxnet3_input_error \
@@ -79,6 +79,7 @@ vmxnet3_handle_offload (vmxnet3_rx_comp * rx_comp, vlib_buffer_t * hb,
 			u16 gso_size)
 {
   u8 l4_hdr_sz = 0;
+  u32 oflags = 0;
 
   if (rx_comp->flags & VMXNET3_RXCF_IP4)
     {
@@ -90,15 +91,15 @@ vmxnet3_handle_offload (vmxnet3_rx_comp * rx_comp, vlib_buffer_t * hb,
       vnet_buffer (hb)->l4_hdr_offset = sizeof (ethernet_header_t) +
 	ip4_header_bytes (ip4);
       hb->flags |= VNET_BUFFER_F_L2_HDR_OFFSET_VALID |
-	VNET_BUFFER_F_L3_HDR_OFFSET_VALID |
-	VNET_BUFFER_F_L4_HDR_OFFSET_VALID | VNET_BUFFER_F_IS_IP4;
+		   VNET_BUFFER_F_L3_HDR_OFFSET_VALID |
+		   VNET_BUFFER_F_L4_HDR_OFFSET_VALID | VNET_BUFFER_F_IS_IP4;
 
       /* checksum offload */
       if (!(rx_comp->index & VMXNET3_RXCI_CNC))
 	{
 	  if (!(rx_comp->flags & VMXNET3_RXCF_IPC))
 	    {
-	      hb->flags |= VNET_BUFFER_F_OFFLOAD_IP_CKSUM;
+	      oflags |= VNET_BUFFER_OFFLOAD_F_IP_CKSUM;
 	      ip4->checksum = 0;
 	    }
 	  if (!(rx_comp->flags & VMXNET3_RXCF_TUC))
@@ -108,7 +109,7 @@ vmxnet3_handle_offload (vmxnet3_rx_comp * rx_comp, vlib_buffer_t * hb,
 		  tcp_header_t *tcp =
 		    (tcp_header_t *) (hb->data +
 				      vnet_buffer (hb)->l4_hdr_offset);
-		  hb->flags |= VNET_BUFFER_F_OFFLOAD_TCP_CKSUM;
+		  oflags |= VNET_BUFFER_OFFLOAD_F_TCP_CKSUM;
 		  tcp->checksum = 0;
 		}
 	      else if (rx_comp->flags & VMXNET3_RXCF_UDP)
@@ -116,7 +117,7 @@ vmxnet3_handle_offload (vmxnet3_rx_comp * rx_comp, vlib_buffer_t * hb,
 		  udp_header_t *udp =
 		    (udp_header_t *) (hb->data +
 				      vnet_buffer (hb)->l4_hdr_offset);
-		  hb->flags |= VNET_BUFFER_F_OFFLOAD_UDP_CKSUM;
+		  oflags |= VNET_BUFFER_OFFLOAD_F_UDP_CKSUM;
 		  udp->checksum = 0;
 		}
 	    }
@@ -148,8 +149,8 @@ vmxnet3_handle_offload (vmxnet3_rx_comp * rx_comp, vlib_buffer_t * hb,
       vnet_buffer (hb)->l4_hdr_offset = sizeof (ethernet_header_t) +
 	sizeof (ip6_header_t);
       hb->flags |= VNET_BUFFER_F_L2_HDR_OFFSET_VALID |
-	VNET_BUFFER_F_L3_HDR_OFFSET_VALID |
-	VNET_BUFFER_F_L4_HDR_OFFSET_VALID | VNET_BUFFER_F_IS_IP6;
+		   VNET_BUFFER_F_L3_HDR_OFFSET_VALID |
+		   VNET_BUFFER_F_L4_HDR_OFFSET_VALID | VNET_BUFFER_F_IS_IP6;
 
       /* checksum offload */
       if (!(rx_comp->index & VMXNET3_RXCI_CNC))
@@ -161,7 +162,7 @@ vmxnet3_handle_offload (vmxnet3_rx_comp * rx_comp, vlib_buffer_t * hb,
 		  tcp_header_t *tcp =
 		    (tcp_header_t *) (hb->data +
 				      vnet_buffer (hb)->l4_hdr_offset);
-		  hb->flags |= VNET_BUFFER_F_OFFLOAD_TCP_CKSUM;
+		  oflags |= VNET_BUFFER_OFFLOAD_F_TCP_CKSUM;
 		  tcp->checksum = 0;
 		}
 	      else if (rx_comp->flags & VMXNET3_RXCF_UDP)
@@ -169,7 +170,7 @@ vmxnet3_handle_offload (vmxnet3_rx_comp * rx_comp, vlib_buffer_t * hb,
 		  udp_header_t *udp =
 		    (udp_header_t *) (hb->data +
 				      vnet_buffer (hb)->l4_hdr_offset);
-		  hb->flags |= VNET_BUFFER_F_OFFLOAD_UDP_CKSUM;
+		  oflags |= VNET_BUFFER_OFFLOAD_F_UDP_CKSUM;
 		  udp->checksum = 0;
 		}
 	    }
@@ -194,6 +195,8 @@ vmxnet3_handle_offload (vmxnet3_rx_comp * rx_comp, vlib_buffer_t * hb,
 	  hb->flags |= VNET_BUFFER_F_GSO;
 	}
     }
+  if (oflags)
+    vnet_buffer_offload_flags_set (hb, oflags);
 }
 
 static_always_inline uword
@@ -469,17 +472,17 @@ VLIB_NODE_FN (vmxnet3_input_node) (vlib_main_t * vm,
 {
   u32 n_rx = 0;
   vmxnet3_main_t *vmxm = &vmxnet3_main;
-  vnet_device_input_runtime_t *rt = (void *) node->runtime_data;
-  vnet_device_and_queue_t *dq;
+  vnet_hw_if_rxq_poll_vector_t *pv = vnet_hw_if_get_rxq_poll_vector (vm, node);
+  vnet_hw_if_rxq_poll_vector_t *pve;
 
-  foreach_device_and_queue (dq, rt->devices_and_queues)
-  {
-    vmxnet3_device_t *vd;
-    vd = vec_elt_at_index (vmxm->devices, dq->dev_instance);
-    if ((vd->flags & VMXNET3_DEVICE_F_ADMIN_UP) == 0)
-      continue;
-    n_rx += vmxnet3_device_input_inline (vm, node, frame, vd, dq->queue_id);
-  }
+  vec_foreach (pve, pv)
+    {
+      vmxnet3_device_t *vd;
+      vd = vec_elt_at_index (vmxm->devices, pve->dev_instance);
+      if ((vd->flags & VMXNET3_DEVICE_F_ADMIN_UP) == 0)
+	continue;
+      n_rx += vmxnet3_device_input_inline (vm, node, frame, vd, pve->queue_id);
+    }
   return n_rx;
 }
 

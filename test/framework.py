@@ -21,6 +21,7 @@ from threading import Thread, Event
 from inspect import getdoc, isclass
 from traceback import format_exception
 from logging import FileHandler, DEBUG, Formatter
+from enum import Enum
 
 import scapy.compat
 from scapy.packet import Raw
@@ -255,6 +256,28 @@ class KeepAliveReporter(object):
         self.pipe.send((desc, test.vpp_bin, test.tempdir, test.vpp.pid))
 
 
+class TestCaseTag(Enum):
+    # marks the suites that must run at the end
+    # using only a single test runner
+    RUN_SOLO = 1
+    # marks the suites broken on VPP multi-worker
+    FIXME_VPP_WORKERS = 2
+
+
+def create_tag_decorator(e):
+    def decorator(cls):
+        try:
+            cls.test_tags.append(e)
+        except AttributeError:
+            cls.test_tags = [e]
+        return cls
+    return decorator
+
+
+tag_run_solo = create_tag_decorator(TestCaseTag.RUN_SOLO)
+tag_fixme_vpp_workers = create_tag_decorator(TestCaseTag.FIXME_VPP_WORKERS)
+
+
 class VppTestCase(unittest.TestCase):
     """This subclass is a base class for VPP test cases that are implemented as
     classes. It provides methods to create and run test case.
@@ -279,9 +302,18 @@ class VppTestCase(unittest.TestCase):
             return 0
 
     @classmethod
-    def force_solo(cls):
-        """ if the test case class is timing-sensitive - return true """
+    def has_tag(cls, tag):
+        """ if the test case has a given tag - return true """
+        try:
+            return tag in cls.test_tags
+        except AttributeError:
+            pass
         return False
+
+    @classmethod
+    def is_tagged_run_solo(cls):
+        """ if the test case class is timing-sensitive - return true """
+        return cls.has_tag(TestCaseTag.RUN_SOLO)
 
     @classmethod
     def instance(cls):
@@ -372,7 +404,10 @@ class VppTestCase(unittest.TestCase):
 
         cpu_core_number = cls.get_least_used_cpu()
         if not hasattr(cls, "worker_config"):
-            cls.worker_config = ""
+            cls.worker_config = os.getenv("VPP_WORKER_CONFIG", "")
+            if cls.worker_config != "":
+                if cls.has_tag(TestCaseTag.FIXME_VPP_WORKERS):
+                    cls.worker_config = ""
 
         default_variant = os.getenv("VARIANT")
         if default_variant is not None:
@@ -644,6 +679,8 @@ class VppTestCase(unittest.TestCase):
                 cls.vpp.communicate()
             cls.logger.debug("Deleting class vpp attribute on %s",
                              cls.__name__)
+            cls.vpp.stdout.close()
+            cls.vpp.stderr.close()
             del cls.vpp
 
         if cls.vpp_startup_failed:
@@ -1404,10 +1441,17 @@ class VppTestResult(unittest.TestResult):
                 raise Exception("No doc string for test '%s'" % test.id())
             test_title = test_doc.splitlines()[0]
             test_title_colored = colorize(test_title, GREEN)
-            if test.force_solo():
+            if test.is_tagged_run_solo():
                 # long live PEP-8 and 80 char width limitation...
                 c = YELLOW
                 test_title_colored = colorize("SOLO RUN: " + test_title, c)
+
+            # This block may overwrite the colorized title above,
+            # but we want this to stand out and be fixed
+            if test.has_tag(TestCaseTag.FIXME_VPP_WORKERS):
+                c = RED
+                w = "FIXME with VPP workers: "
+                test_title_colored = colorize(w + test_title, c)
 
             if not hasattr(test.__class__, '_header_printed'):
                 print(double_line_delim)

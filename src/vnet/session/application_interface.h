@@ -178,6 +178,8 @@ typedef struct _vnet_app_add_cert_key_pair_args_
 {
   u8 *cert;
   u8 *key;
+  u32 cert_len;
+  u32 key_len;
   u32 index;
 } vnet_app_add_cert_key_pair_args_t;
 
@@ -271,8 +273,6 @@ int vnet_connect (vnet_connect_args_t * a);
 int vnet_unlisten (vnet_unlisten_args_t * a);
 int vnet_disconnect_session (vnet_disconnect_args_t * a);
 
-clib_error_t *vnet_app_add_tls_cert (vnet_app_add_tls_cert_args_t * a);
-clib_error_t *vnet_app_add_tls_key (vnet_app_add_tls_key_args_t * a);
 int vnet_app_add_cert_key_pair (vnet_app_add_cert_key_pair_args_t * a);
 int vnet_app_del_cert_key_pair (u32 index);
 /** Ask for app cb on pair deletion */
@@ -343,9 +343,7 @@ typedef struct session_bound_msg_
   uword rx_fifo;
   uword tx_fifo;
   uword vpp_evt_q;
-  u32 segment_size;
-  u8 segment_name_length;
-  u8 segment_name[128];
+  u64 segment_handle;
 } __clib_packed session_bound_msg_t;
 
 typedef struct session_unlisten_msg_
@@ -372,6 +370,7 @@ typedef struct session_accepted_msg_
   uword server_tx_fifo;
   u64 segment_handle;
   uword vpp_event_queue_address;
+  u32 mq_index;
   transport_endpoint_t rmt;
   u8 flags;
 } __clib_packed session_accepted_msg_t;
@@ -519,6 +518,7 @@ typedef struct session_migrate_msg_
   uword vpp_evt_q;
   session_handle_t handle;
   session_handle_t new_handle;
+  u64 segment_handle;
   u32 vpp_thread_index;
 } __clib_packed session_migrated_msg_t;
 
@@ -600,7 +600,7 @@ app_send_io_evt_to_vpp (svm_msg_q_t * mq, u32 session_index, u8 evt_type,
       svm_msg_q_lock (mq);
       while (svm_msg_q_ring_is_full (mq, SESSION_MQ_IO_EVT_RING)
 	     || svm_msg_q_is_full (mq))
-	svm_msg_q_wait (mq);
+	svm_msg_q_wait (mq, SVM_MQ_WAIT_FULL);
       msg = svm_msg_q_alloc_msg_w_ring (mq, SESSION_MQ_IO_EVT_RING);
       evt = (session_event_t *) svm_msg_q_msg_data (mq, &msg);
       evt->session_index = session_index;
@@ -640,8 +640,8 @@ app_send_dgram_raw (svm_fifo_t * f, app_session_transport_t * at,
   if (do_evt)
     {
       if (svm_fifo_set_event (f))
-	app_send_io_evt_to_vpp (vpp_evt_q, f->master_session_index, evt_type,
-				noblock);
+	app_send_io_evt_to_vpp (vpp_evt_q, f->shr->master_session_index,
+				evt_type, noblock);
     }
   return len;
 }
@@ -664,8 +664,8 @@ app_send_stream_raw (svm_fifo_t * f, svm_msg_q_t * vpp_evt_q, u8 * data,
   if (do_evt)
     {
       if (rv > 0 && svm_fifo_set_event (f))
-	app_send_io_evt_to_vpp (vpp_evt_q, f->master_session_index, evt_type,
-				noblock);
+	app_send_io_evt_to_vpp (vpp_evt_q, f->shr->master_session_index,
+				evt_type, noblock);
     }
   return rv;
 }

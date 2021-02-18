@@ -119,23 +119,12 @@ vhost_user_name_renumber (vnet_hw_interface_t * hi, u32 new_dev_instance)
 }
 
 /**
- * @brief Try once to lock the vring
- * @return 0 on success, non-zero on failure.
- */
-static_always_inline int
-vhost_user_vring_try_lock (vhost_user_intf_t * vui, u32 qid)
-{
-  return clib_atomic_test_and_set (vui->vring_locks[qid]);
-}
-
-/**
  * @brief Spin until the vring is successfully locked
  */
 static_always_inline void
 vhost_user_vring_lock (vhost_user_intf_t * vui, u32 qid)
 {
-  while (vhost_user_vring_try_lock (vui, qid))
-    ;
+  clib_spinlock_lock_if_init (&vui->vrings[qid].vring_lock);
 }
 
 /**
@@ -144,7 +133,7 @@ vhost_user_vring_lock (vhost_user_intf_t * vui, u32 qid)
 static_always_inline void
 vhost_user_vring_unlock (vhost_user_intf_t * vui, u32 qid)
 {
-  clib_atomic_release (vui->vring_locks[qid]);
+  clib_spinlock_unlock_if_init (&vui->vrings[qid].vring_lock);
 }
 
 static_always_inline void
@@ -236,10 +225,11 @@ vhost_user_handle_tx_offload (vhost_user_intf_t * vui, vlib_buffer_t * b,
   generic_header_offset_t gho = { 0 };
   int is_ip4 = b->flags & VNET_BUFFER_F_IS_IP4;
   int is_ip6 = b->flags & VNET_BUFFER_F_IS_IP6;
+  u32 oflags = vnet_buffer2 (b)->oflags;
 
   ASSERT (!(is_ip4 && is_ip6));
   vnet_generic_header_offset_parser (b, &gho, 1 /* l2 */ , is_ip4, is_ip6);
-  if (b->flags & VNET_BUFFER_F_OFFLOAD_IP_CKSUM)
+  if (oflags & VNET_BUFFER_OFFLOAD_F_IP_CKSUM)
     {
       ip4_header_t *ip4;
 
@@ -249,13 +239,13 @@ vhost_user_handle_tx_offload (vhost_user_intf_t * vui, vlib_buffer_t * b,
     }
 
   /* checksum offload */
-  if (b->flags & VNET_BUFFER_F_OFFLOAD_UDP_CKSUM)
+  if (oflags & VNET_BUFFER_OFFLOAD_F_UDP_CKSUM)
     {
       hdr->flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
       hdr->csum_start = gho.l4_hdr_offset;
       hdr->csum_offset = offsetof (udp_header_t, checksum);
     }
-  else if (b->flags & VNET_BUFFER_F_OFFLOAD_TCP_CKSUM)
+  else if (oflags & VNET_BUFFER_OFFLOAD_F_TCP_CKSUM)
     {
       hdr->flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
       hdr->csum_start = gho.l4_hdr_offset;
@@ -265,7 +255,7 @@ vhost_user_handle_tx_offload (vhost_user_intf_t * vui, vlib_buffer_t * b,
   /* GSO offload */
   if (b->flags & VNET_BUFFER_F_GSO)
     {
-      if (b->flags & VNET_BUFFER_F_OFFLOAD_TCP_CKSUM)
+      if (oflags & VNET_BUFFER_OFFLOAD_F_TCP_CKSUM)
 	{
 	  if (is_ip4 &&
 	      (vui->features & VIRTIO_FEATURE (VIRTIO_NET_F_GUEST_TSO4)))
@@ -281,7 +271,7 @@ vhost_user_handle_tx_offload (vhost_user_intf_t * vui, vlib_buffer_t * b,
 	    }
 	}
       else if ((vui->features & VIRTIO_FEATURE (VIRTIO_NET_F_GUEST_UFO)) &&
-	       (b->flags & VNET_BUFFER_F_OFFLOAD_UDP_CKSUM))
+	       (oflags & VNET_BUFFER_OFFLOAD_F_UDP_CKSUM))
 	{
 	  hdr->gso_size = vnet_buffer2 (b)->gso_size;
 	  hdr->gso_type = VIRTIO_NET_HDR_GSO_UDP;
@@ -290,7 +280,8 @@ vhost_user_handle_tx_offload (vhost_user_intf_t * vui, vlib_buffer_t * b,
 }
 
 static_always_inline void
-vhost_user_mark_desc_available (vlib_main_t * vm, vhost_user_vring_t * rxvq,
+vhost_user_mark_desc_available (vlib_main_t * vm, vhost_user_intf_t * vui,
+				vhost_user_vring_t * rxvq,
 				u16 * n_descs_processed, u8 chained,
 				vlib_frame_t * frame, u32 n_left)
 {
@@ -345,7 +336,7 @@ vhost_user_mark_desc_available (vlib_main_t * vm, vhost_user_vring_t * rxvq,
 
       rxvq->n_since_last_int += frame->n_vectors - n_left;
       if (rxvq->n_since_last_int > vum->coalesce_frames)
-	vhost_user_send_call (vm, rxvq);
+	vhost_user_send_call (vm, vui, rxvq);
     }
 }
 
@@ -487,9 +478,7 @@ retry:
       hdr->hdr.gso_type = VIRTIO_NET_HDR_GSO_NONE;
       hdr->num_buffers = 1;
 
-      or_flags = (b0->flags & VNET_BUFFER_F_OFFLOAD_IP_CKSUM) ||
-	(b0->flags & VNET_BUFFER_F_OFFLOAD_UDP_CKSUM) ||
-	(b0->flags & VNET_BUFFER_F_OFFLOAD_TCP_CKSUM);
+      or_flags = (b0->flags & VNET_BUFFER_F_OFFLOAD);
 
       /* Guest supports csum offload and buffer requires checksum offload? */
       if (or_flags &&
@@ -656,7 +645,7 @@ retry:
 	  copy_len = 0;
 
 	  /* give buffers back to driver */
-	  vhost_user_mark_desc_available (vm, rxvq, &n_descs_processed,
+	  vhost_user_mark_desc_available (vm, vui, rxvq, &n_descs_processed,
 					  chained, frame, n_left);
 	}
 
@@ -671,8 +660,8 @@ done:
 	vlib_error_count (vm, node->node_index,
 			  VHOST_USER_TX_FUNC_ERROR_MMAP_FAIL, 1);
 
-      vhost_user_mark_desc_available (vm, rxvq, &n_descs_processed, chained,
-				      frame, n_left);
+      vhost_user_mark_desc_available (vm, vui, rxvq, &n_descs_processed,
+				      chained, frame, n_left);
     }
 
   /*
@@ -823,9 +812,7 @@ retry:
 	hdr->hdr.gso_type = VIRTIO_NET_HDR_GSO_NONE;
 	hdr->num_buffers = 1;	//This is local, no need to check
 
-	or_flags = (b0->flags & VNET_BUFFER_F_OFFLOAD_IP_CKSUM) ||
-	  (b0->flags & VNET_BUFFER_F_OFFLOAD_UDP_CKSUM) ||
-	  (b0->flags & VNET_BUFFER_F_OFFLOAD_TCP_CKSUM);
+	or_flags = (b0->flags & VNET_BUFFER_F_OFFLOAD);
 
 	/* Guest supports csum offload and buffer requires checksum offload? */
 	if (or_flags
@@ -1030,7 +1017,7 @@ done:
       rxvq->n_since_last_int += frame->n_vectors - n_left;
 
       if (rxvq->n_since_last_int > vum->coalesce_frames)
-	vhost_user_send_call (vm, rxvq);
+	vhost_user_send_call (vm, vui, rxvq);
     }
 
   vhost_user_vring_unlock (vui, qid);

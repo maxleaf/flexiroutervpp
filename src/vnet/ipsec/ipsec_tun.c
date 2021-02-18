@@ -141,33 +141,48 @@ ipsec_tun_protect_get_adj_next (vnet_link_t linkt,
 {
   ipsec_main_t *im;
   ipsec_sa_t *sa;
-  bool is_ip4;
   u32 next;
 
-
-  if (itp->itp_flags & IPSEC_PROTECT_ITF)
-    is_ip4 = linkt == VNET_LINK_IP4;
-  else
-    is_ip4 = ip46_address_is_ip4 (&itp->itp_tun.src);
+  if (!(itp->itp_flags & IPSEC_PROTECT_ITF))
+    {
+      if (ip46_address_is_ip4 (&itp->itp_tun.src))
+	linkt = VNET_LINK_IP4;
+      else
+	linkt = VNET_LINK_IP6;
+    }
 
   sa = ipsec_sa_get (itp->itp_out_sa);
   im = &ipsec_main;
+  next = 0;
 
   if ((sa->crypto_alg == IPSEC_CRYPTO_ALG_NONE &&
        sa->integ_alg == IPSEC_INTEG_ALG_NONE) &&
       !(itp->itp_flags & IPSEC_PROTECT_ITF))
-    next = (is_ip4 ?
-	    im->esp4_no_crypto_tun_node_index :
-	    im->esp6_no_crypto_tun_node_index);
+    next = (VNET_LINK_IP4 == linkt ? im->esp4_no_crypto_tun_node_index :
+				     im->esp6_no_crypto_tun_node_index);
   else if (itp->itp_flags & IPSEC_PROTECT_L2)
-    next = (is_ip4 ?
-	    im->esp4_encrypt_l2_tun_node_index :
-	    im->esp6_encrypt_l2_tun_node_index);
+    next = (VNET_LINK_IP4 == linkt ? im->esp4_encrypt_l2_tun_node_index :
+				     im->esp6_encrypt_l2_tun_node_index);
   else
-    next = (is_ip4 ?
-	    im->esp4_encrypt_tun_node_index :
-	    im->esp6_encrypt_tun_node_index);
-
+    {
+      switch (linkt)
+	{
+	case VNET_LINK_IP4:
+	  next = im->esp4_encrypt_tun_node_index;
+	  break;
+	case VNET_LINK_IP6:
+	  next = im->esp6_encrypt_tun_node_index;
+	  break;
+	case VNET_LINK_MPLS:
+	  next = im->esp_mpls_encrypt_tun_node_index;
+	  break;
+	case VNET_LINK_ARP:
+	case VNET_LINK_NSH:
+	case VNET_LINK_ETHERNET:
+	  ASSERT (0);
+	  break;
+	}
+    }
   return (next);
 }
 
@@ -248,15 +263,15 @@ ipsec_tun_protect_rx_db_add (ipsec_main_t * im,
           ipsec4_tunnel_mk_key(&key, &itp->itp_crypto.dst.ip4,
                                clib_host_to_net_u32 (sa->spi));
 
-          if (!im->tun4_protect_by_key.nbuckets)
-              clib_bihash_init_8_16 (&im->tun4_protect_by_key,
-			"IPSec IPv4 tunnels",
-			IPSEC_TUN_DEFAULT_HASH_NUM_BUCKETS,
-			IPSEC_TUN_DEFAULT_HASH_MEMORY_SIZE);
+	  if (!clib_bihash_is_initialised_8_16 (&im->tun4_protect_by_key))
+	    clib_bihash_init_8_16 (&im->tun4_protect_by_key,
+				   "IPSec IPv4 tunnels",
+				   IPSEC_TUN_DEFAULT_HASH_NUM_BUCKETS,
+				   IPSEC_TUN_DEFAULT_HASH_MEMORY_SIZE);
 
-          clib_bihash_add_del_8_16 (&im->tun4_protect_by_key, bkey, 1);
-          ipsec_tun_register_nodes(AF_IP4);
-        }
+	  clib_bihash_add_del_8_16 (&im->tun4_protect_by_key, bkey, 1);
+	  ipsec_tun_register_nodes (AF_IP4);
+	}
       else
         {
           ipsec6_tunnel_kv_t key = {
@@ -268,14 +283,14 @@ ipsec_tun_protect_rx_db_add (ipsec_main_t * im,
           };
           clib_bihash_kv_24_16_t *bkey = (clib_bihash_kv_24_16_t*)&key;
 
-          if (!im->tun4_protect_by_key.nbuckets)
-            clib_bihash_init_24_16 (&im->tun6_protect_by_key,
-                                   "IPSec IPv6 tunnels",
-                                   IPSEC_TUN_DEFAULT_HASH_NUM_BUCKETS,
-                                   IPSEC_TUN_DEFAULT_HASH_MEMORY_SIZE);
-          clib_bihash_add_del_24_16 (&im->tun6_protect_by_key, bkey, 1);
-          ipsec_tun_register_nodes(AF_IP6);
-        }
+	  if (!clib_bihash_is_initialised_24_16 (&im->tun6_protect_by_key))
+	    clib_bihash_init_24_16 (&im->tun6_protect_by_key,
+				    "IPSec IPv6 tunnels",
+				    IPSEC_TUN_DEFAULT_HASH_NUM_BUCKETS,
+				    IPSEC_TUN_DEFAULT_HASH_MEMORY_SIZE);
+	  clib_bihash_add_del_24_16 (&im->tun6_protect_by_key, bkey, 1);
+	  ipsec_tun_register_nodes (AF_IP6);
+	}
   }))
   /* *INDENT-ON* */
 }
@@ -455,13 +470,13 @@ ipsec_tun_protect_set_crypto_addr (ipsec_tun_protect_t * itp)
   ({
     if (ipsec_sa_is_set_IS_TUNNEL (sa))
       {
-        itp->itp_crypto.src = sa->tunnel_dst_addr;
-        itp->itp_crypto.dst = sa->tunnel_src_addr;
-        if (!(itp->itp_flags & IPSEC_PROTECT_ITF))
-          {
-            ipsec_sa_set_IS_PROTECT (sa);
-            itp->itp_flags |= IPSEC_PROTECT_ENCAPED;
-          }
+	itp->itp_crypto.src = ip_addr_46 (&sa->tunnel.t_dst);
+	itp->itp_crypto.dst = ip_addr_46 (&sa->tunnel.t_src);
+	if (!(itp->itp_flags & IPSEC_PROTECT_ITF))
+	  {
+	    ipsec_sa_set_IS_PROTECT (sa);
+	    itp->itp_flags |= IPSEC_PROTECT_ENCAPED;
+	  }
       }
     else
       {
@@ -527,111 +542,6 @@ ipsec_tun_protect_unconfig (ipsec_main_t * im, ipsec_tun_protect_t * itp)
   }));
   /* *INDENT-ON* */
   ITP_DBG (itp, "unconfigured");
-}
-
-int
-ipsec_tun_protect_update_one (u32 sw_if_index,
-			      const ip_address_t * nh, u32 sa_out, u32 sa_in)
-{
-  u32 *sas_in = NULL;
-  int rv;
-
-  vec_add1 (sas_in, sa_in);
-  rv = ipsec_tun_protect_update (sw_if_index, nh, sa_out, sas_in);
-
-  return (rv);
-}
-
-int
-ipsec_tun_protect_update_out (u32 sw_if_index,
-			      const ip_address_t * nh, u32 sa_out)
-{
-  u32 itpi, *sas_in, sai, *saip;
-  ipsec_tun_protect_t *itp;
-  ipsec_main_t *im;
-  int rv;
-
-  sas_in = NULL;
-  rv = 0;
-  im = &ipsec_main;
-
-  itpi = ipsec_tun_protect_find (sw_if_index, nh);
-
-  if (INDEX_INVALID == itpi)
-    {
-      return (VNET_API_ERROR_INVALID_INTERFACE);
-    }
-
-  itp = pool_elt_at_index (ipsec_tun_protect_pool, itpi);
-
-  /* *INDENT-OFF* */
-  FOR_EACH_IPSEC_PROTECT_INPUT_SAI (itp, sai,
-  ({
-    ipsec_sa_lock (sai);
-    vec_add1 (sas_in, sai);
-  }));
-  /* *INDENT-ON* */
-
-  sa_out = ipsec_sa_find_and_lock (sa_out);
-
-  if (~0 == sa_out)
-    {
-      rv = VNET_API_ERROR_INVALID_VALUE;
-      goto out;
-    }
-
-  ipsec_tun_protect_unconfig (im, itp);
-  ipsec_tun_protect_config (im, itp, sa_out, sas_in);
-
-  ipsec_sa_unlock (sa_out);
-  vec_foreach (saip, sas_in) ipsec_sa_unlock (*saip);
-
-out:
-  vec_free (sas_in);
-  return (rv);
-}
-
-int
-ipsec_tun_protect_update_in (u32 sw_if_index,
-			     const ip_address_t * nh, u32 sa_in)
-{
-  u32 itpi, *sas_in, sa_out;
-  ipsec_tun_protect_t *itp;
-  ipsec_main_t *im;
-  int rv;
-
-  sas_in = NULL;
-  rv = 0;
-  im = &ipsec_main;
-  itpi = ipsec_tun_protect_find (sw_if_index, nh);
-
-  if (INDEX_INVALID == itpi)
-    {
-      return (VNET_API_ERROR_INVALID_INTERFACE);
-    }
-
-  sa_in = ipsec_sa_find_and_lock (sa_in);
-
-  if (~0 == sa_in)
-    {
-      rv = VNET_API_ERROR_INVALID_VALUE;
-      goto out;
-    }
-  vec_add1 (sas_in, sa_in);
-
-  itp = pool_elt_at_index (ipsec_tun_protect_pool, itpi);
-  sa_out = itp->itp_out_sa;
-
-  ipsec_sa_lock (sa_out);
-
-  ipsec_tun_protect_unconfig (im, itp);
-  ipsec_tun_protect_config (im, itp, sa_out, sas_in);
-
-  ipsec_sa_unlock (sa_out);
-  ipsec_sa_unlock (sa_in);
-out:
-  vec_free (sas_in);
-  return (rv);
 }
 
 static void
@@ -972,7 +882,7 @@ const static teib_vft_t ipsec_tun_teib_vft = {
   .nv_deleted = ipsec_tun_teib_entry_deleted,
 };
 
-void
+static void
 ipsec_tun_table_init (ip_address_family_t af, uword table_size, u32 n_buckets)
 {
   ipsec_main_t *im;
@@ -987,8 +897,8 @@ ipsec_tun_table_init (ip_address_family_t af, uword table_size, u32 n_buckets)
 			    "IPSec IPv6 tunnels", n_buckets, table_size);
 }
 
-clib_error_t *
-ipsec_tunnel_protect_init (vlib_main_t * vm)
+static clib_error_t *
+ipsec_tunnel_protect_init (vlib_main_t *vm)
 {
   ipsec_main_t *im;
 

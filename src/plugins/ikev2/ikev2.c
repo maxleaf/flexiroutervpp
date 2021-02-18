@@ -28,6 +28,7 @@
 #include <plugins/ikev2/ikev2_priv.h>
 #include <openssl/sha.h>
 #include <vnet/ipsec/ipsec_punt.h>
+#include <plugins/ikev2/ikev2.api_enum.h>
 
 #define IKEV2_LIVENESS_RETRIES 3
 #define IKEV2_LIVENESS_PERIOD_CHECK 30
@@ -91,31 +92,6 @@ format_ikev2_gen_sa_error (u8 * s, va_list * args)
     }
   return s;
 }
-
-#define foreach_ikev2_error \
-_(PROCESSED, "IKEv2 packets processed") \
-_(IKE_SA_INIT_RETRANSMIT, "IKE_SA_INIT retransmit ") \
-_(IKE_SA_INIT_IGNORE, "IKE_SA_INIT ignore (IKE SA already auth)") \
-_(IKE_REQ_RETRANSMIT, "IKE request retransmit") \
-_(IKE_REQ_IGNORE, "IKE request ignore (old msgid)") \
-_(NOT_IKEV2, "Non IKEv2 packets received") \
-_(BAD_LENGTH, "Bad packet length") \
-_(MALFORMED_PACKET, "Malformed packet") \
-_(NO_BUFF_SPACE, "No buffer space")
-
-typedef enum
-{
-#define _(sym,str) IKEV2_ERROR_##sym,
-  foreach_ikev2_error
-#undef _
-    IKEV2_N_ERROR,
-} ikev2_error_t;
-
-static char *ikev2_error_strings[] = {
-#define _(sym,string) string,
-  foreach_ikev2_error
-#undef _
-};
 
 typedef enum
 {
@@ -716,9 +692,8 @@ ikev2_check_payload_length (const ike_payload_header_t * ikep, int rlen,
 }
 
 static int
-ikev2_process_sa_init_req (vlib_main_t * vm,
-			   ikev2_sa_t * sa, ike_header_t * ike,
-			   udp_header_t * udp, u32 len)
+ikev2_process_sa_init_req (vlib_main_t *vm, ikev2_sa_t *sa, ike_header_t *ike,
+			   udp_header_t *udp, u32 len, u32 sw_if_index)
 {
   u8 nonce[IKEV2_NONCE_SIZE];
   int p = 0;
@@ -733,6 +708,7 @@ ikev2_process_sa_init_req (vlib_main_t * vm,
 		       ip_addr_version (&sa->iaddr) == AF_IP4);
 
   sa->ispi = clib_net_to_host_u64 (ike->ispi);
+  sa->sw_if_index = sw_if_index;
 
   /* store whole IKE payload - needed for PSK auth */
   vec_reset_length (sa->last_sa_init_req_packet_data);
@@ -1364,20 +1340,24 @@ ikev2_process_create_child_sa_req (vlib_main_t * vm,
   u8 *plaintext = 0;
   u8 rekeying = 0;
   u8 nonce[IKEV2_NONCE_SIZE];
-
+  ikev2_rekey_t *rekey;
   ike_payload_header_t *ikep;
   ikev2_notify_t *n = 0;
   ikev2_ts_t *tsi = 0;
   ikev2_ts_t *tsr = 0;
   ikev2_sa_proposal_t *proposal = 0;
   ikev2_child_sa_t *child_sa;
-  u32 dlen = 0;
+  u32 dlen = 0, src;
   u16 plen;
 
-  ikev2_elog_exchange ("ispi %lx rspi %lx CREATE_CHILD_SA received "
-		       "from ", clib_host_to_net_u64 (ike->ispi),
-		       clib_host_to_net_u64 (ike->rspi),
-		       ip_addr_v4 (&sa->raddr).as_u32,
+  if (sa->is_initiator)
+    src = ip_addr_v4 (&sa->raddr).as_u32;
+  else
+    src = ip_addr_v4 (&sa->iaddr).as_u32;
+
+  ikev2_elog_exchange ("ispi %lx rspi %lx CREATE_CHILD_SA received from",
+		       clib_host_to_net_u64 (ike->ispi),
+		       clib_host_to_net_u64 (ike->rspi), src,
 		       ip_addr_version (&sa->raddr) == AF_IP4);
 
   plaintext = ikev2_decrypt_sk_payload (sa, ike, &payload, len, &dlen);
@@ -1440,10 +1420,12 @@ ikev2_process_create_child_sa_req (vlib_main_t * vm,
       p += plen;
     }
 
-  if (sa->is_initiator && proposal
-      && proposal->protocol_id == IKEV2_PROTOCOL_ESP)
+  if (!proposal || proposal->protocol_id != IKEV2_PROTOCOL_ESP)
+    goto cleanup_and_exit;
+
+  if (sa->is_initiator)
     {
-      ikev2_rekey_t *rekey = sa->rekey;
+      rekey = sa->rekey;
       if (vec_len (rekey) == 0)
 	goto cleanup_and_exit;
       rekey->protocol_id = proposal->protocol_id;
@@ -1462,33 +1444,47 @@ ikev2_process_create_child_sa_req (vlib_main_t * vm,
 	  child_sa->rekey_retries = 0;
 	}
     }
-  else if (rekeying)
+  else
     {
-      ikev2_rekey_t *rekey;
-      child_sa = ikev2_sa_get_child (sa, n->spi, n->protocol_id, 1);
-      if (!child_sa)
+      if (rekeying)
 	{
-	  ikev2_elog_uint (IKEV2_LOG_ERROR, "child SA spi %lx not found",
-			   n->spi);
-	  goto cleanup_and_exit;
+	  child_sa = ikev2_sa_get_child (sa, n->spi, n->protocol_id, 1);
+	  if (!child_sa)
+	    {
+	      ikev2_elog_uint (IKEV2_LOG_ERROR, "child SA spi %lx not found",
+			       n->spi);
+	      goto cleanup_and_exit;
+	    }
+	  vec_add2 (sa->rekey, rekey, 1);
+	  rekey->protocol_id = n->protocol_id;
+	  rekey->spi = n->spi;
+	  rekey->i_proposal = proposal;
+	  rekey->r_proposal =
+	    ikev2_select_proposal (proposal, IKEV2_PROTOCOL_ESP);
+	  /* update Ni */
+	  vec_reset_length (sa->i_nonce);
+	  vec_add (sa->i_nonce, nonce, IKEV2_NONCE_SIZE);
+	  /* generate new Nr */
+	  vec_validate (sa->r_nonce, IKEV2_NONCE_SIZE - 1);
+	  RAND_bytes ((u8 *) sa->r_nonce, IKEV2_NONCE_SIZE);
 	}
-      vec_add2 (sa->rekey, rekey, 1);
-      rekey->protocol_id = n->protocol_id;
-      rekey->spi = n->spi;
-      rekey->i_proposal = proposal;
-      rekey->r_proposal =
-	ikev2_select_proposal (proposal, IKEV2_PROTOCOL_ESP);
+      else
+	{
+	  /* create new child SA */
+	  vec_add2 (sa->new_child, rekey, 1);
+	  rekey->i_proposal = proposal;
+	  rekey->r_proposal =
+	    ikev2_select_proposal (proposal, IKEV2_PROTOCOL_ESP);
+	  /* update Ni */
+	  vec_reset_length (sa->i_nonce);
+	  vec_add (sa->i_nonce, nonce, IKEV2_NONCE_SIZE);
+	  /* generate new Nr */
+	  vec_validate (sa->r_nonce, IKEV2_NONCE_SIZE - 1);
+	  RAND_bytes ((u8 *) sa->r_nonce, IKEV2_NONCE_SIZE);
+	}
       rekey->tsi = tsi;
       rekey->tsr = tsr;
-      /* update Ni */
-      vec_reset_length (sa->i_nonce);
-      vec_add (sa->i_nonce, nonce, IKEV2_NONCE_SIZE);
-      /* generate new Nr */
-      vec_validate (sa->r_nonce, IKEV2_NONCE_SIZE - 1);
-      RAND_bytes ((u8 *) sa->r_nonce, IKEV2_NONCE_SIZE);
     }
-  else
-    goto cleanup_and_exit;
   vec_free (n);
   return 1;
 
@@ -1625,33 +1621,16 @@ ikev2_sa_match_ts (ikev2_sa_t * sa)
     }
 }
 
-static void
-ikev2_sa_auth (ikev2_sa_t * sa)
+static ikev2_profile_t *
+ikev2_select_profile (ikev2_main_t *km, ikev2_sa_t *sa,
+		      ikev2_sa_transform_t *tr_prf, u8 *key_pad)
 {
-  ikev2_main_t *km = &ikev2_main;
-  ikev2_profile_t *p, *sel_p = 0;
-  u8 *authmsg, *key_pad, *psk = 0, *auth = 0;
-  ikev2_sa_transform_t *tr_prf;
-
-  tr_prf =
-    ikev2_sa_get_td_for_type (sa->r_proposals, IKEV2_TRANSFORM_TYPE_PRF);
-
-  /* only shared key and rsa signature */
-  if (!(sa->i_auth.method == IKEV2_AUTH_METHOD_SHARED_KEY_MIC ||
-	sa->i_auth.method == IKEV2_AUTH_METHOD_RSA_SIG))
-    {
-      ikev2_elog_uint (IKEV2_LOG_ERROR,
-		       "unsupported authentication method %u",
-		       sa->i_auth.method);
-      ikev2_set_state (sa, IKEV2_STATE_AUTH_FAILED);
-      return;
-    }
-
-  key_pad = format (0, "%s", IKEV2_KEY_PAD);
-  authmsg = ikev2_sa_generate_authmsg (sa, sa->is_initiator);
-
+  ikev2_profile_t *ret = 0, *p;
   ikev2_id_t *id_rem, *id_loc;
   ikev2_auth_t *sa_auth;
+  u8 *authmsg, *psk = 0, *auth = 0;
+
+  authmsg = ikev2_sa_generate_authmsg (sa, sa->is_initiator);
 
   if (sa->is_initiator)
     {
@@ -1666,59 +1645,87 @@ ikev2_sa_auth (ikev2_sa_t * sa)
       sa_auth = &sa->i_auth;
     }
 
-  /* *INDENT-OFF* */
-  pool_foreach (p, km->profiles)  {
+  pool_foreach (p, km->profiles)
+    {
+      /* check id */
+      if (!ikev2_is_id_equal (&p->rem_id, id_rem) ||
+	  !ikev2_is_id_equal (&p->loc_id, id_loc))
+	continue;
 
-    /* check id */
-    if (!ikev2_is_id_equal (&p->rem_id, id_rem)
-          || !ikev2_is_id_equal (&p->loc_id, id_loc))
-      continue;
+      if (sa_auth->method == IKEV2_AUTH_METHOD_SHARED_KEY_MIC)
+	{
+	  if (!p->auth.data ||
+	      p->auth.method != IKEV2_AUTH_METHOD_SHARED_KEY_MIC)
+	    continue;
 
-    if (sa_auth->method == IKEV2_AUTH_METHOD_SHARED_KEY_MIC)
-      {
-        if (!p->auth.data ||
-             p->auth.method != IKEV2_AUTH_METHOD_SHARED_KEY_MIC)
-          continue;
+	  psk = ikev2_calc_prf (tr_prf, p->auth.data, key_pad);
+	  auth = ikev2_calc_prf (tr_prf, psk, authmsg);
 
-        psk = ikev2_calc_prf(tr_prf, p->auth.data, key_pad);
-        auth = ikev2_calc_prf(tr_prf, psk, authmsg);
+	  if (!clib_memcmp (auth, sa_auth->data, vec_len (sa_auth->data)))
+	    {
+	      ikev2_set_state (sa, IKEV2_STATE_AUTHENTICATED);
+	      vec_free (auth);
+	      ret = p;
+	      break;
+	    }
+	  else
+	    {
+	      ikev2_elog_uint (IKEV2_LOG_ERROR,
+			       "shared key mismatch! ispi %lx", sa->ispi);
+	    }
+	}
+      else if (sa_auth->method == IKEV2_AUTH_METHOD_RSA_SIG)
+	{
+	  if (p->auth.method != IKEV2_AUTH_METHOD_RSA_SIG)
+	    continue;
 
-        if (!clib_memcmp(auth, sa_auth->data, vec_len(sa_auth->data)))
-          {
-            ikev2_set_state(sa, IKEV2_STATE_AUTHENTICATED);
-            vec_free(auth);
-            sel_p = p;
-            break;
-          }
+	  if (ikev2_verify_sign (p->auth.key, sa_auth->data, authmsg) == 1)
+	    {
+	      ikev2_set_state (sa, IKEV2_STATE_AUTHENTICATED);
+	      ret = p;
+	      break;
+	    }
+	  else
+	    {
+	      ikev2_elog_uint (IKEV2_LOG_ERROR,
+			       "cert verification failed! ispi %lx", sa->ispi);
+	    }
+	}
+    }
+  vec_free (authmsg);
+  return ret;
+}
 
-      }
-    else if (sa_auth->method == IKEV2_AUTH_METHOD_RSA_SIG)
-      {
-        if (p->auth.method != IKEV2_AUTH_METHOD_RSA_SIG)
-          continue;
+static void
+ikev2_sa_auth (ikev2_sa_t *sa)
+{
+  ikev2_main_t *km = &ikev2_main;
+  ikev2_profile_t *sel_p = 0;
+  ikev2_sa_transform_t *tr_prf;
+  u8 *psk, *authmsg, *key_pad;
 
-        if (ikev2_verify_sign(p->auth.key, sa_auth->data, authmsg) == 1)
-          {
-            ikev2_set_state(sa, IKEV2_STATE_AUTHENTICATED);
-            sel_p = p;
-            break;
-          }
-      }
+  tr_prf =
+    ikev2_sa_get_td_for_type (sa->r_proposals, IKEV2_TRANSFORM_TYPE_PRF);
 
-    vec_free(auth);
-    vec_free(psk);
-  }
-  /* *INDENT-ON* */
+  /* only shared key and rsa signature */
+  if (!(sa->i_auth.method == IKEV2_AUTH_METHOD_SHARED_KEY_MIC ||
+	sa->i_auth.method == IKEV2_AUTH_METHOD_RSA_SIG))
+    {
+      ikev2_elog_uint (IKEV2_LOG_ERROR, "unsupported authentication method %u",
+		       sa->i_auth.method);
+      ikev2_set_state (sa, IKEV2_STATE_AUTH_FAILED);
+      return;
+    }
+
+  key_pad = format (0, "%s", IKEV2_KEY_PAD);
+  sel_p = ikev2_select_profile (km, sa, tr_prf, key_pad);
 
   if (sel_p)
     {
+      ASSERT (sa->state == IKEV2_STATE_AUTHENTICATED);
       sa->udp_encap = sel_p->udp_encap;
       sa->ipsec_over_udp_port = sel_p->ipsec_over_udp_port;
-    }
-  vec_free (authmsg);
 
-  if (sa->state == IKEV2_STATE_AUTHENTICATED)
-    {
       if (!sa->is_initiator)
 	{
 	  vec_free (sa->r_id.data);
@@ -1732,8 +1739,10 @@ ikev2_sa_auth (ikev2_sa_t * sa)
 	  if (sel_p->auth.method == IKEV2_AUTH_METHOD_SHARED_KEY_MIC)
 	    {
 	      vec_free (sa->r_auth.data);
+	      psk = ikev2_calc_prf (tr_prf, sel_p->auth.data, key_pad);
 	      sa->r_auth.data = ikev2_calc_prf (tr_prf, psk, authmsg);
 	      sa->r_auth.method = IKEV2_AUTH_METHOD_SHARED_KEY_MIC;
+	      vec_free (psk);
 	    }
 	  else if (sel_p->auth.method == IKEV2_AUTH_METHOD_RSA_SIG)
 	    {
@@ -1762,10 +1771,8 @@ ikev2_sa_auth (ikev2_sa_t * sa)
 		       "profile found! ispi %lx", sa->ispi);
       ikev2_set_state (sa, IKEV2_STATE_AUTH_FAILED);
     }
-  vec_free (psk);
   vec_free (key_pad);
 }
-
 
 static void
 ikev2_sa_auth_init (ikev2_sa_t * sa)
@@ -1788,15 +1795,17 @@ ikev2_sa_auth_init (ikev2_sa_t * sa)
       return;
     }
 
-  key_pad = format (0, "%s", IKEV2_KEY_PAD);
   authmsg = ikev2_sa_generate_authmsg (sa, 0);
-  psk = ikev2_calc_prf (tr_prf, sa->i_auth.data, key_pad);
 
   if (sa->i_auth.method == IKEV2_AUTH_METHOD_SHARED_KEY_MIC)
     {
       vec_free (sa->i_auth.data);
+      key_pad = format (0, "%s", IKEV2_KEY_PAD);
+      psk = ikev2_calc_prf (tr_prf, sa->i_auth.data, key_pad);
       sa->i_auth.data = ikev2_calc_prf (tr_prf, psk, authmsg);
       sa->i_auth.method = IKEV2_AUTH_METHOD_SHARED_KEY_MIC;
+      vec_free (psk);
+      vec_free (key_pad);
     }
   else if (sa->i_auth.method == IKEV2_AUTH_METHOD_RSA_SIG)
     {
@@ -1804,9 +1813,6 @@ ikev2_sa_auth_init (ikev2_sa_t * sa)
       sa->i_auth.data = ikev2_calc_sign (km->pkey, authmsg);
       sa->i_auth.method = IKEV2_AUTH_METHOD_RSA_SIG;
     }
-
-  vec_free (psk);
-  vec_free (key_pad);
   vec_free (authmsg);
 }
 
@@ -1834,8 +1840,8 @@ typedef struct
   u32 remote_spi;
   ipsec_crypto_alg_t encr_type;
   ipsec_integ_alg_t integ_type;
-  ip46_address_t local_ip;
-  ip46_address_t remote_ip;
+  ip_address_t local_ip;
+  ip_address_t remote_ip;
   ipsec_key_t loc_ckey, rem_ckey, loc_ikey, rem_ikey;
   u8 is_rekey;
   u32 old_remote_sa_id;
@@ -1850,12 +1856,32 @@ ikev2_add_tunnel_from_main (ikev2_add_ipsec_tunnel_args_t * a)
   ikev2_main_t *km = &ikev2_main;
   u32 sw_if_index;
   int rv = 0;
+  tunnel_t tun_in = {
+    .t_flags = TUNNEL_FLAG_NONE,
+    .t_encap_decap_flags = TUNNEL_ENCAP_DECAP_FLAG_NONE,
+    .t_dscp = 0,
+    .t_mode = TUNNEL_MODE_P2P,
+    .t_table_id = 0,
+    .t_hop_limit = 255,
+    .t_src = a->local_ip,
+    .t_dst = a->remote_ip,
+  };
+  tunnel_t tun_out = {
+    .t_flags = TUNNEL_FLAG_NONE,
+    .t_encap_decap_flags = TUNNEL_ENCAP_DECAP_FLAG_NONE,
+    .t_dscp = 0,
+    .t_mode = TUNNEL_MODE_P2P,
+    .t_table_id = 0,
+    .t_hop_limit = 255,
+    .t_src = a->remote_ip,
+    .t_dst = a->local_ip,
+  };
 
   if (~0 == a->sw_if_index)
     {
       /* no tunnel associated with the SA/profile - create a new one */
-      rv = ipip_add_tunnel (IPIP_TRANSPORT_IP4, ~0,
-			    &a->local_ip, &a->remote_ip, 0,
+      rv = ipip_add_tunnel (IPIP_TRANSPORT_IP4, ~0, &ip_addr_46 (&a->local_ip),
+			    &ip_addr_46 (&a->remote_ip), 0,
 			    TUNNEL_ENCAP_DECAP_FLAG_NONE, IP_DSCP_CS0,
 			    TUNNEL_MODE_P2P, &sw_if_index);
 
@@ -1894,24 +1920,18 @@ ikev2_add_tunnel_from_main (ikev2_add_ipsec_tunnel_args_t * a)
       vec_add1 (sas_in, a->old_remote_sa_id);
     }
 
-  rv = ipsec_sa_add_and_lock (a->local_sa_id,
-			      a->local_spi,
-			      IPSEC_PROTOCOL_ESP, a->encr_type,
-			      &a->loc_ckey, a->integ_type, &a->loc_ikey,
-			      a->flags, 0, a->salt_local, &a->local_ip,
-			      &a->remote_ip, TUNNEL_ENCAP_DECAP_FLAG_NONE,
-			      IP_DSCP_CS0, NULL, a->src_port, a->dst_port);
+  rv = ipsec_sa_add_and_lock (a->local_sa_id, a->local_spi, IPSEC_PROTOCOL_ESP,
+			      a->encr_type, &a->loc_ckey, a->integ_type,
+			      &a->loc_ikey, a->flags, a->salt_local,
+			      a->src_port, a->dst_port, &tun_out, NULL);
   if (rv)
     goto err0;
 
-  rv = ipsec_sa_add_and_lock (a->remote_sa_id, a->remote_spi,
-			      IPSEC_PROTOCOL_ESP, a->encr_type, &a->rem_ckey,
-			      a->integ_type, &a->rem_ikey,
-			      (a->flags | IPSEC_SA_FLAG_IS_INBOUND), 0,
-			      a->salt_remote, &a->remote_ip,
-			      &a->local_ip, TUNNEL_ENCAP_DECAP_FLAG_NONE,
-			      IP_DSCP_CS0, NULL,
-			      a->ipsec_over_udp_port, a->ipsec_over_udp_port);
+  rv = ipsec_sa_add_and_lock (
+    a->remote_sa_id, a->remote_spi, IPSEC_PROTOCOL_ESP, a->encr_type,
+    &a->rem_ckey, a->integ_type, &a->rem_ikey,
+    (a->flags | IPSEC_SA_FLAG_IS_INBOUND), a->salt_remote,
+    a->ipsec_over_udp_port, a->ipsec_over_udp_port, &tun_in, NULL);
   if (rv)
     goto err1;
 
@@ -1955,16 +1975,16 @@ ikev2_create_tunnel_interface (vlib_main_t * vm,
 
   if (sa->is_initiator)
     {
-      ip_address_to_46 (&sa->iaddr, &a.local_ip);
-      ip_address_to_46 (&sa->raddr, &a.remote_ip);
+      ip_address_copy (&a.local_ip, &sa->iaddr);
+      ip_address_copy (&a.remote_ip, &sa->raddr);
       proposals = child->r_proposals;
       a.local_spi = child->r_proposals[0].spi;
       a.remote_spi = child->i_proposals[0].spi;
     }
   else
     {
-      ip_address_to_46 (&sa->raddr, &a.local_ip);
-      ip_address_to_46 (&sa->iaddr, &a.remote_ip);
+      ip_address_copy (&a.local_ip, &sa->raddr);
+      ip_address_copy (&a.remote_ip, &sa->iaddr);
       proposals = child->i_proposals;
       a.local_spi = child->i_proposals[0].spi;
       a.remote_spi = child->r_proposals[0].spi;
@@ -2264,8 +2284,8 @@ ikev2_delete_tunnel_interface (vnet_main_t * vnm, ikev2_sa_t * sa,
 }
 
 static u32
-ikev2_generate_message (vlib_buffer_t * b, ikev2_sa_t * sa,
-			ike_header_t * ike, void *user, udp_header_t * udp)
+ikev2_generate_message (vlib_buffer_t *b, ikev2_sa_t *sa, ike_header_t *ike,
+			void *user, udp_header_t *udp, ikev2_stats_t *stats)
 {
   ikev2_main_t *km = &ikev2_main;
   u16 buffer_data_size = vlib_buffer_get_default_data_size (km->vlib_main);
@@ -2448,7 +2468,16 @@ ikev2_generate_message (vlib_buffer_t * b, ikev2_sa_t * sa,
 	  vec_free (data);
 	  sa->unsupported_cp = 0;
 	}
-      /* else send empty response */
+      else
+	/* else send empty response */
+	{
+	  if (ike_hdr_is_response (ike))
+	    {
+	      ASSERT (stats != 0);
+	      stats->n_keepalives++;
+	      sa->stats.n_keepalives++;
+	    }
+	}
     }
   else if (ike->exchange == IKEV2_EXCHANGE_CREATE_CHILD_SA)
     {
@@ -2472,35 +2501,38 @@ ikev2_generate_message (vlib_buffer_t * b, ikev2_sa_t * sa,
 
 	  vec_free (data);
 	}
+      else if (vec_len (sa->rekey) > 0)
+	{
+	  ikev2_payload_add_sa (chain, sa->rekey[0].r_proposal);
+	  ikev2_payload_add_nonce (chain, sa->r_nonce);
+	  ikev2_payload_add_ts (chain, sa->rekey[0].tsi, IKEV2_PAYLOAD_TSI);
+	  ikev2_payload_add_ts (chain, sa->rekey[0].tsr, IKEV2_PAYLOAD_TSR);
+	  vec_del1 (sa->rekey, 0);
+	}
+      else if (vec_len (sa->new_child) > 0)
+	{
+	  ikev2_payload_add_sa (chain, sa->new_child[0].r_proposal);
+	  ikev2_payload_add_nonce (chain, sa->r_nonce);
+	  ikev2_payload_add_ts (chain, sa->new_child[0].tsi,
+				IKEV2_PAYLOAD_TSI);
+	  ikev2_payload_add_ts (chain, sa->new_child[0].tsr,
+				IKEV2_PAYLOAD_TSR);
+	  vec_del1 (sa->new_child, 0);
+	}
+      else if (sa->unsupported_cp)
+	{
+	  u8 *data = vec_new (u8, 1);
+
+	  data[0] = sa->unsupported_cp;
+	  ikev2_payload_add_notify (
+	    chain, IKEV2_NOTIFY_MSG_UNSUPPORTED_CRITICAL_PAYLOAD, data);
+	  vec_free (data);
+	  sa->unsupported_cp = 0;
+	}
       else
 	{
-	  if (vec_len (sa->rekey) > 0)
-	    {
-	      ikev2_payload_add_sa (chain, sa->rekey[0].r_proposal);
-	      ikev2_payload_add_nonce (chain, sa->r_nonce);
-	      ikev2_payload_add_ts (chain, sa->rekey[0].tsi,
-				    IKEV2_PAYLOAD_TSI);
-	      ikev2_payload_add_ts (chain, sa->rekey[0].tsr,
-				    IKEV2_PAYLOAD_TSR);
-	      vec_del1 (sa->rekey, 0);
-	    }
-	  else if (sa->unsupported_cp)
-	    {
-	      u8 *data = vec_new (u8, 1);
-
-	      data[0] = sa->unsupported_cp;
-	      ikev2_payload_add_notify (chain,
-					IKEV2_NOTIFY_MSG_UNSUPPORTED_CRITICAL_PAYLOAD,
-					data);
-	      vec_free (data);
-	      sa->unsupported_cp = 0;
-	    }
-	  else
-	    {
-	      ikev2_payload_add_notify (chain,
-					IKEV2_NOTIFY_MSG_NO_ADDITIONAL_SAS,
-					0);
-	    }
+	  ikev2_payload_add_notify (chain, IKEV2_NOTIFY_MSG_NO_ADDITIONAL_SAS,
+				    0);
 	}
     }
 
@@ -2631,6 +2663,7 @@ ikev2_retransmit_sa_init_one (ikev2_sa_t * sa, ike_header_t * ike,
 	  /* req is retransmit */
 	  if (sa->state == IKEV2_STATE_SA_INIT)
 	    {
+	      sa->stats.n_init_retransmit++;
 	      tmp = (ike_header_t *) sa->last_sa_init_res_packet_data;
 	      u32 slen = clib_net_to_host_u32 (tmp->length);
 	      ike->ispi = tmp->ispi;
@@ -2708,6 +2741,7 @@ ikev2_retransmit_resp (ikev2_sa_t * sa, ike_header_t * ike)
   /* retransmitted req */
   if (msg_id == sa->last_msg_id)
     {
+      sa->stats.n_retransmit++;
       ike_header_t *tmp = (ike_header_t *) sa->last_res_packet_data;
       u32 slen = clib_net_to_host_u32 (tmp->length);
       ike->ispi = tmp->ispi;
@@ -2792,8 +2826,8 @@ ikev2_rewrite_v4_addrs (ikev2_sa_t * sa, ip4_header_t * ih)
 }
 
 static_always_inline void
-ikev2_set_ip_address (ikev2_sa_t * sa, const void *iaddr,
-		      const void *raddr, const int af)
+ikev2_set_ip_address (ikev2_sa_t *sa, const void *iaddr, const void *raddr,
+		      const ip_address_family_t af)
 {
   ip_address_set (&sa->raddr, raddr, af);
   ip_address_set (&sa->iaddr, iaddr, af);
@@ -2833,18 +2867,35 @@ ikev2_generate_sa_init_data_and_log (ikev2_sa_t * sa)
     ikev2_elog_error (IKEV2_GENERATE_SA_INIT_OK_ERR_UNSUPP_STR);
 }
 
+static void
+ikev2_update_stats (vlib_main_t *vm, u32 node_index, ikev2_stats_t *s)
+{
+  vlib_node_increment_counter (vm, node_index, IKEV2_ERROR_KEEPALIVE,
+			       s->n_keepalives);
+  vlib_node_increment_counter (vm, node_index, IKEV2_ERROR_REKEY_REQ,
+			       s->n_rekey_req);
+  vlib_node_increment_counter (vm, node_index, IKEV2_ERROR_INIT_SA_REQ,
+			       s->n_sa_init_req);
+  vlib_node_increment_counter (vm, node_index, IKEV2_ERROR_IKE_AUTH_REQ,
+			       s->n_sa_auth_req);
+}
+
 static_always_inline uword
-ikev2_node_internal (vlib_main_t * vm,
-		     vlib_node_runtime_t * node, vlib_frame_t * frame,
-		     u8 is_ip4)
+ikev2_node_internal (vlib_main_t *vm, vlib_node_runtime_t *node,
+		     vlib_frame_t *frame, u8 is_ip4, u8 natt)
 {
   u32 n_left = frame->n_vectors, *from;
   ikev2_main_t *km = &ikev2_main;
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b;
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   ikev2_main_per_thread_data_t *ptd = ikev2_get_per_thread_data ();
+  ikev2_stats_t _stats, *stats = &_stats;
   int res;
 
+  /* no NAT traversal for ip6 */
+  ASSERT (!natt || is_ip4);
+
+  clib_memset_u16 (stats, 0, sizeof (stats[0]) / sizeof (u16));
   from = vlib_frame_vector_args (frame);
   vlib_get_buffers (vm, from, bufs, n_left);
   b = bufs;
@@ -2862,15 +2913,9 @@ ikev2_node_internal (vlib_main_t * vm,
       ikev2_sa_t sa;		/* temporary store for SA */
       u32 rlen, slen = 0;
       int ip_hdr_sz = 0;
-      int is_req = 0, has_non_esp_marker = 0;
+      int is_req = 0;
 
-      ASSERT (0 == b0->punt_reason
-	      || (is_ip4
-		  && b0->punt_reason ==
-		  ipsec_punt_reason[IPSEC_PUNT_IP4_SPI_UDP_0]));
-
-      if (is_ip4
-	  && b0->punt_reason == ipsec_punt_reason[IPSEC_PUNT_IP4_SPI_UDP_0])
+      if (natt)
 	{
 	  u8 *ptr = vlib_buffer_get_current (b0);
 	  ip40 = (ip4_header_t *) ptr;
@@ -2903,12 +2948,12 @@ ikev2_node_internal (vlib_main_t * vm,
       rlen = b0->current_length - ip_hdr_sz - sizeof (*udp0);
 
       /* check for non-esp marker */
-      if (*((u32 *) ike0) == 0)
+      if (natt)
 	{
+	  ASSERT (*((u32 *) ike0) == 0);
 	  ike0 =
 	    (ike_header_t *) ((u8 *) ike0 + sizeof (ikev2_non_esp_marker));
 	  rlen -= sizeof (ikev2_non_esp_marker);
-	  has_non_esp_marker = 1;
 	}
 
       if (clib_net_to_host_u32 (ike0->length) != rlen)
@@ -2932,6 +2977,8 @@ ikev2_node_internal (vlib_main_t * vm,
 
 	  if (ike_hdr_is_initiator (ike0))
 	    {
+	      sa0->stats.n_sa_init_req++;
+	      stats->n_sa_init_req++;
 	      if (ike0->rspi == 0)
 		{
 		  if (is_ip4)
@@ -2958,7 +3005,9 @@ ikev2_node_internal (vlib_main_t * vm,
 		      goto dispatch0;
 		    }
 
-		  res = ikev2_process_sa_init_req (vm, sa0, ike0, udp0, rlen);
+		  res = ikev2_process_sa_init_req (
+		    vm, sa0, ike0, udp0, rlen,
+		    vnet_buffer (b0)->sw_if_index[VLIB_RX]);
 		  if (!res)
 		    vlib_node_increment_counter (vm, node->node_index,
 						 IKEV2_ERROR_MALFORMED_PACKET,
@@ -2977,7 +3026,8 @@ ikev2_node_internal (vlib_main_t * vm,
 		      || sa0->state == IKEV2_STATE_NOTIFY_AND_DELETE)
 		    {
 		      ike0->flags = IKEV2_HDR_FLAG_RESPONSE;
-		      slen = ikev2_generate_message (b0, sa0, ike0, 0, udp0);
+		      slen =
+			ikev2_generate_message (b0, sa0, ike0, 0, udp0, stats);
 		      if (~0 == slen)
 			vlib_node_increment_counter (vm, node->node_index,
 						     IKEV2_ERROR_NO_BUFF_SPACE,
@@ -3028,8 +3078,8 @@ ikev2_node_internal (vlib_main_t * vm,
 			  ike0->msgid =
 			    clib_net_to_host_u32 (sai->last_init_msg_id);
 			  sa0->last_init_msg_id = sai->last_init_msg_id + 1;
-			  slen =
-			    ikev2_generate_message (b0, sa0, ike0, 0, udp0);
+			  slen = ikev2_generate_message (b0, sa0, ike0, 0,
+							 udp0, stats);
 			  if (~0 == slen)
 			    vlib_node_increment_counter (vm,
 							 node->node_index,
@@ -3100,8 +3150,12 @@ ikev2_node_internal (vlib_main_t * vm,
 		}
 	      else
 		{
+		  sa0->stats.n_sa_auth_req++;
+		  stats->n_sa_auth_req++;
 		  ike0->flags = IKEV2_HDR_FLAG_RESPONSE;
-		  slen = ikev2_generate_message (b0, sa0, ike0, 0, udp0);
+		  sa0->last_init_msg_id = 1;
+		  slen =
+		    ikev2_generate_message (b0, sa0, ike0, 0, udp0, stats);
 		  if (~0 == slen)
 		    vlib_node_increment_counter (vm, node->node_index,
 						 IKEV2_ERROR_NO_BUFF_SPACE,
@@ -3173,7 +3227,8 @@ ikev2_node_internal (vlib_main_t * vm,
 	      if (ike_hdr_is_request (ike0))
 		{
 		  ike0->flags = IKEV2_HDR_FLAG_RESPONSE;
-		  slen = ikev2_generate_message (b0, sa0, ike0, 0, udp0);
+		  slen =
+		    ikev2_generate_message (b0, sa0, ike0, 0, udp0, stats);
 		  if (~0 == slen)
 		    vlib_node_increment_counter (vm, node->node_index,
 						 IKEV2_ERROR_NO_BUFF_SPACE,
@@ -3233,12 +3288,36 @@ ikev2_node_internal (vlib_main_t * vm,
 		    }
 		  else
 		    {
+		      stats->n_rekey_req++;
+		      sa0->stats.n_rekey_req++;
 		      ike0->flags = IKEV2_HDR_FLAG_RESPONSE;
-		      slen = ikev2_generate_message (b0, sa0, ike0, 0, udp0);
+		      slen =
+			ikev2_generate_message (b0, sa0, ike0, 0, udp0, stats);
 		      if (~0 == slen)
 			vlib_node_increment_counter (vm, node->node_index,
 						     IKEV2_ERROR_NO_BUFF_SPACE,
 						     1);
+		    }
+		}
+	      else if (sa0->new_child)
+		{
+		  ikev2_child_sa_t *c;
+		  vec_add2 (sa0->childs, c, 1);
+		  memset (c, 0, sizeof (*c));
+		  c->r_proposals = sa0->new_child[0].r_proposal;
+		  c->i_proposals = sa0->new_child[0].i_proposal;
+		  c->tsi = sa0->new_child[0].tsi;
+		  c->tsr = sa0->new_child[0].tsr;
+		  ikev2_create_tunnel_interface (vm, sa0, c, p[0],
+						 c - sa0->childs, 0);
+		  if (ike_hdr_is_request (ike0))
+		    {
+		      ike0->flags = IKEV2_HDR_FLAG_RESPONSE;
+		      slen =
+			ikev2_generate_message (b0, sa0, ike0, 0, udp0, 0);
+		      if (~0 == slen)
+			vlib_node_increment_counter (
+			  vm, node->node_index, IKEV2_ERROR_NO_BUFF_SPACE, 1);
 		    }
 		}
 	    }
@@ -3271,13 +3350,13 @@ ikev2_node_internal (vlib_main_t * vm,
 	      if (udp0->dst_port == clib_net_to_host_u16 (IKEV2_PORT_NATT)
 		  && ikev2_natt_active (sa0))
 		{
-		  if (!has_non_esp_marker)
+		  if (!natt)
 		    slen = ikev2_insert_non_esp_marker (ike0, slen);
 		}
 	    }
 	  else
 	    {
-	      if (has_non_esp_marker)
+	      if (natt)
 		slen += sizeof (ikev2_non_esp_marker);
 
 	      u16 tp = udp0->dst_port;
@@ -3323,6 +3402,7 @@ ikev2_node_internal (vlib_main_t * vm,
       b += 1;
     }
 
+  ikev2_update_stats (vm, node->node_index, stats);
   vlib_node_increment_counter (vm, node->node_index,
 			       IKEV2_ERROR_PROCESSED, frame->n_vectors);
   vlib_buffer_enqueue_to_next (vm, node, from, nexts, frame->n_vectors);
@@ -3332,13 +3412,20 @@ ikev2_node_internal (vlib_main_t * vm,
 static uword
 ikev2_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * frame)
 {
-  return ikev2_node_internal (vm, node, frame, 1 /* is_ip4 */ );
+  return ikev2_node_internal (vm, node, frame, 1 /* is_ip4 */, 0);
+}
+
+static uword
+ikev2_ip4_natt (vlib_main_t *vm, vlib_node_runtime_t *node,
+		vlib_frame_t *frame)
+{
+  return ikev2_node_internal (vm, node, frame, 1 /* is_ip4 */, 1 /* natt */);
 }
 
 static uword
 ikev2_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * frame)
 {
-  return ikev2_node_internal (vm, node, frame, 0 /* is_ip4 */ );
+  return ikev2_node_internal (vm, node, frame, 0 /* is_ip4 */, 0);
 }
 
 /* *INDENT-OFF* */
@@ -3349,8 +3436,25 @@ VLIB_REGISTER_NODE (ikev2_node_ip4,static) = {
   .format_trace = format_ikev2_trace,
   .type = VLIB_NODE_TYPE_INTERNAL,
 
-  .n_errors = ARRAY_LEN(ikev2_error_strings),
-  .error_strings = ikev2_error_strings,
+  .n_errors = IKEV2_N_ERROR,
+  .error_counters = ikev2_error_counters,
+
+  .n_next_nodes = IKEV2_IP4_N_NEXT,
+  .next_nodes = {
+    [IKEV2_NEXT_IP4_LOOKUP] = "ip4-lookup",
+    [IKEV2_NEXT_IP4_ERROR_DROP] = "error-drop",
+  },
+};
+
+VLIB_REGISTER_NODE (ikev2_node_ip4_natt,static) = {
+  .function = ikev2_ip4_natt,
+  .name = "ikev2-ip4-natt",
+  .vector_size = sizeof (u32),
+  .format_trace = format_ikev2_trace,
+  .type = VLIB_NODE_TYPE_INTERNAL,
+
+  .n_errors = IKEV2_N_ERROR,
+  .error_counters = ikev2_error_counters,
 
   .n_next_nodes = IKEV2_IP4_N_NEXT,
   .next_nodes = {
@@ -3366,8 +3470,8 @@ VLIB_REGISTER_NODE (ikev2_node_ip6,static) = {
   .format_trace = format_ikev2_trace,
   .type = VLIB_NODE_TYPE_INTERNAL,
 
-  .n_errors = ARRAY_LEN(ikev2_error_strings),
-  .error_strings = ikev2_error_strings,
+  .n_errors = IKEV2_N_ERROR,
+  .error_counters = ikev2_error_counters,
 
   .n_next_nodes = IKEV2_IP6_N_NEXT,
   .next_nodes = {
@@ -3703,7 +3807,7 @@ ikev2_initiate_delete_ike_sa_internal (vlib_main_t * vm,
       ike0->flags = 0;
       ike0->msgid = clib_host_to_net_u32 (sa->last_init_msg_id);
       sa->last_init_msg_id += 1;
-      len = ikev2_generate_message (b0, sa, ike0, 0, 0);
+      len = ikev2_generate_message (b0, sa, ike0, 0, 0, 0);
       if (~0 == len)
 	return;
 
@@ -4373,7 +4477,7 @@ ikev2_delete_child_sa_internal (vlib_main_t * vm, ikev2_sa_t * sa,
   sa->del->spi = csa->i_proposals->spi;
   ike0->msgid = clib_host_to_net_u32 (sa->last_init_msg_id);
   sa->last_init_msg_id += 1;
-  len = ikev2_generate_message (b0, sa, ike0, 0, 0);
+  len = ikev2_generate_message (b0, sa, ike0, 0, 0, 0);
   if (~0 == len)
     return;
 
@@ -4499,7 +4603,7 @@ ikev2_rekey_child_sa_internal (vlib_main_t * vm, ikev2_sa_t * sa,
   RAND_bytes ((u8 *) & proposals[0].spi, sizeof (proposals[0].spi));
   rekey->spi = proposals[0].spi;
   rekey->ispi = csa->i_proposals->spi;
-  len = ikev2_generate_message (b0, sa, ike0, proposals, 0);
+  len = ikev2_generate_message (b0, sa, ike0, proposals, 0, 0);
   if (~0 == len)
     return;
 
@@ -4664,9 +4768,9 @@ ikev2_init (vlib_main_t * vm)
   udp_register_dst_port (vm, IKEV2_PORT_NATT, ikev2_node_ip4.index, 1);
   udp_register_dst_port (vm, IKEV2_PORT_NATT, ikev2_node_ip6.index, 0);
 
-  vlib_punt_hdl_t punt_hdl = vlib_punt_client_register ("ikev2-ip4");
+  vlib_punt_hdl_t punt_hdl = vlib_punt_client_register ("ikev2-ip4-natt");
   vlib_punt_register (punt_hdl, ipsec_punt_reason[IPSEC_PUNT_IP4_SPI_UDP_0],
-		      "ikev2-ip4");
+		      "ikev2-ip4-natt");
   ikev2_cli_reference ();
 
   km->log_level = IKEV2_LOG_ERROR;
@@ -4953,7 +5057,7 @@ ikev2_send_informational_request (ikev2_sa_t * sa)
   ike0->msgid = clib_host_to_net_u32 (sa->last_init_msg_id);
   ike0->flags = 0;
   sa->last_init_msg_id += 1;
-  len = ikev2_generate_message (b0, sa, ike0, 0, 0);
+  len = ikev2_generate_message (b0, sa, ike0, 0, 0, 0);
   if (~0 == len)
     return;
 

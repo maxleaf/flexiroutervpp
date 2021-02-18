@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018 Cisco and/or its affiliates.
+ * Copyright (c) 2020 Cisco and/or its affiliates.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at:
@@ -13,29 +13,15 @@
  * limitations under the License.
  */
 
-#ifndef included_clib_pmc_h
-#define included_clib_pmc_h
+#ifndef SRC_PLUGINS_TLSOPENSSL_TLS_BIO_H_
+#define SRC_PLUGINS_TLSOPENSSL_TLS_BIO_H_
 
-#if defined (__x86_64__)
+#include <vnet/session/session_types.h>
 
-always_inline u64
-clib_rdpmc (int counter_id)
-{
-  u32 a, d;
+BIO *BIO_new_tls (session_handle_t sh);
+BIO *BIO_new_dtls (session_handle_t sh);
 
-  asm volatile ("rdpmc":"=a" (a), "=d" (d):"c" (counter_id));
-  return (u64) a + ((u64) d << (u64) 32);
-}
-
-#else
-always_inline u64
-clib_rdpmc (int counter_id)
-{
-  return 0ULL;
-}
-#endif /* __aarch64__ */
-
-#endif /* included_clib_pmc_h */
+#endif /* SRC_PLUGINS_TLSOPENSSL_TLS_BIO_H_ */
 
 /*
  * fd.io coding-style-patch-verification: ON

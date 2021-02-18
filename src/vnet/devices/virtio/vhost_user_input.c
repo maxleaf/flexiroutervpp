@@ -37,6 +37,7 @@
 #include <vnet/devices/devices.h>
 #include <vnet/feature/feature.h>
 #include <vnet/udp/udp_packet.h>
+#include <vnet/interface/rx_queue_funcs.h>
 
 #include <vnet/devices/virtio/vhost_user.h>
 #include <vnet/devices/virtio/vhost_user_inline.h>
@@ -252,6 +253,7 @@ vhost_user_handle_rx_offload (vlib_buffer_t * b0, u8 * b0_data,
   ethernet_header_t *eh = (ethernet_header_t *) b0_data;
   u16 ethertype = clib_net_to_host_u16 (eh->type);
   u16 l2hdr_sz = sizeof (ethernet_header_t);
+  u32 oflags = 0;
 
   if (ethernet_frame_is_tagged (ethertype))
     {
@@ -277,7 +279,8 @@ vhost_user_handle_rx_offload (vlib_buffer_t * b0, u8 * b0_data,
     {
       ip4_header_t *ip4 = (ip4_header_t *) (b0_data + l2hdr_sz);
       l4_proto = ip4->protocol;
-      b0->flags |= VNET_BUFFER_F_IS_IP4 | VNET_BUFFER_F_OFFLOAD_IP_CKSUM;
+      b0->flags |= VNET_BUFFER_F_IS_IP4;
+      oflags |= VNET_BUFFER_OFFLOAD_F_IP_CKSUM;
     }
   else if (PREDICT_TRUE (ethertype == ETHERNET_TYPE_IP6))
     {
@@ -291,12 +294,12 @@ vhost_user_handle_rx_offload (vlib_buffer_t * b0, u8 * b0_data,
       tcp_header_t *tcp = (tcp_header_t *)
 	(b0_data + vnet_buffer (b0)->l4_hdr_offset);
       l4_hdr_sz = tcp_header_bytes (tcp);
-      b0->flags |= VNET_BUFFER_F_OFFLOAD_TCP_CKSUM;
+      oflags |= VNET_BUFFER_OFFLOAD_F_TCP_CKSUM;
     }
   else if (l4_proto == IP_PROTOCOL_UDP)
     {
       l4_hdr_sz = sizeof (udp_header_t);
-      b0->flags |= VNET_BUFFER_F_OFFLOAD_UDP_CKSUM;
+      oflags |= VNET_BUFFER_OFFLOAD_F_UDP_CKSUM;
     }
 
   if (hdr->gso_type == VIRTIO_NET_HDR_GSO_UDP)
@@ -317,19 +320,23 @@ vhost_user_handle_rx_offload (vlib_buffer_t * b0, u8 * b0_data,
       vnet_buffer2 (b0)->gso_l4_hdr_sz = l4_hdr_sz;
       b0->flags |= (VNET_BUFFER_F_GSO | VNET_BUFFER_F_IS_IP6);
     }
+
+  if (oflags)
+    vnet_buffer_offload_flags_set (b0, oflags);
 }
 
 static_always_inline void
-vhost_user_input_do_interrupt (vlib_main_t * vm, vhost_user_vring_t * txvq,
+vhost_user_input_do_interrupt (vlib_main_t * vm, vhost_user_intf_t * vui,
+			       vhost_user_vring_t * txvq,
 			       vhost_user_vring_t * rxvq)
 {
   f64 now = vlib_time_now (vm);
 
   if ((txvq->n_since_last_int) && (txvq->int_deadline < now))
-    vhost_user_send_call (vm, txvq);
+    vhost_user_send_call (vm, vui, txvq);
 
   if ((rxvq->n_since_last_int) && (rxvq->int_deadline < now))
-    vhost_user_send_call (vm, rxvq);
+    vhost_user_send_call (vm, vui, rxvq);
 }
 
 static_always_inline void
@@ -371,11 +378,9 @@ vhost_user_input_setup_frame (vlib_main_t * vm, vlib_node_runtime_t * node,
 }
 
 static_always_inline u32
-vhost_user_if_input (vlib_main_t * vm,
-		     vhost_user_main_t * vum,
-		     vhost_user_intf_t * vui,
-		     u16 qid, vlib_node_runtime_t * node,
-		     vnet_hw_if_rx_mode mode, u8 enable_csum)
+vhost_user_if_input (vlib_main_t *vm, vhost_user_main_t *vum,
+		     vhost_user_intf_t *vui, u16 qid,
+		     vlib_node_runtime_t *node, u8 enable_csum)
 {
   vhost_user_vring_t *txvq = &vui->vrings[VHOST_VRING_IDX_TX (qid)];
   vnet_feature_main_t *fm = &feature_main;
@@ -400,7 +405,7 @@ vhost_user_if_input (vlib_main_t * vm,
   {
     /* do we have pending interrupts ? */
     vhost_user_vring_t *rxvq = &vui->vrings[VHOST_VRING_IDX_RX (qid)];
-    vhost_user_input_do_interrupt (vm, txvq, rxvq);
+    vhost_user_input_do_interrupt (vm, vui, txvq, rxvq);
   }
 
   /*
@@ -410,7 +415,7 @@ vhost_user_if_input (vlib_main_t * vm,
    * When the traffic subsides, the scheduler switches the node back to
    * interrupt mode. We must tell the driver we want interrupt.
    */
-  if (PREDICT_FALSE (mode == VNET_HW_IF_RX_MODE_ADAPTIVE))
+  if (PREDICT_FALSE (txvq->mode == VNET_HW_IF_RX_MODE_ADAPTIVE))
     {
       if ((node->flags &
 	   VLIB_NODE_FLAG_SWITCH_FROM_POLLING_TO_INTERRUPT_MODE) ||
@@ -742,7 +747,7 @@ stop:
       txvq->n_since_last_int += n_rx_packets;
 
       if (txvq->n_since_last_int > vum->coalesce_frames)
-	vhost_user_send_call (vm, txvq);
+	vhost_user_send_call (vm, vui, txvq);
     }
 
   /* increase rx counters */
@@ -1080,10 +1085,9 @@ vhost_user_assemble_packet (vring_packed_desc_t * desc_table,
 }
 
 static_always_inline u32
-vhost_user_if_input_packed (vlib_main_t * vm, vhost_user_main_t * vum,
-			    vhost_user_intf_t * vui, u16 qid,
-			    vlib_node_runtime_t * node,
-			    vnet_hw_if_rx_mode mode, u8 enable_csum)
+vhost_user_if_input_packed (vlib_main_t *vm, vhost_user_main_t *vum,
+			    vhost_user_intf_t *vui, u16 qid,
+			    vlib_node_runtime_t *node, u8 enable_csum)
 {
   vhost_user_vring_t *txvq = &vui->vrings[VHOST_VRING_IDX_TX (qid)];
   vnet_feature_main_t *fm = &feature_main;
@@ -1116,7 +1120,7 @@ vhost_user_if_input_packed (vlib_main_t * vm, vhost_user_main_t * vum,
 
   /* do we have pending interrupts ? */
   vhost_user_vring_t *rxvq = &vui->vrings[VHOST_VRING_IDX_RX (qid)];
-  vhost_user_input_do_interrupt (vm, txvq, rxvq);
+  vhost_user_input_do_interrupt (vm, vui, txvq, rxvq);
 
   /*
    * For adaptive mode, it is optimized to reduce interrupts.
@@ -1125,7 +1129,7 @@ vhost_user_if_input_packed (vlib_main_t * vm, vhost_user_main_t * vum,
    * When the traffic subsides, the scheduler switches the node back to
    * interrupt mode. We must tell the driver we want interrupt.
    */
-  if (PREDICT_FALSE (mode == VNET_HW_IF_RX_MODE_ADAPTIVE))
+  if (PREDICT_FALSE (txvq->mode == VNET_HW_IF_RX_MODE_ADAPTIVE))
     {
       if ((node->flags &
 	   VLIB_NODE_FLAG_SWITCH_FROM_POLLING_TO_INTERRUPT_MODE) ||
@@ -1389,7 +1393,7 @@ vhost_user_if_input_packed (vlib_main_t * vm, vhost_user_main_t * vum,
     {
       txvq->n_since_last_int += n_rx_packets;
       if (txvq->n_since_last_int > vum->coalesce_frames)
-	vhost_user_send_call (vm, txvq);
+	vhost_user_send_call (vm, vui, txvq);
     }
 
   /* increase rx counters */
@@ -1414,39 +1418,31 @@ VLIB_NODE_FN (vhost_user_input_node) (vlib_main_t * vm,
   vhost_user_main_t *vum = &vhost_user_main;
   uword n_rx_packets = 0;
   vhost_user_intf_t *vui;
-  vnet_device_input_runtime_t *rt =
-    (vnet_device_input_runtime_t *) node->runtime_data;
-  vnet_device_and_queue_t *dq;
+  vnet_hw_if_rxq_poll_vector_t *pv = vnet_hw_if_get_rxq_poll_vector (vm, node);
+  vnet_hw_if_rxq_poll_vector_t *pve;
 
-  vec_foreach (dq, rt->devices_and_queues)
-  {
-    if ((node->state == VLIB_NODE_STATE_POLLING) ||
-	clib_atomic_swap_acq_n (&dq->interrupt_pending, 0))
-      {
-	vui =
-	  pool_elt_at_index (vum->vhost_user_interfaces, dq->dev_instance);
-	if (vhost_user_is_packed_ring_supported (vui))
-	  {
-	    if (vui->features & VIRTIO_FEATURE (VIRTIO_NET_F_CSUM))
-	      n_rx_packets += vhost_user_if_input_packed (vm, vum, vui,
-							  dq->queue_id, node,
-							  dq->mode, 1);
-	    else
-	      n_rx_packets += vhost_user_if_input_packed (vm, vum, vui,
-							  dq->queue_id, node,
-							  dq->mode, 0);
-	  }
-	else
-	  {
-	    if (vui->features & VIRTIO_FEATURE (VIRTIO_NET_F_CSUM))
-	      n_rx_packets += vhost_user_if_input (vm, vum, vui, dq->queue_id,
-						   node, dq->mode, 1);
-	    else
-	      n_rx_packets += vhost_user_if_input (vm, vum, vui, dq->queue_id,
-						   node, dq->mode, 0);
-	  }
-      }
-  }
+  vec_foreach (pve, pv)
+    {
+      vui = pool_elt_at_index (vum->vhost_user_interfaces, pve->dev_instance);
+      if (vhost_user_is_packed_ring_supported (vui))
+	{
+	  if (vui->features & VIRTIO_FEATURE (VIRTIO_NET_F_CSUM))
+	    n_rx_packets += vhost_user_if_input_packed (
+	      vm, vum, vui, pve->queue_id, node, 1);
+	  else
+	    n_rx_packets += vhost_user_if_input_packed (
+	      vm, vum, vui, pve->queue_id, node, 0);
+	}
+      else
+	{
+	  if (vui->features & VIRTIO_FEATURE (VIRTIO_NET_F_CSUM))
+	    n_rx_packets +=
+	      vhost_user_if_input (vm, vum, vui, pve->queue_id, node, 1);
+	  else
+	    n_rx_packets +=
+	      vhost_user_if_input (vm, vum, vui, pve->queue_id, node, 0);
+	}
+    }
 
   return n_rx_packets;
 }

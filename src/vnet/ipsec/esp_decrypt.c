@@ -27,12 +27,13 @@
 
 #include <vnet/gre/packet.h>
 
-#define foreach_esp_decrypt_next                \
-_(DROP, "error-drop")                           \
-_(IP4_INPUT, "ip4-input-no-checksum")           \
-_(IP6_INPUT, "ip6-input")                       \
-_(L2_INPUT, "l2-input")                         \
-_(HANDOFF, "handoff")
+#define foreach_esp_decrypt_next                                              \
+  _ (DROP, "error-drop")                                                      \
+  _ (IP4_INPUT, "ip4-input-no-checksum")                                      \
+  _ (IP6_INPUT, "ip6-input")                                                  \
+  _ (L2_INPUT, "l2-input")                                                    \
+  _ (MPLS_INPUT, "mpls-input")                                                \
+  _ (HANDOFF, "handoff")
 
 #define _(v, s) ESP_DECRYPT_NEXT_##v,
 typedef enum
@@ -42,11 +43,12 @@ typedef enum
     ESP_DECRYPT_N_NEXT,
 } esp_decrypt_next_t;
 
-#define foreach_esp_decrypt_post_next                  \
-_(DROP, "error-drop")                                  \
-_(IP4_INPUT, "ip4-input-no-checksum")                  \
-_(IP6_INPUT, "ip6-input")                              \
-_(L2_INPUT, "l2-input")
+#define foreach_esp_decrypt_post_next                                         \
+  _ (DROP, "error-drop")                                                      \
+  _ (IP4_INPUT, "ip4-input-no-checksum")                                      \
+  _ (IP6_INPUT, "ip6-input")                                                  \
+  _ (MPLS_INPUT, "mpls-input")                                                \
+  _ (L2_INPUT, "l2-input")
 
 #define _(v, s) ESP_DECRYPT_POST_NEXT_##v,
 typedef enum
@@ -202,6 +204,7 @@ esp_remove_tail (vlib_main_t * vm, vlib_buffer_t * b, vlib_buffer_t * last,
    return pointer to it */
 static_always_inline u8 *
 esp_move_icv (vlib_main_t * vm, vlib_buffer_t * first,
+	      esp_decrypt_packet_data_t * pd,
 	      esp_decrypt_packet_data2_t * pd2, u16 icv_sz, u16 * dif)
 {
   vlib_buffer_t *before_last, *bp;
@@ -220,6 +223,8 @@ esp_move_icv (vlib_main_t * vm, vlib_buffer_t * first,
   clib_memcpy_fast (lb_curr, vlib_buffer_get_tail (before_last) - first_sz,
 		    first_sz);
   before_last->current_length -= first_sz;
+  if (before_last == first)
+    pd->current_length -= first_sz;
   clib_memset (vlib_buffer_get_tail (before_last), 0, first_sz);
   if (dif)
     dif[0] = first_sz;
@@ -268,11 +273,12 @@ esp_insert_esn (vlib_main_t * vm, ipsec_sa_t * sa,
 
 static_always_inline u8 *
 esp_move_icv_esn (vlib_main_t * vm, vlib_buffer_t * first,
+		  esp_decrypt_packet_data_t * pd,
 		  esp_decrypt_packet_data2_t * pd2, u16 icv_sz,
 		  ipsec_sa_t * sa, u8 * extra_esn, u32 * len)
 {
   u16 dif = 0;
-  u8 *digest = esp_move_icv (vm, first, pd2, icv_sz, &dif);
+  u8 *digest = esp_move_icv (vm, first, pd, pd2, icv_sz, &dif);
   if (dif)
     *len -= dif;
 
@@ -398,6 +404,7 @@ esp_decrypt_chain_integ (vlib_main_t * vm, ipsec_per_thread_data_t * ptd,
 
 static_always_inline u32
 esp_decrypt_chain_crypto (vlib_main_t * vm, ipsec_per_thread_data_t * ptd,
+			  esp_decrypt_packet_data_t * pd,
 			  esp_decrypt_packet_data2_t * pd2,
 			  ipsec_sa_t * sa0, vlib_buffer_t * b, u8 icv_sz,
 			  u8 * start, u32 start_len, u8 ** tag, u16 * n_ch)
@@ -424,7 +431,7 @@ esp_decrypt_chain_crypto (vlib_main_t * vm, ipsec_per_thread_data_t * ptd,
 	      if (pd2->lb->current_length < icv_sz)
 		{
 		  u16 dif = 0;
-		  *tag = esp_move_icv (vm, b, pd2, icv_sz, &dif);
+		  *tag = esp_move_icv (vm, b, pd, pd2, icv_sz, &dif);
 
 		  /* this chunk does not contain crypto data */
 		  n_chunks -= 1;
@@ -506,7 +513,7 @@ esp_decrypt_prepare_sync_op (vlib_main_t * vm, vlib_node_runtime_t * node,
 	    {
 	      u8 extra_esn = 0;
 	      op->digest =
-		esp_move_icv_esn (vm, b, pd2, icv_sz, sa0,
+		esp_move_icv_esn (vm, b, pd, pd2, icv_sz, sa0,
 				  &extra_esn, &op->len);
 
 	      if (extra_esn)
@@ -558,34 +565,29 @@ esp_decrypt_prepare_sync_op (vlib_main_t * vm, vlib_node_runtime_t * node,
       op->key_index = sa0->crypto_key_index;
       op->iv = payload;
 
-      if (ipsec_sa_is_set_IS_AEAD (sa0))
+      if (ipsec_sa_is_set_IS_CTR (sa0))
 	{
-	  esp_header_t *esp0;
-	  esp_aead_t *aad;
-	  u8 *scratch;
-
-	  /*
-	   * construct the AAD and the nonce (Salt || IV) in a scratch
-	   * space in front of the IP header.
-	   */
-	  scratch = payload - esp_sz;
-	  esp0 = (esp_header_t *) (scratch);
-
-	  scratch -= (sizeof (*aad) + pd->hdr_sz);
-	  op->aad = scratch;
-
-	  op->aad_len = esp_aad_fill (op->aad, esp0, sa0);
-
-	  /*
-	   * we don't need to refer to the ESP header anymore so we
-	   * can overwrite it with the salt and use the IV where it is
-	   * to form the nonce = (Salt + IV)
-	   */
-	  op->iv -= sizeof (sa0->salt);
-	  clib_memcpy_fast (op->iv, &sa0->salt, sizeof (sa0->salt));
-
-	  op->tag = payload + len;
-	  op->tag_len = 16;
+	  /* construct nonce in a scratch space in front of the IP header */
+	  esp_ctr_nonce_t *nonce =
+	    (esp_ctr_nonce_t *) (payload - esp_sz - pd->hdr_sz -
+				 sizeof (*nonce));
+	  if (ipsec_sa_is_set_IS_AEAD (sa0))
+	    {
+	      /* constuct aad in a scratch space in front of the nonce */
+	      esp_header_t *esp0 = (esp_header_t *) (payload - esp_sz);
+	      op->aad = (u8 *) nonce - sizeof (esp_aead_t);
+	      op->aad_len = esp_aad_fill (op->aad, esp0, sa0);
+	      op->tag = payload + len;
+	      op->tag_len = 16;
+	    }
+	  else
+	    {
+	      nonce->ctr = clib_host_to_net_u32 (1);
+	    }
+	  nonce->salt = sa0->salt;
+	  ASSERT (sizeof (u64) == iv_sz);
+	  nonce->iv = *(u64 *) op->iv;
+	  op->iv = (u8 *) nonce;
 	}
       op->src = op->dst = payload += iv_sz;
       op->len = len - iv_sz;
@@ -596,7 +598,7 @@ esp_decrypt_prepare_sync_op (vlib_main_t * vm, vlib_node_runtime_t * node,
 	  /* buffer is chained */
 	  op->flags |= VNET_CRYPTO_OP_FLAG_CHAINED_BUFFERS;
 	  op->chunk_index = vec_len (ptd->chunks);
-	  esp_decrypt_chain_crypto (vm, ptd, pd2, sa0, b, icv_sz,
+	  esp_decrypt_chain_crypto (vm, ptd, pd, pd2, sa0, b, icv_sz,
 				    payload, len - pd->iv_sz + pd->icv_sz,
 				    &op->tag, &op->n_chunks);
 	}
@@ -646,7 +648,7 @@ esp_decrypt_prepare_async_frame (vlib_main_t * vm,
 	  if (pd2->lb->current_length < icv_sz)
 	    {
 	      u8 extra_esn = 0;
-	      tag = esp_move_icv_esn (vm, b, pd2, icv_sz, sa0,
+	      tag = esp_move_icv_esn (vm, b, pd, pd2, icv_sz, sa0,
 				      &extra_esn, &integ_len);
 
 	      if (extra_esn)
@@ -692,32 +694,27 @@ out:
   len -= esp_sz;
   iv = payload;
 
-  if (ipsec_sa_is_set_IS_AEAD (sa0))
+  if (ipsec_sa_is_set_IS_CTR (sa0))
     {
-      esp_header_t *esp0;
-      u8 *scratch;
-
-      /*
-       * construct the AAD and the nonce (Salt || IV) in a scratch
-       * space in front of the IP header.
-       */
-      scratch = payload - esp_sz;
-      esp0 = (esp_header_t *) (scratch);
-
-      scratch -= (sizeof (esp_aead_t) + pd->hdr_sz);
-      aad = scratch;
-
-      esp_aad_fill (aad, esp0, sa0);
-
-      /*
-       * we don't need to refer to the ESP header anymore so we
-       * can overwrite it with the salt and use the IV where it is
-       * to form the nonce = (Salt + IV)
-       */
-      iv -= sizeof (sa0->salt);
-      clib_memcpy_fast (iv, &sa0->salt, sizeof (sa0->salt));
-
-      tag = payload + len;
+      /* construct nonce in a scratch space in front of the IP header */
+      esp_ctr_nonce_t *nonce =
+	(esp_ctr_nonce_t *) (payload - esp_sz - pd->hdr_sz - sizeof (*nonce));
+      if (ipsec_sa_is_set_IS_AEAD (sa0))
+	{
+	  /* constuct aad in a scratch space in front of the nonce */
+	  esp_header_t *esp0 = (esp_header_t *) (payload - esp_sz);
+	  aad = (u8 *) nonce - sizeof (esp_aead_t);
+	  esp_aad_fill (aad, esp0, sa0);
+	  tag = payload + len;
+	}
+      else
+	{
+	  nonce->ctr = clib_host_to_net_u32 (1);
+	}
+      nonce->salt = sa0->salt;
+      ASSERT (sizeof (u64) == iv_sz);
+      nonce->iv = *(u64 *) iv;
+      iv = (u8 *) nonce;
     }
 
   crypto_start_offset = (payload += iv_sz) - b->data;
@@ -728,7 +725,7 @@ out:
       /* buffer is chained */
       flags |= VNET_CRYPTO_OP_FLAG_CHAINED_BUFFERS;
 
-      crypto_len = esp_decrypt_chain_crypto (vm, ptd, pd2, sa0, b, icv_sz,
+      crypto_len = esp_decrypt_chain_crypto (vm, ptd, pd, pd2, sa0, b, icv_sz,
 					     payload,
 					     len - pd->iv_sz + pd->icv_sz,
 					     &tag, 0);
@@ -904,6 +901,13 @@ esp_decrypt_post_crypto (vlib_main_t * vm, vlib_node_runtime_t * node,
       else if (next_header == IP_PROTOCOL_IPV6)
 	{
 	  next[0] = ESP_DECRYPT_NEXT_IP6_INPUT;
+	  b->current_data = pd->current_data + adv;
+	  b->current_length = pd->current_length - adv;
+	  esp_remove_tail (vm, b, lb, tail);
+	}
+      else if (next_header == IP_PROTOCOL_MPLS_IN_IP)
+	{
+	  next[0] = ESP_DECRYPT_NEXT_MPLS_INPUT;
 	  b->current_data = pd->current_data + adv;
 	  b->current_length = pd->current_length - adv;
 	  esp_remove_tail (vm, b, lb, tail);
@@ -1108,17 +1112,18 @@ esp_decrypt_inline (vlib_main_t * vm,
 	    }
 	}
 
-      if (PREDICT_FALSE (~0 == sa0->decrypt_thread_index))
+      if (PREDICT_FALSE (~0 == sa0->thread_index))
 	{
 	  /* this is the first packet to use this SA, claim the SA
 	   * for this thread. this could happen simultaneously on
 	   * another thread */
-	  clib_atomic_cmp_and_swap (&sa0->decrypt_thread_index, ~0,
+	  clib_atomic_cmp_and_swap (&sa0->thread_index, ~0,
 				    ipsec_sa_assign_thread (thread_index));
 	}
 
-      if (PREDICT_FALSE (thread_index != sa0->decrypt_thread_index))
+      if (PREDICT_FALSE (thread_index != sa0->thread_index))
 	{
+	  vnet_buffer (b[0])->ipsec.thread_index = sa0->thread_index;
 	  esp_set_next_index (is_async, from, nexts, from[b - bufs],
 			      &n_async_drop, ESP_DECRYPT_NEXT_HANDOFF, next);
 	  next[0] = ESP_DECRYPT_NEXT_HANDOFF;
@@ -1452,6 +1457,7 @@ VLIB_REGISTER_NODE (esp4_decrypt_node) = {
     [ESP_DECRYPT_NEXT_DROP] = "ip4-drop",
     [ESP_DECRYPT_NEXT_IP4_INPUT] = "ip4-input-no-checksum",
     [ESP_DECRYPT_NEXT_IP6_INPUT] = "ip6-input",
+    [ESP_DECRYPT_NEXT_MPLS_INPUT] = "mpls-drop",
     [ESP_DECRYPT_NEXT_L2_INPUT] = "l2-input",
     [ESP_DECRYPT_NEXT_HANDOFF] = "esp4-decrypt-handoff",
   },
@@ -1483,6 +1489,7 @@ VLIB_REGISTER_NODE (esp6_decrypt_node) = {
     [ESP_DECRYPT_NEXT_DROP] = "ip6-drop",
     [ESP_DECRYPT_NEXT_IP4_INPUT] = "ip4-input-no-checksum",
     [ESP_DECRYPT_NEXT_IP6_INPUT] = "ip6-input",
+    [ESP_DECRYPT_NEXT_MPLS_INPUT] = "mpls-drop",
     [ESP_DECRYPT_NEXT_L2_INPUT] = "l2-input",
     [ESP_DECRYPT_NEXT_HANDOFF]=  "esp6-decrypt-handoff",
   },
@@ -1512,6 +1519,7 @@ VLIB_REGISTER_NODE (esp4_decrypt_tun_node) = {
     [ESP_DECRYPT_NEXT_DROP] = "ip4-drop",
     [ESP_DECRYPT_NEXT_IP4_INPUT] = "ip4-input-no-checksum",
     [ESP_DECRYPT_NEXT_IP6_INPUT] = "ip6-input",
+    [ESP_DECRYPT_NEXT_MPLS_INPUT] = "mpls-input",
     [ESP_DECRYPT_NEXT_L2_INPUT] = "l2-input",
     [ESP_DECRYPT_NEXT_HANDOFF] = "esp4-decrypt-tun-handoff",
   },
@@ -1541,6 +1549,7 @@ VLIB_REGISTER_NODE (esp6_decrypt_tun_node) = {
     [ESP_DECRYPT_NEXT_DROP] = "ip6-drop",
     [ESP_DECRYPT_NEXT_IP4_INPUT] = "ip4-input-no-checksum",
     [ESP_DECRYPT_NEXT_IP6_INPUT] = "ip6-input",
+    [ESP_DECRYPT_NEXT_MPLS_INPUT] = "mpls-input",
     [ESP_DECRYPT_NEXT_L2_INPUT] = "l2-input",
     [ESP_DECRYPT_NEXT_HANDOFF]=  "esp6-decrypt-tun-handoff",
   },

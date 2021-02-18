@@ -14,6 +14,7 @@
 export WS_ROOT=$(CURDIR)
 export BR=$(WS_ROOT)/build-root
 CCACHE_DIR?=$(BR)/.ccache
+SHELL:=/bin/bash
 GDB?=gdb
 PLATFORM?=vpp
 SAMPLE_PLUGIN?=no
@@ -64,12 +65,13 @@ endif
 DEB_DEPENDS  = curl build-essential autoconf automake ccache
 DEB_DEPENDS += debhelper dkms git libtool libapr1-dev dh-systemd dh-python
 DEB_DEPENDS += libconfuse-dev git-review exuberant-ctags cscope pkg-config
-DEB_DEPENDS += lcov chrpath autoconf indent clang-format libnuma-dev
+DEB_DEPENDS += lcov chrpath autoconf libnuma-dev
 DEB_DEPENDS += python3-all python3-setuptools check
-DEB_DEPENDS += libboost-all-dev libffi-dev python3-ply libmbedtls-dev
+DEB_DEPENDS += libffi-dev python3-ply libmbedtls-dev
 DEB_DEPENDS += cmake ninja-build uuid-dev python3-jsonschema python3-yaml
 DEB_DEPENDS += python3-venv  # ensurepip
 DEB_DEPENDS += python3-dev   # needed for python3 -m pip install psutil
+DEB_DEPENDS += libnl-3-dev libnl-route-3-dev
 # python3.6 on 16.04 requires python36-dev
 
 LIBFFI=libffi6 # works on all but 20.04 and debian-testing
@@ -77,17 +79,21 @@ LIBFFI=libffi6 # works on all but 20.04 and debian-testing
 ifeq ($(OS_VERSION_ID),18.04)
 	DEB_DEPENDS += python-dev python-all python-pip python-virtualenv
 	DEB_DEPENDS += libssl-dev
-	DEB_DEPENDS += clang-9
+	DEB_DEPENDS += clang-9 clang-format-10
 else ifeq ($(OS_VERSION_ID),20.04)
 	DEB_DEPENDS += python3-virtualenv
 	DEB_DEPENDS += libssl-dev
 	DEB_DEPENDS += libelf-dev # for libbpf (af_xdp)
+	DEB_DEPENDS += clang-format-10
 	LIBFFI=libffi7
-else ifeq ($(OS_ID)-$(OS_VERSION_ID),debian-9)
-	DEB_DEPENDS += libssl1.0-dev
-	DEB_DEPENDS += python-all python-pip
-	DEB_DEPENDS += python-dev python-all python-pip python-virtualenv
+else ifeq ($(OS_VERSION_ID),20.10)
+        DEB_DEPENDS += python3-virtualenv
+        DEB_DEPENDS += libssl-dev
+        DEB_DEPENDS += libelf-dev # for libbpf (af_xdp)
+        DEB_DEPENDS += clang-format-10
+        LIBFFI=libffi8ubuntu1
 else ifeq ($(OS_ID)-$(OS_VERSION_ID),debian-10)
+	DEB_DEPENDS += python3-virtualenv virtualenv
 	DEB_DEPENDS += libssl-dev
 	DEB_DEPENDS += libelf-dev # for libbpf (af_xdp)
 else
@@ -102,7 +108,6 @@ RPM_DEPENDS  = redhat-lsb glibc-static
 RPM_DEPENDS += apr-devel
 RPM_DEPENDS += numactl-devel
 RPM_DEPENDS += check check-devel
-RPM_DEPENDS += boost boost-devel
 RPM_DEPENDS += selinux-policy selinux-policy-devel
 RPM_DEPENDS += ninja-build
 RPM_DEPENDS += libuuid-devel
@@ -110,6 +115,7 @@ RPM_DEPENDS += mbedtls-devel
 RPM_DEPENDS += ccache
 RPM_DEPENDS += xmlto
 RPM_DEPENDS += elfutils-libelf-devel
+RPM_DEPENDS += libnl3-devel
 
 ifeq ($(OS_ID),fedora)
 	RPM_DEPENDS += dnf-utils
@@ -508,7 +514,7 @@ endef
 endif
 
 %.files: .FORCE
-	@find . \( -name '*\.[chyS]' -o -name '*\.java' -o -name '*\.lex' \) -and \
+	@find . \( -name '*\.[chyS]' -o -name '*\.java' -o -name '*\.lex' -o -name '*\.py' \) -and \
 		\( -not -path './build-root*' -o -path \
 		'./build-root/build-vpp_debug-native/dpdk*' \) > $@
 
@@ -613,7 +619,10 @@ compdb:
 
 .PHONY: checkstyle
 checkstyle: checkfeaturelist
-	@build-root/scripts/checkstyle.sh
+ifeq ($(shell which clang-format-10),)
+	@sudo apt-get install -y clang-format-10
+endif
+	@extras/scripts/checkstyle.sh
 
 .PHONY: checkstyle-commit
 checkstyle-commit:
@@ -627,7 +636,7 @@ checkstyle-all: checkstyle-commit checkstyle checkstyle-test
 
 .PHONY: fixstyle
 fixstyle:
-	@build-root/scripts/checkstyle.sh --fix
+	@extras/scripts/checkstyle.sh --fix
 
 .PHONY: checkstyle-api
 checkstyle-api:
