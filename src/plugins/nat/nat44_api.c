@@ -31,7 +31,8 @@
 #include <nat/nat44.api_enum.h>
 #include <nat/nat44.api_types.h>
 
-#include <nat/nat_ha.h>
+#include <nat/nat44-ei/nat44_ei_ha.h>
+#include <nat/nat44-ei/nat44_ei.h>
 #include <nat/nat_inlines.h>
 
 #include <nat/nat44/inlines.h>
@@ -333,6 +334,31 @@ vl_api_nat_get_timeouts_t_handler (vl_api_nat_get_timeouts_t * mp)
 }
 
 static void
+vl_api_nat_set_fq_options_t_handler (vl_api_nat_set_fq_options_t *mp)
+{
+  snat_main_t *sm = &snat_main;
+  vl_api_nat_set_fq_options_reply_t *rmp;
+  int rv = 0;
+  u32 frame_queue_nelts = ntohl (mp->frame_queue_nelts);
+  rv = snat_set_frame_queue_nelts (frame_queue_nelts);
+  REPLY_MACRO (VL_API_NAT_SET_FQ_OPTIONS_REPLY);
+}
+
+static void
+vl_api_nat_show_fq_options_t_handler (vl_api_nat_show_fq_options_t *mp)
+{
+  vl_api_nat_show_fq_options_reply_t *rmp;
+  snat_main_t *sm = &snat_main;
+  int rv = 0;
+  /* clang-format off */
+  REPLY_MACRO2_ZERO (VL_API_NAT_SHOW_FQ_OPTIONS_REPLY,
+  ({
+    rmp->frame_queue_nelts = htonl (sm->frame_queue_nelts);
+  }));
+  /* clang-format on */
+}
+
+static void
   vl_api_nat_set_addr_and_port_alloc_alg_t_handler
   (vl_api_nat_set_addr_and_port_alloc_alg_t * mp)
 {
@@ -350,11 +376,11 @@ static void
   switch (mp->alg)
     {
     case NAT_ADDR_AND_PORT_ALLOC_ALG_DEFAULT:
-      nat_set_alloc_addr_and_port_default ();
+      nat44_ei_set_alloc_default ();
       break;
     case NAT_ADDR_AND_PORT_ALLOC_ALG_MAPE:
-      nat_set_alloc_addr_and_port_mape (ntohs (mp->psid), mp->psid_offset,
-					mp->psid_length);
+      nat44_ei_set_alloc_mape (ntohs (mp->psid), mp->psid_offset,
+			       mp->psid_length);
       break;
     case NAT_ADDR_AND_PORT_ALLOC_ALG_RANGE:
       port_start = ntohs (mp->start_port);
@@ -364,7 +390,7 @@ static void
 	  rv = VNET_API_ERROR_INVALID_VALUE;
 	  goto send_reply;
 	}
-      nat_set_alloc_addr_and_port_range (port_start, port_end);
+      nat44_ei_set_alloc_range (port_start, port_end);
       break;
     default:
       rv = VNET_API_ERROR_INVALID_VALUE;
@@ -827,13 +853,10 @@ static void
   tag = format (0, "%s", mp->tag);
   vec_terminate_c_string (tag);
 
-  rv = snat_add_static_mapping (local_addr, external_addr, local_port,
-				external_port, vrf_id,
-				mp->flags & NAT_API_IS_ADDR_ONLY,
-				external_sw_if_index, proto,
-				mp->is_add, twice_nat,
-				mp->flags & NAT_API_IS_OUT2IN_ONLY, tag, 0,
-				pool_addr, 0);
+  rv = snat_add_static_mapping (
+    local_addr, external_addr, local_port, external_port, vrf_id,
+    mp->flags & NAT_API_IS_ADDR_ONLY, external_sw_if_index, proto, mp->is_add,
+    twice_nat, mp->flags & NAT_API_IS_OUT2IN_ONLY, tag, 0, pool_addr, 0);
   vec_free (tag);
 
   REPLY_MACRO (VL_API_NAT44_ADD_DEL_STATIC_MAPPING_REPLY);
@@ -1134,6 +1157,12 @@ static void
   int rv = 0;
   u8 is_del;
 
+  if (sm->static_mapping_only)
+    {
+      rv = VNET_API_ERROR_FEATURE_DISABLED;
+      goto send_reply;
+    }
+
   is_del = !mp->is_add;
 
   VALIDATE_SW_IF_INDEX (mp);
@@ -1142,6 +1171,8 @@ static void
 				   mp->flags & NAT_API_IS_TWICE_NAT);
 
   BAD_SW_IF_INDEX_LABEL;
+
+send_reply:
   REPLY_MACRO (VL_API_NAT44_ADD_DEL_INTERFACE_ADDR_REPLY);
 }
 
@@ -1621,7 +1652,7 @@ vl_api_nat44_del_session_t_handler (vl_api_nat44_del_session_t * mp)
       nat44_del_ed_session (sm, &addr, port, &eh_addr, eh_port, mp->protocol,
 			    vrf_id, is_in);
   else
-    rv = nat44_del_session (sm, &addr, port, proto, vrf_id, is_in);
+    rv = nat44_ei_del_session (sm, &addr, port, proto, vrf_id, is_in);
 
   REPLY_MACRO (VL_API_NAT44_DEL_SESSION_REPLY);
 }

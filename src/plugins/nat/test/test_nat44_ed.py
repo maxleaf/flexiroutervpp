@@ -5,6 +5,7 @@ from io import BytesIO
 from random import randint
 
 import scapy.compat
+from framework import tag_fixme_vpp_workers
 from framework import VppTestCase, VppTestRunner
 from scapy.data import IP_PROTOS
 from scapy.layers.inet import IP, TCP, UDP, ICMP, GRE
@@ -916,6 +917,7 @@ class NAT44EDTestCase(VppTestCase):
                              "%d" % self.tcp_external_port)
 
 
+@tag_fixme_vpp_workers
 class TestNAT44ED(NAT44EDTestCase):
     """ NAT44ED Test Case """
 
@@ -1904,6 +1906,7 @@ class TestNAT44ED(NAT44EDTestCase):
             raise
 
 
+@tag_fixme_vpp_workers
 class TestNAT44EDMW(TestNAT44ED):
     """ NAT44ED MW Test Case """
     worker_config = "workers 1"
@@ -2004,7 +2007,7 @@ class TestNAT44EDMW(TestNAT44ED):
         # out2in
         tc1 = self.get_stats_counter('/nat44/ed/out2in/fastpath/tcp')
         uc1 = self.get_stats_counter('/nat44/ed/out2in/fastpath/udp')
-        ic1 = self.get_stats_counter('/nat44/ed/out2in/slowpath/icmp')
+        ic1 = self.get_stats_counter('/nat44/ed/out2in/fastpath/icmp')
         dc1 = self.get_stats_counter('/nat44/ed/out2in/fastpath/drops')
 
         pkts = self.create_stream_out(self.pg1)
@@ -2017,7 +2020,7 @@ class TestNAT44EDMW(TestNAT44ED):
         if_idx = self.pg1.sw_if_index
         tc2 = self.get_stats_counter('/nat44/ed/out2in/fastpath/tcp')
         uc2 = self.get_stats_counter('/nat44/ed/out2in/fastpath/udp')
-        ic2 = self.get_stats_counter('/nat44/ed/out2in/slowpath/icmp')
+        ic2 = self.get_stats_counter('/nat44/ed/out2in/fastpath/icmp')
         dc2 = self.get_stats_counter('/nat44/ed/out2in/fastpath/drops')
 
         self.assertEqual(tc2[if_idx] - tc1[if_idx], 2)
@@ -3364,7 +3367,7 @@ class TestNAT44EDMW(TestNAT44ED):
             udpn = self.get_stats_counter(
                 '/nat44/ed/out2in/fastpath/udp')
             icmpn = self.get_stats_counter(
-                '/nat44/ed/out2in/slowpath/icmp')
+                '/nat44/ed/out2in/fastpath/icmp')
             drops = self.get_stats_counter(
                 '/nat44/ed/out2in/fastpath/drops')
 
@@ -3383,7 +3386,7 @@ class TestNAT44EDMW(TestNAT44ED):
                 '/nat44/ed/out2in/fastpath/udp')
             self.assertEqual(cnt[if_idx] - udpn[if_idx], 1)
             cnt = self.get_stats_counter(
-                '/nat44/ed/out2in/slowpath/icmp')
+                '/nat44/ed/out2in/fastpath/icmp')
             self.assertEqual(cnt[if_idx] - icmpn[if_idx], 1)
             cnt = self.get_stats_counter(
                 '/nat44/ed/out2in/fastpath/drops')
