@@ -13,6 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *   - use source port and not flowhash for UDP header.
+
+ */
+
 #include <vppinfra/error.h>
 #include <vppinfra/hash.h>
 #include <vnet/vnet.h>
@@ -272,13 +280,24 @@ vxlan_encap_inline (vlib_main_t * vm,
 	      udp0 = &hdr0->udp;
 	      udp1 = &hdr1->udp;
 	    }
-
+#ifdef FLEXIWAN_FIX
+	  /* Fix UDP length  and set source port */
+	  udp0->length = payload_l0;
+	  udp0->src_port = clib_host_to_net_u16 (t0->src_port);
+	  udp1->length = payload_l1;
+   	  udp1->src_port = clib_host_to_net_u16 (t0->src_port);
+#else /* FLEXIWAN_FIX */
 	  /* Fix UDP length  and set source port */
 	  udp0->length = payload_l0;
 	  udp0->src_port = flow_hash0;
 	  udp1->length = payload_l1;
 	  udp1->src_port = flow_hash1;
-
+#endif /* FLEXIWAN_FIX */
+#ifdef FLEXIWAN_FEATURE
+	  /* setting dest port provisioned my flexiManage, if dest behind NAT */
+	  udp0->dst_port = clib_host_to_net_u16(t0->dst_port);
+	  udp1->dst_port = clib_host_to_net_u16(t1->dst_port);
+#endif
 	  if (csum_offload)
 	    {
 	      b0->flags |= csum_flags;
@@ -454,9 +473,19 @@ vxlan_encap_inline (vlib_main_t * vm,
 	      udp0 = &hdr->udp;
 	    }
 
+#ifdef FLEXIWAN_FIX
+	  /* Fix UDP length  and set source port */
+	  udp0->length = payload_l0;
+	  udp0->src_port = clib_host_to_net_u16 (t0->src_port);
+#else /* FLEXIWAN_FIX */
 	  /* Fix UDP length  and set source port */
 	  udp0->length = payload_l0;
 	  udp0->src_port = flow_hash0;
+#endif /* FLEXIWAN_FIX */
+#ifdef FLEXIWAN_FEATURE
+	  /* setting dest port provisioned my flexiManage, if dest behind NAT */
+	  udp0->dst_port = clib_host_to_net_u16(t0->dst_port);
+#endif
 
 	  if (csum_offload)
 	    {

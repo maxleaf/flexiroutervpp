@@ -13,9 +13,19 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - new CLI command: show lookup result.
+ */
+
 #include <vnet/fib/fib_table.h>
 #include <vnet/fib/fib_entry.h>
 #include <vnet/fib/ip4_fib.h>
+
+#ifdef FLEXIWAN_FIX
+#include <vnet/dpo/load_balance.h>
+#endif /*FLEXIWAN_FIX*/
 
 /*
  * A table of prefixes to be added to tables and the sources for them
@@ -867,3 +877,69 @@ VLIB_CLI_COMMAND (ip4_show_fib_command, static) = {
     .function = ip4_show_fib,
 };
 /* *INDENT-ON* */
+
+#ifdef FLEXIWAN_FIX
+static clib_error_t *
+ip4_show_lookup (vlib_main_t * vm,
+                unformat_input_t * input, vlib_cli_command_t * cmd)
+{
+    ip4_main_t *    im4 = &ip4_main;
+    ip4_address_t   addr;
+    fib_table_t*    fib_table;
+    int i, table_id = -1, fib_index = ~0;
+
+    while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    {
+        if (unformat (input, "%U", unformat_ip4_address, &addr))
+            ;
+        else if (unformat (input, "table %d", &table_id))
+            ;
+        else if (unformat (input, "index %d", &fib_index))
+            ;
+        else
+            break;
+    }
+
+    pool_foreach (fib_table, im4->fibs)
+      {
+        ip4_fib_t*            fib = pool_elt_at_index(im4->v4_fibs, fib_table->ft_index);
+        ip4_fib_mtrie_t*      mtrie;
+        ip4_fib_mtrie_leaf_t  leaf;
+        const load_balance_t* lb;
+        const dpo_id_t*       dpo;
+        u32                   lb_index;
+
+        if (table_id >= 0 && table_id != (int)fib->table_id)
+            continue;
+        if (fib_index != ~0 && fib_index != (int)fib->index)
+            continue;
+
+        mtrie = &fib->mtrie;
+        leaf = ip4_fib_mtrie_lookup_step_one (mtrie, &addr);
+        leaf = ip4_fib_mtrie_lookup_step (mtrie, leaf, &addr, 2);
+        leaf = ip4_fib_mtrie_lookup_step (mtrie, leaf, &addr, 3);
+        lb_index = ip4_fib_mtrie_leaf_get_adj_index (leaf);
+        lb = load_balance_get (lb_index);
+
+        vlib_cli_output (vm, "mtrie:");
+        for (i = 0; i < lb->lb_n_buckets; i++)
+          {
+            dpo = load_balance_get_bucket_i (lb, i);
+            vlib_cli_output (vm, "  %U", format_dpo_id, dpo, 0);
+          }
+        vlib_cli_output (vm, "fib:");
+        ip4_fib_table_show_one(fib, vm, &addr, 32 /*matching_mask*/, 1);
+    };
+  return 0;
+}
+#endif /*FLEXIWAN_FIX*/
+
+#ifdef FLEXIWAN_FIX
+/* *INDENT-OFF* */
+VLIB_CLI_COMMAND (ip4_show_lookup_cmd, static) = {
+    .path = "show ip lookup",
+    .short_help = "show ip lookup [table <table-id>] [fib <fib-id>] [<ip4-addr>[/<mask>]]",
+    .function = ip4_show_lookup,
+};
+/* *INDENT-ON* */
+#endif /* FLEXIWAN_FIX */
