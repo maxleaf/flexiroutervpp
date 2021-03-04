@@ -13,12 +13,6 @@
  * limitations under the License.
  */
 
-/*
- *  Copyright (C) 2020 flexiWAN Ltd.
- *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
- *   - Disabled ASSERT on punting
- */
-
 #include <vlib/vlib.h>
 #include <vlib/unix/plugin.h>
 #include <vlibmemory/api.h>
@@ -1805,9 +1799,9 @@ ikev2_sa_auth_init (ikev2_sa_t * sa)
 
   if (sa->i_auth.method == IKEV2_AUTH_METHOD_SHARED_KEY_MIC)
     {
-      vec_free (sa->i_auth.data);
       key_pad = format (0, "%s", IKEV2_KEY_PAD);
       psk = ikev2_calc_prf (tr_prf, sa->i_auth.data, key_pad);
+      vec_free (sa->i_auth.data);
       sa->i_auth.data = ikev2_calc_prf (tr_prf, psk, authmsg);
       sa->i_auth.method = IKEV2_AUTH_METHOD_SHARED_KEY_MIC;
       vec_free (psk);
@@ -2738,7 +2732,7 @@ ikev2_retransmit_resp (ikev2_sa_t * sa, ike_header_t * ike)
   u32 msg_id = clib_net_to_host_u32 (ike->msgid);
 
   /* new req */
-  if (msg_id > sa->last_msg_id)
+  if (msg_id > sa->last_msg_id || sa->last_msg_id == ~0)
     {
       sa->last_msg_id = msg_id;
       return 0;
@@ -3152,6 +3146,7 @@ ikev2_node_internal (vlib_main_t *vm, vlib_node_runtime_t *node,
 
 	      if (sa0->is_initiator)
 		{
+		  sa0->last_msg_id = ~0;
 		  ikev2_del_sa_init (sa0->ispi);
 		}
 	      else
@@ -3159,7 +3154,6 @@ ikev2_node_internal (vlib_main_t *vm, vlib_node_runtime_t *node,
 		  sa0->stats.n_sa_auth_req++;
 		  stats->n_sa_auth_req++;
 		  ike0->flags = IKEV2_HDR_FLAG_RESPONSE;
-		  sa0->last_init_msg_id = 1;
 		  slen =
 		    ikev2_generate_message (b0, sa0, ike0, 0, udp0, stats);
 		  if (~0 == slen)
@@ -3729,27 +3723,7 @@ ikev2_set_local_key (vlib_main_t * vm, u8 * file)
 static_always_inline vnet_api_error_t
 ikev2_register_udp_port (ikev2_profile_t * p, u16 port)
 {
-  ikev2_main_t *km = &ikev2_main;
-  udp_dst_port_info_t *pi;
-
-  uword *v = hash_get (km->udp_ports, port);
-  pi = udp_get_dst_port_info (&udp_main, port, UDP_IP4);
-
-  if (v)
-    {
-      /* IKE already uses this port, only increment reference counter */
-      ASSERT (pi);
-      v[0]++;
-    }
-  else
-    {
-      if (pi)
-	return VNET_API_ERROR_UDP_PORT_TAKEN;
-
-      udp_register_dst_port (km->vlib_main, port,
-			     ipsec4_tun_input_node.index, 1);
-      hash_set (km->udp_ports, port, 1);
-    }
+  ipsec_register_udp_port (port);
   p->ipsec_over_udp_port = port;
   return 0;
 }
@@ -3757,24 +3731,10 @@ ikev2_register_udp_port (ikev2_profile_t * p, u16 port)
 static_always_inline void
 ikev2_unregister_udp_port (ikev2_profile_t * p)
 {
-  ikev2_main_t *km = &ikev2_main;
-  uword *v;
-
   if (p->ipsec_over_udp_port == IPSEC_UDP_PORT_NONE)
     return;
 
-  v = hash_get (km->udp_ports, p->ipsec_over_udp_port);
-  if (!v)
-    return;
-
-  v[0]--;
-
-  if (v[0] == 0)
-    {
-      udp_unregister_dst_port (km->vlib_main, p->ipsec_over_udp_port, 1);
-      hash_unset (km->udp_ports, p->ipsec_over_udp_port);
-    }
-
+  ipsec_unregister_udp_port (p->ipsec_over_udp_port);
   p->ipsec_over_udp_port = IPSEC_UDP_PORT_NONE;
 }
 
@@ -4177,9 +4137,7 @@ ikev2_set_profile_ipsec_udp_port (vlib_main_t * vm, u8 * name, u16 port,
 				  u8 is_set)
 {
   ikev2_profile_t *p = ikev2_profile_index_by_name (name);
-  ikev2_main_t *km = &ikev2_main;
   vnet_api_error_t rv = 0;
-  uword *v;
 
   if (!p)
     return VNET_API_ERROR_INVALID_VALUE;
@@ -4193,10 +4151,6 @@ ikev2_set_profile_ipsec_udp_port (vlib_main_t * vm, u8 * name, u16 port,
     }
   else
     {
-      v = hash_get (km->udp_ports, port);
-      if (!v)
-	return VNET_API_ERROR_IKE_NO_PORT;
-
       if (p->ipsec_over_udp_port == IPSEC_UDP_PORT_NONE)
 	return VNET_API_ERROR_INVALID_VALUE;
 
@@ -4767,7 +4721,6 @@ ikev2_init (vlib_main_t * vm)
 
   km->sa_by_ispi = hash_create (0, sizeof (uword));
   km->sw_if_indices = hash_create (0, 0);
-  km->udp_ports = hash_create (0, sizeof (uword));
 
   udp_register_dst_port (vm, IKEV2_PORT, ikev2_node_ip4.index, 1);
   udp_register_dst_port (vm, IKEV2_PORT, ikev2_node_ip6.index, 0);
@@ -5121,7 +5074,6 @@ ikev2_mngr_process_fn (vlib_main_t * vm, vlib_node_runtime_t * rt,
 		       vlib_frame_t * f)
 {
   ikev2_main_t *km = &ikev2_main;
-  ipsec_main_t *im = &ipsec_main;
   ikev2_profile_t *p;
   ikev2_child_sa_t *c;
   u32 *sai;
@@ -5195,9 +5147,10 @@ ikev2_mngr_process_fn (vlib_main_t * vm, vlib_node_runtime_t * rt,
       /* process ipsec sas */
       ipsec_sa_t *sa;
       /* *INDENT-OFF* */
-      pool_foreach (sa, im->sad)  {
-        ikev2_mngr_process_ipsec_sa(sa);
-      }
+      pool_foreach (sa, ipsec_sa_pool)
+	{
+	  ikev2_mngr_process_ipsec_sa (sa);
+	}
       /* *INDENT-ON* */
 
       ikev2_process_pending_sa_init (km);

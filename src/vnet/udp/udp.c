@@ -116,7 +116,6 @@ udp_connection_alloc (u32 thread_index)
   uc->c_c_index = uc - um->connections[thread_index];
   uc->c_thread_index = thread_index;
   uc->c_proto = TRANSPORT_PROTO_UDP;
-  clib_spinlock_init (&uc->rx_lock);
   return uc;
 }
 
@@ -124,6 +123,7 @@ void
 udp_connection_free (udp_connection_t * uc)
 {
   u32 thread_index = uc->c_thread_index;
+  clib_spinlock_free (&uc->rx_lock);
   if (CLIB_DEBUG)
     clib_memset (uc, 0xFA, sizeof (*uc));
   pool_put (udp_main.connections[thread_index], uc);
@@ -222,6 +222,7 @@ udp_session_unbind (u32 listener_index)
   listener = udp_listener_get (listener_index);
   udp_connection_unregister_port (clib_net_to_host_u16 (listener->c_lcl_port),
 				  listener->c_is_ip4);
+  clib_spinlock_free (&listener->rx_lock);
   pool_put (um->listener_pool, listener);
   return 0;
 }
@@ -388,9 +389,14 @@ conn_alloc:
   uc->mss = rmt->mss ? rmt->mss : udp_default_mtu (um, uc->c_is_ip4);
   uc->flags |= UDP_CONN_F_OWNS_PORT;
   if (rmt->transport_flags & TRANSPORT_CFG_F_CONNECTED)
-    uc->flags |= UDP_CONN_F_CONNECTED;
+    {
+      uc->flags |= UDP_CONN_F_CONNECTED;
+    }
   else
-    uc->c_flags |= TRANSPORT_CONNECTION_F_CLESS;
+    {
+      clib_spinlock_init (&uc->rx_lock);
+      uc->c_flags |= TRANSPORT_CONNECTION_F_CLESS;
+    }
 
   return uc->c_c_index;
 }

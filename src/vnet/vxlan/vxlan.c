@@ -1255,7 +1255,7 @@ vnet_vxlan_add_del_rx_flow (u32 hw_if_index, u32 t_index, int is_add)
 			  .dst_addr.addr = t->src.ip4,
 			  .src_addr.mask.as_u32 = ~0,
 			  .dst_addr.mask.as_u32 = ~0,
-#ifdef FLEXIWAN_FEATURE
+#ifdef FLEXIWAN_FEATURE   // nnoww - FDIO puts src_port into .dst_port.port, so we have to use .src_port.port which is not set at all today !!!!!
 			  .dst_port.port = t->dst_port,
 #else
 			  .dst_port.port = t->src_port,

@@ -25,6 +25,7 @@ from util import ppp
 from vpp_papi import VppEnum
 from vpp_papi_provider import CliFailedCommandError
 from vpp_acl import AclRule, VppAcl, VppAclInterface
+from vpp_policer import PolicerAction, VppPolicer
 
 
 def config_tun_params(p, encryption_type, tun_if, src=None, dst=None):
@@ -89,7 +90,7 @@ class TemplateIpsec4TunProtect(object):
 
     encryption_type = ESP
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
     tun4_input_node = "ipsec4-tun-input"
 
     def config_sa_tra(self, p):
@@ -206,7 +207,7 @@ class TemplateIpsec4TunIfEspUdp(TemplateIpsec4TunProtect,
     """ IPsec UDP tunnel interface tests """
 
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
     encryption_type = ESP
 
     @classmethod
@@ -283,7 +284,7 @@ class TemplateIpsec4TunIfEspUdp(TemplateIpsec4TunProtect,
 class TestIpsec4TunIfEsp1(TemplateIpsec4TunIfEsp, IpsecTun4Tests):
     """ Ipsec ESP - TUN tests """
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
 
     def test_tun_basic64(self):
         """ ipsec 6o4 tunnel basic test """
@@ -450,7 +451,7 @@ class TestIpsec6TunIfEsp1(TemplateIpsec6TunIfEsp,
                           IpsecTun6Tests):
     """ Ipsec ESP - TUN tests """
     tun6_encrypt_node_name = "esp6-encrypt-tun"
-    tun6_decrypt_node_name = "esp6-decrypt-tun"
+    tun6_decrypt_node_name = ["esp6-decrypt-tun", "esp6-decrypt-tun-post"]
 
     def test_tun_basic46(self):
         """ ipsec 4o6 tunnel basic test """
@@ -467,14 +468,144 @@ class TestIpsec6TunIfEspHandoff(TemplateIpsec6TunIfEsp,
                                 IpsecTun6HandoffTests):
     """ Ipsec ESP 6 Handoff tests """
     tun6_encrypt_node_name = "esp6-encrypt-tun"
-    tun6_decrypt_node_name = "esp6-decrypt-tun"
+    tun6_decrypt_node_name = ["esp6-decrypt-tun", "esp6-decrypt-tun-post"]
+
+    def test_tun_handoff_66_police(self):
+        """ ESP 6o6 tunnel with policer worker hand-off test """
+        self.vapi.cli("clear errors")
+        self.vapi.cli("clear ipsec sa")
+
+        N_PKTS = 15
+        p = self.params[socket.AF_INET6]
+
+        action_tx = PolicerAction(
+            VppEnum.vl_api_sse2_qos_action_type_t.SSE2_QOS_ACTION_API_TRANSMIT,
+            0)
+        policer = VppPolicer(self, "pol1", 80, 0, 1000, 0,
+                             conform_action=action_tx,
+                             exceed_action=action_tx,
+                             violate_action=action_tx)
+        policer.add_vpp_config()
+
+        # Start policing on tun
+        policer.apply_vpp_config(p.tun_if.sw_if_index, True)
+
+        for pol_bind in [1, 0]:
+            policer.bind_vpp_config(pol_bind, True)
+
+            # inject alternately on worker 0 and 1.
+            for worker in [0, 1, 0, 1]:
+                send_pkts = self.gen_encrypt_pkts6(p, p.scapy_tun_sa,
+                                                   self.tun_if,
+                                                   src=p.remote_tun_if_host,
+                                                   dst=self.pg1.remote_ip6,
+                                                   count=N_PKTS)
+                recv_pkts = self.send_and_expect(self.tun_if, send_pkts,
+                                                 self.pg1, worker=worker)
+                self.verify_decrypted6(p, recv_pkts)
+                self.logger.debug(self.vapi.cli("show trace max 100"))
+
+            stats = policer.get_stats()
+            stats0 = policer.get_stats(worker=0)
+            stats1 = policer.get_stats(worker=1)
+
+            if pol_bind is 1:
+                # First pass: Worker 1, should have done all the policing
+                self.assertEqual(stats, stats1)
+
+                # Worker 0, should have handed everything off
+                self.assertEqual(stats0['conform_packets'], 0)
+                self.assertEqual(stats0['exceed_packets'], 0)
+                self.assertEqual(stats0['violate_packets'], 0)
+            else:
+                # Second pass: both workers should have policed equal amounts
+                self.assertGreater(stats1['conform_packets'], 0)
+                self.assertEqual(stats1['exceed_packets'], 0)
+                self.assertGreater(stats1['violate_packets'], 0)
+
+                self.assertGreater(stats0['conform_packets'], 0)
+                self.assertEqual(stats0['exceed_packets'], 0)
+                self.assertGreater(stats0['violate_packets'], 0)
+
+                self.assertEqual(stats0['conform_packets'] +
+                                 stats0['violate_packets'],
+                                 stats1['conform_packets'] +
+                                 stats1['violate_packets'])
+
+        policer.apply_vpp_config(p.tun_if.sw_if_index, False)
+        policer.remove_vpp_config()
 
 
 class TestIpsec4TunIfEspHandoff(TemplateIpsec4TunIfEsp,
                                 IpsecTun4HandoffTests):
     """ Ipsec ESP 4 Handoff tests """
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
+
+    def test_tun_handoff_44_police(self):
+        """ ESP 4o4 tunnel with policer worker hand-off test """
+        self.vapi.cli("clear errors")
+        self.vapi.cli("clear ipsec sa")
+
+        N_PKTS = 15
+        p = self.params[socket.AF_INET]
+
+        action_tx = PolicerAction(
+            VppEnum.vl_api_sse2_qos_action_type_t.SSE2_QOS_ACTION_API_TRANSMIT,
+            0)
+        policer = VppPolicer(self, "pol1", 80, 0, 1000, 0,
+                             conform_action=action_tx,
+                             exceed_action=action_tx,
+                             violate_action=action_tx)
+        policer.add_vpp_config()
+
+        # Start policing on tun
+        policer.apply_vpp_config(p.tun_if.sw_if_index, True)
+
+        for pol_bind in [1, 0]:
+            policer.bind_vpp_config(pol_bind, True)
+
+            # inject alternately on worker 0 and 1.
+            for worker in [0, 1, 0, 1]:
+                send_pkts = self.gen_encrypt_pkts(p, p.scapy_tun_sa,
+                                                  self.tun_if,
+                                                  src=p.remote_tun_if_host,
+                                                  dst=self.pg1.remote_ip4,
+                                                  count=N_PKTS)
+                recv_pkts = self.send_and_expect(self.tun_if, send_pkts,
+                                                 self.pg1, worker=worker)
+                self.verify_decrypted(p, recv_pkts)
+                self.logger.debug(self.vapi.cli("show trace max 100"))
+
+            stats = policer.get_stats()
+            stats0 = policer.get_stats(worker=0)
+            stats1 = policer.get_stats(worker=1)
+
+            if pol_bind is 1:
+                # First pass: Worker 1, should have done all the policing
+                self.assertEqual(stats, stats1)
+
+                # Worker 0, should have handed everything off
+                self.assertEqual(stats0['conform_packets'], 0)
+                self.assertEqual(stats0['exceed_packets'], 0)
+                self.assertEqual(stats0['violate_packets'], 0)
+            else:
+                # Second pass: both workers should have policed equal amounts
+                self.assertGreater(stats1['conform_packets'], 0)
+                self.assertEqual(stats1['exceed_packets'], 0)
+                self.assertGreater(stats1['violate_packets'], 0)
+
+                self.assertGreater(stats0['conform_packets'], 0)
+                self.assertEqual(stats0['exceed_packets'], 0)
+                self.assertGreater(stats0['violate_packets'], 0)
+
+                self.assertEqual(stats0['conform_packets'] +
+                                 stats0['violate_packets'],
+                                 stats1['conform_packets'] +
+                                 stats1['violate_packets'])
+
+        policer.apply_vpp_config(p.tun_if.sw_if_index, False)
+        policer.remove_vpp_config()
 
 
 @tag_fixme_vpp_workers
@@ -485,7 +616,7 @@ class TestIpsec4MultiTunIfEsp(TemplateIpsec4TunProtect,
 
     encryption_type = ESP
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
 
     def setUp(self):
         super(TestIpsec4MultiTunIfEsp, self).setUp()
@@ -557,7 +688,7 @@ class TestIpsec4TunIfEspAll(TemplateIpsec4TunProtect,
 
     encryption_type = ESP
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
 
     def setUp(self):
         super(TestIpsec4TunIfEspAll, self).setUp()
@@ -715,7 +846,7 @@ class TestIpsec4TunIfEspNoAlgo(TemplateIpsec4TunProtect,
 
     encryption_type = ESP
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
 
     def setUp(self):
         super(TestIpsec4TunIfEspNoAlgo, self).setUp()
@@ -760,7 +891,7 @@ class TestIpsec6MultiTunIfEsp(TemplateIpsec6TunProtect,
 
     encryption_type = ESP
     tun6_encrypt_node_name = "esp6-encrypt-tun"
-    tun6_decrypt_node_name = "esp6-decrypt-tun"
+    tun6_decrypt_node_name = ["esp6-decrypt-tun", "esp6-decrypt-tun-post"]
 
     def setUp(self):
         super(TestIpsec6MultiTunIfEsp, self).setUp()
@@ -808,7 +939,7 @@ class TestIpsecGreTebIfEsp(TemplateIpsec,
                            IpsecTun4Tests):
     """ Ipsec GRE TEB ESP - TUN tests """
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
     encryption_type = ESP
     omac = "00:11:22:33:44:55"
 
@@ -919,7 +1050,7 @@ class TestIpsecGreTebVlanIfEsp(TemplateIpsec,
                                IpsecTun4Tests):
     """ Ipsec GRE TEB ESP - TUN tests """
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
     encryption_type = ESP
     omac = "00:11:22:33:44:55"
 
@@ -1039,7 +1170,7 @@ class TestIpsecGreTebIfEspTra(TemplateIpsec,
                               IpsecTun4Tests):
     """ Ipsec GRE TEB ESP - Tra tests """
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
     encryption_type = ESP
     omac = "00:11:22:33:44:55"
 
@@ -1144,7 +1275,7 @@ class TestIpsecGreTebUdpIfEspTra(TemplateIpsec,
                                  IpsecTun4Tests):
     """ Ipsec GRE TEB UDP ESP - Tra tests """
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
     encryption_type = ESP
     omac = "00:11:22:33:44:55"
 
@@ -1265,7 +1396,7 @@ class TestIpsecGreIfEsp(TemplateIpsec,
                         IpsecTun4Tests):
     """ Ipsec GRE ESP - TUN tests """
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
     encryption_type = ESP
 
     def gen_encrypt_pkts(self, p, sa, sw_intf, src, dst, count=1,
@@ -1368,7 +1499,7 @@ class TestIpsecGreIfEspTra(TemplateIpsec,
                            IpsecTun4Tests):
     """ Ipsec GRE ESP - TRA tests """
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
     encryption_type = ESP
 
     def gen_encrypt_pkts(self, p, sa, sw_intf, src, dst, count=1,
@@ -1474,7 +1605,7 @@ class TestIpsecGreIfEspTra(TemplateIpsec,
                                           dst=self.pg1.remote_ip6)
         self.send_and_assert_no_replies(self.tun_if, tx)
         node_name = ('/err/%s/unsupported payload' %
-                     self.tun4_decrypt_node_name)
+                     self.tun4_decrypt_node_name[0])
         self.assertEqual(1, self.statistics.get_err_counter(node_name))
 
 
@@ -1482,7 +1613,7 @@ class TestIpsecGre6IfEspTra(TemplateIpsec,
                             IpsecTun6Tests):
     """ Ipsec GRE ESP - TRA tests """
     tun6_encrypt_node_name = "esp6-encrypt-tun"
-    tun6_decrypt_node_name = "esp6-decrypt-tun"
+    tun6_decrypt_node_name = ["esp6-decrypt-tun", "esp6-decrypt-tun-post"]
     encryption_type = ESP
 
     def gen_encrypt_pkts6(self, p, sa, sw_intf, src, dst, count=1,
@@ -1580,7 +1711,7 @@ class TestIpsecGre6IfEspTra(TemplateIpsec,
 class TestIpsecMGreIfEspTra4(TemplateIpsec, IpsecTun4):
     """ Ipsec mGRE ESP v4 TRA tests """
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
     encryption_type = ESP
 
     def gen_encrypt_pkts(self, p, sa, sw_intf, src, dst, count=1,
@@ -1712,7 +1843,7 @@ class TestIpsecMGreIfEspTra4(TemplateIpsec, IpsecTun4):
 class TestIpsecMGreIfEspTra6(TemplateIpsec, IpsecTun6):
     """ Ipsec mGRE ESP v6 TRA tests """
     tun6_encrypt_node_name = "esp6-encrypt-tun"
-    tun6_decrypt_node_name = "esp6-decrypt-tun"
+    tun6_decrypt_node_name = ["esp6-decrypt-tun", "esp6-decrypt-tun-post"]
     encryption_type = ESP
 
     def gen_encrypt_pkts6(self, p, sa, sw_intf, src, dst, count=1,
@@ -1961,7 +2092,7 @@ class TestIpsec4TunProtectTun(TemplateIpsec,
 
     encryption_type = ESP
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
 
     def setUp(self):
         super(TestIpsec4TunProtectTun, self).setUp()
@@ -2075,7 +2206,7 @@ class TestIpsec4TunProtectTunDrop(TemplateIpsec,
 
     encryption_type = ESP
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
 
     def setUp(self):
         super(TestIpsec4TunProtectTunDrop, self).setUp()
@@ -2124,7 +2255,7 @@ class TestIpsec6TunProtect(TemplateIpsec,
 
     encryption_type = ESP
     tun6_encrypt_node_name = "esp6-encrypt-tun"
-    tun6_decrypt_node_name = "esp6-decrypt-tun"
+    tun6_decrypt_node_name = ["esp6-decrypt-tun", "esp6-decrypt-tun-post"]
 
     def setUp(self):
         super(TestIpsec6TunProtect, self).setUp()
@@ -2251,7 +2382,7 @@ class TestIpsec6TunProtectTun(TemplateIpsec,
 
     encryption_type = ESP
     tun6_encrypt_node_name = "esp6-encrypt-tun"
-    tun6_decrypt_node_name = "esp6-decrypt-tun"
+    tun6_decrypt_node_name = ["esp6-decrypt-tun", "esp6-decrypt-tun-post"]
 
     def setUp(self):
         super(TestIpsec6TunProtectTun, self).setUp()
@@ -2354,7 +2485,7 @@ class TestIpsec6TunProtectTunDrop(TemplateIpsec,
 
     encryption_type = ESP
     tun6_encrypt_node_name = "esp6-encrypt-tun"
-    tun6_decrypt_node_name = "esp6-decrypt-tun"
+    tun6_decrypt_node_name = ["esp6-decrypt-tun", "esp6-decrypt-tun-post"]
 
     def setUp(self):
         super(TestIpsec6TunProtectTunDrop, self).setUp()
@@ -2401,7 +2532,7 @@ class TemplateIpsecItf4(object):
 
     encryption_type = ESP
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
     tun4_input_node = "ipsec4-tun-input"
 
     def config_sa_tun(self, p, src, dst):
@@ -2580,6 +2711,56 @@ class TestIpsecItf4(TemplateIpsec,
         self.unconfig_sa(p)
         self.unconfig_network(p)
 
+    def test_tun_44_police(self):
+        """IPSEC interface IPv4 with input policer"""
+        n_pkts = 127
+        p = self.ipv4_params
+
+        self.config_network(p)
+        self.config_sa_tun(p,
+                           self.pg0.local_ip4,
+                           self.pg0.remote_ip4)
+        self.config_protect(p)
+
+        action_tx = PolicerAction(
+            VppEnum.vl_api_sse2_qos_action_type_t.SSE2_QOS_ACTION_API_TRANSMIT,
+            0)
+        policer = VppPolicer(self, "pol1", 80, 0, 1000, 0,
+                             conform_action=action_tx,
+                             exceed_action=action_tx,
+                             violate_action=action_tx)
+        policer.add_vpp_config()
+
+        # Start policing on tun
+        policer.apply_vpp_config(p.tun_if.sw_if_index, True)
+
+        self.verify_tun_44(p, count=n_pkts)
+        c = p.tun_if.get_rx_stats()
+        self.assertEqual(c['packets'], n_pkts)
+        c = p.tun_if.get_tx_stats()
+        self.assertEqual(c['packets'], n_pkts)
+
+        stats = policer.get_stats()
+
+        # Single rate, 2 colour policer - expect conform, violate but no exceed
+        self.assertGreater(stats['conform_packets'], 0)
+        self.assertEqual(stats['exceed_packets'], 0)
+        self.assertGreater(stats['violate_packets'], 0)
+
+        # Stop policing on tun
+        policer.apply_vpp_config(p.tun_if.sw_if_index, False)
+        self.verify_tun_44(p, count=n_pkts)
+
+        # No new policer stats
+        statsnew = policer.get_stats()
+        self.assertEqual(stats, statsnew)
+
+        # teardown
+        policer.remove_vpp_config()
+        self.unconfig_protect(p)
+        self.unconfig_sa(p)
+        self.unconfig_network(p)
+
 
 class TestIpsecItf4MPLS(TemplateIpsec,
                         TemplateIpsecItf4,
@@ -2662,7 +2843,7 @@ class TemplateIpsecItf6(object):
 
     encryption_type = ESP
     tun6_encrypt_node_name = "esp6-encrypt-tun"
-    tun6_decrypt_node_name = "esp6-decrypt-tun"
+    tun6_decrypt_node_name = ["esp6-decrypt-tun", "esp6-decrypt-tun-post"]
     tun6_input_node = "ipsec6-tun-input"
 
     def config_sa_tun(self, p, src, dst):
@@ -2822,11 +3003,66 @@ class TestIpsecItf6(TemplateIpsec,
         self.unconfig_sa(np)
         self.unconfig_network(p)
 
+    def test_tun_66_police(self):
+        """IPSEC interface IPv6 with input policer"""
+        tf = VppEnum.vl_api_tunnel_encap_decap_flags_t
+        n_pkts = 127
+        p = self.ipv6_params
+        p.inner_hop_limit = 24
+        p.outer_hop_limit = 23
+        p.outer_flow_label = 243224
+        p.tun_flags = tf.TUNNEL_API_ENCAP_DECAP_FLAG_ENCAP_COPY_HOP_LIMIT
+
+        self.config_network(p)
+        self.config_sa_tun(p,
+                           self.pg0.local_ip6,
+                           self.pg0.remote_ip6)
+        self.config_protect(p)
+
+        action_tx = PolicerAction(
+            VppEnum.vl_api_sse2_qos_action_type_t.SSE2_QOS_ACTION_API_TRANSMIT,
+            0)
+        policer = VppPolicer(self, "pol1", 80, 0, 1000, 0,
+                             conform_action=action_tx,
+                             exceed_action=action_tx,
+                             violate_action=action_tx)
+        policer.add_vpp_config()
+
+        # Start policing on tun
+        policer.apply_vpp_config(p.tun_if.sw_if_index, True)
+
+        self.verify_tun_66(p, count=n_pkts)
+        c = p.tun_if.get_rx_stats()
+        self.assertEqual(c['packets'], n_pkts)
+        c = p.tun_if.get_tx_stats()
+        self.assertEqual(c['packets'], n_pkts)
+
+        stats = policer.get_stats()
+
+        # Single rate, 2 colour policer - expect conform, violate but no exceed
+        self.assertGreater(stats['conform_packets'], 0)
+        self.assertEqual(stats['exceed_packets'], 0)
+        self.assertGreater(stats['violate_packets'], 0)
+
+        # Stop policing on tun
+        policer.apply_vpp_config(p.tun_if.sw_if_index, False)
+        self.verify_tun_66(p, count=n_pkts)
+
+        # No new policer stats
+        statsnew = policer.get_stats()
+        self.assertEqual(stats, statsnew)
+
+        # teardown
+        policer.remove_vpp_config()
+        self.unconfig_protect(p)
+        self.unconfig_sa(p)
+        self.unconfig_network(p)
+
 
 class TestIpsecMIfEsp4(TemplateIpsec, IpsecTun4):
     """ Ipsec P2MP ESP v4 tests """
     tun4_encrypt_node_name = "esp4-encrypt-tun"
-    tun4_decrypt_node_name = "esp4-decrypt-tun"
+    tun4_decrypt_node_name = ["esp4-decrypt-tun", "esp4-decrypt-tun-post"]
     encryption_type = ESP
 
     def gen_encrypt_pkts(self, p, sa, sw_intf, src, dst, count=1,

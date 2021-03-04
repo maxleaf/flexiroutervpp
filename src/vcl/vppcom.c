@@ -2658,10 +2658,13 @@ vppcom_epoll_ctl (uint32_t vep_handle, int op, uint32_t session_handle,
       s->vep.et_mask = VEP_DEFAULT_ET_MASK;
       s->vep.ev = *event;
       txf = vcl_session_is_ct (s) ? s->ct_tx_fifo : s->tx_fifo;
-      if (event->events & EPOLLOUT)
-	svm_fifo_add_want_deq_ntf (txf, SVM_FIFO_WANT_DEQ_NOTIF_IF_FULL);
-      else
-	svm_fifo_del_want_deq_ntf (txf, SVM_FIFO_WANT_DEQ_NOTIF_IF_FULL);
+      if (txf)
+	{
+	  if (event->events & EPOLLOUT)
+	    svm_fifo_add_want_deq_ntf (txf, SVM_FIFO_WANT_DEQ_NOTIF_IF_FULL);
+	  else
+	    svm_fifo_del_want_deq_ntf (txf, SVM_FIFO_WANT_DEQ_NOTIF_IF_FULL);
+	}
       VDBG (1, "EPOLL_CTL_MOD: vep_sh %u, sh %u, events 0x%x, data 0x%llx!",
 	    vep_handle, session_handle, event->events, event->data.u64);
       break;
@@ -3631,6 +3634,23 @@ vppcom_session_attr (uint32_t session_handle, uint32_t op,
 	}
       *(u32 *) buffer = session->vrf;
       *buflen = sizeof (u32);
+      break;
+
+    case VPPCOM_ATTR_GET_DOMAIN:
+      if (!(buffer && buflen && (*buflen >= sizeof (int))))
+	{
+	  rv = VPPCOM_EINVAL;
+	  break;
+	}
+
+      if (session->transport.is_ip4)
+	*(int *) buffer = AF_INET;
+      else
+	*(int *) buffer = AF_INET6;
+      *buflen = sizeof (int);
+
+      VDBG (2, "VPPCOM_ATTR_GET_DOMAIN: %d, buflen %u", *(int *) buffer,
+	    *buflen);
       break;
 
     default:

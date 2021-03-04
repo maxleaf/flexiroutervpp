@@ -20,6 +20,7 @@ if(VPP_USE_SYSTEM_DPDK)
     pkg_check_modules(DPDK REQUIRED libdpdk)
     message(WARNING "-- linking dpdk plugin against system libdpdk, version ${DPDK_VERSION}")
     set(DPDK_LINK_FLAGS ${DPDK_LDFLAGS})
+    include_directories (${DPDK_INCLUDE_DIRS})
 else()
     ##############################################################################
     # Find lib and include files
@@ -134,24 +135,15 @@ add_vpp_plugin(dpdk
   device/format.c
   device/init.c
   device/node.c
-  ipsec/cli.c
-  ipsec/crypto_node.c
-  ipsec/esp_decrypt.c
-  ipsec/esp_encrypt.c
-  ipsec/ipsec.c
   cryptodev/${DPDK_CRYPTODEV_SOURCE}.c
 
   MULTIARCH_SOURCES
   buffer.c
   device/device.c
   device/node.c
-  ipsec/crypto_node.c
-  ipsec/esp_decrypt.c
-  ipsec/esp_encrypt.c
 
   INSTALL_HEADERS
   device/dpdk.h
-  ipsec/ipsec.h
 
   LINK_FLAGS
   "${DPDK_LINK_FLAGS}"

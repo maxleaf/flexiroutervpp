@@ -243,11 +243,11 @@ TAG_PREFIX = $(if $(TAG),$(TAG)-)
 tag_var_with_added_space_fn = $(if $($(TAG)_TAG_$(1)),$($(TAG)_TAG_$(1)) )
 
 # TAG=debug for debugging
-debug_TAG_CFLAGS = -g -O0 -DCLIB_DEBUG -DFORTIFY_SOURCE=2 -march=$(MARCH) \
+debug_TAG_CFLAGS = -g -O0 -DCLIB_DEBUG -march=$(MARCH) \
 		   -fstack-protector-all -fPIC
-debug_TAG_CXXFLAGS = -g -O0 -DCLIB_DEBUG -DFORTIFY_SOURCE=2 -march=$(MARCH) \
+debug_TAG_CXXFLAGS = -g -O0 -DCLIB_DEBUG -march=$(MARCH) \
 		   -fstack-protector-all -fPIC
-debug_TAG_LDFLAGS = -g -O0 -DCLIB_DEBUG -DFORTIFY_SOURCE=2 -march=$(MARCH) \
+debug_TAG_LDFLAGS = -g -O0 -DCLIB_DEBUG -march=$(MARCH) \
 		   -fstack-protector-all -fPIC
 
 BUILD_PREFIX_package = build-$(TAG_PREFIX)
@@ -416,7 +416,7 @@ find_filter += -and -not -path '*/.mu_build_*'
 find_newer_filtered_fn =			\
   (! -f $(1)					\
     || -n $(call find_newer_files_fn,$(1),$(3))	\
-    || -n "`find -H $(2)			\
+    || -n "`find -L $(2) 			\
 	      -type f				\
               -and -newer $(1)			\
 	      -and \( $(4) \)			\

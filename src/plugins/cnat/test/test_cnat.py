@@ -527,8 +527,10 @@ class TestCNatTranslation(VppTestCase):
 class TestCNatSourceNAT(VppTestCase):
     """ CNat Source NAT """
     extra_vpp_punt_config = ["cnat", "{",
+                             "session-cleanup-timeout", "0.1",
                              "session-max-age", "1",
-                             "tcp-max-age", "1", "}"]
+                             "tcp-max-age", "1",
+                             "scanner", "off", "}"]
 
     @classmethod
     def setUpClass(cls):
@@ -556,20 +558,31 @@ class TestCNatSourceNAT(VppTestCase):
         self.pg1.configure_ipv4_neighbors()
         self.pg1.configure_ipv6_neighbors()
 
-        self.vapi.cli("test cnat scanner off")
         self.vapi.cnat_set_snat_addresses(
             snat_ip4=self.pg2.remote_hosts[0].ip4,
-            snat_ip6=self.pg2.remote_hosts[0].ip6)
+            snat_ip6=self.pg2.remote_hosts[0].ip6,
+            sw_if_index=INVALID_INDEX)
         self.vapi.feature_enable_disable(
             enable=1,
             arc_name="ip6-unicast",
-            feature_name="ip6-cnat-snat",
+            feature_name="cnat-snat-ip6",
             sw_if_index=self.pg0.sw_if_index)
         self.vapi.feature_enable_disable(
             enable=1,
             arc_name="ip4-unicast",
-            feature_name="ip4-cnat-snat",
+            feature_name="cnat-snat-ip4",
             sw_if_index=self.pg0.sw_if_index)
+
+        policie_tbls = VppEnum.vl_api_cnat_snat_policy_table_t
+        self.vapi.cnat_set_snat_policy(
+            policy=VppEnum.vl_api_cnat_snat_policies_t.CNAT_POLICY_IF_PFX)
+        for i in self.pg_interfaces:
+            self.vapi.cnat_snat_policy_add_del_if(
+                sw_if_index=i.sw_if_index, is_add=1,
+                table=policie_tbls.CNAT_POLICY_INCLUDE_V6)
+            self.vapi.cnat_snat_policy_add_del_if(
+                sw_if_index=i.sw_if_index, is_add=1,
+                table=policie_tbls.CNAT_POLICY_INCLUDE_V4)
 
     def tearDown(self):
         self.vapi.cnat_session_purge()
@@ -806,7 +819,8 @@ class TestCNatSourceNAT(VppTestCase):
                 self.assertEqual(rx[IP46].src, remote_addr)
 
             # add remote host to exclude list
-            self.vapi.cnat_add_del_snat_prefix(prefix=exclude_prefix, is_add=1)
+            self.vapi.cnat_snat_policy_add_del_exclude_pfx(
+                prefix=exclude_prefix, is_add=1)
             self.vapi.cnat_session_purge()
 
             rxs = self.send_and_expect(
@@ -820,7 +834,8 @@ class TestCNatSourceNAT(VppTestCase):
                 self.assertEqual(rx[IP46].src, client_addr)
 
             # remove remote host from exclude list
-            self.vapi.cnat_add_del_snat_prefix(prefix=exclude_prefix, is_add=0)
+            self.vapi.cnat_snat_policy_add_del_exclude_pfx(
+                prefix=exclude_prefix, is_add=0)
             self.vapi.cnat_session_purge()
 
             rxs = self.send_and_expect(
@@ -953,6 +968,7 @@ class TestCNatDHCP(VppTestCase):
             self.pg0.sw_if_index, 1, True))
         self.config_ips([1], is_add=0, is_v6=False)
         self.config_ips([1], is_add=0, is_v6=True)
+        self.vapi.cnat_set_snat_addresses(sw_if_index=INVALID_INDEX)
 
 
 if __name__ == '__main__':

@@ -46,23 +46,21 @@ typedef struct
   vnet_main_t *vnet_main;
 
   vlib_log_class_t log_class;
+
+  /* frame queue for thread handoff */
+  u32 fq_index;
 } vnet_policer_main_t;
 
 extern vnet_policer_main_t vnet_policer_main;
 
 extern vlib_combined_counter_main_t policer_counters[];
 
-typedef enum
-{
-  VNET_POLICER_INDEX_BY_SW_IF_INDEX,
-  VNET_POLICER_INDEX_BY_OPAQUE,
-  VNET_POLICER_INDEX_BY_EITHER,
-} vnet_policer_index_t;
+extern vlib_node_registration_t policer_input_node;
 
 typedef enum
 {
-  VNET_POLICER_NEXT_TRANSMIT,
   VNET_POLICER_NEXT_DROP,
+  VNET_POLICER_NEXT_HANDOFF,
   VNET_POLICER_N_NEXT,
 } vnet_policer_next_t;
 
@@ -71,6 +69,7 @@ clib_error_t *policer_add_del (vlib_main_t *vm, u8 *name,
 			       qos_pol_cfg_params_st *cfg, u32 *policer_index,
 			       u8 is_add);
 int policer_bind_worker (u8 *name, u32 worker, bool bind);
+int policer_input (u8 *name, u32 sw_if_index, bool apply);
 
 #endif /* __included_policer_h__ */
 

@@ -165,6 +165,38 @@ policer_bind_worker (u8 *name, u32 worker, bool bind)
   return 0;
 }
 
+int
+policer_input (u8 *name, u32 sw_if_index, bool apply)
+{
+  vnet_policer_main_t *pm = &vnet_policer_main;
+  policer_t *policer;
+  u32 policer_index;
+  uword *p;
+
+  p = hash_get_mem (pm->policer_index_by_name, name);
+  if (p == 0)
+    {
+      return VNET_API_ERROR_NO_SUCH_ENTRY;
+    }
+
+  policer = &pm->policers[p[0]];
+  policer_index = policer - pm->policers;
+
+  if (apply)
+    {
+      vec_validate (pm->policer_index_by_sw_if_index, sw_if_index);
+      pm->policer_index_by_sw_if_index[sw_if_index] = policer_index;
+    }
+  else
+    {
+      pm->policer_index_by_sw_if_index[sw_if_index] = ~0;
+    }
+
+  vnet_feature_enable_disable ("device-input", "policer-input", sw_if_index,
+			       apply, 0, 0);
+  return 0;
+}
+
 u8 *
 format_policer_instance (u8 * s, va_list * va)
 {
@@ -592,13 +624,11 @@ clib_error_t *
 policer_init (vlib_main_t * vm)
 {
   vnet_policer_main_t *pm = &vnet_policer_main;
-  void vnet_policer_node_funcs_reference (void);
-
-  vnet_policer_node_funcs_reference ();
 
   pm->vlib_main = vm;
   pm->vnet_main = vnet_get_main ();
   pm->log_class = vlib_log_register_class ("policer", 0);
+  pm->fq_index = vlib_frame_queue_main_init (policer_input_node.index, 0);
 
   pm->policer_config_by_name = hash_create_string (0, sizeof (uword));
   pm->policer_index_by_name = hash_create_string (0, sizeof (uword));
