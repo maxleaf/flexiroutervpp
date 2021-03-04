@@ -13,6 +13,12 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *   - Disabled ASSERT on punting
+ */
+
 #include <vlib/vlib.h>
 #include <vlib/unix/plugin.h>
 #include <vlibmemory/api.h>
@@ -2864,10 +2870,12 @@ ikev2_node_internal (vlib_main_t * vm,
       int ip_hdr_sz = 0;
       int is_req = 0, has_non_esp_marker = 0;
 
+#ifndef FLEXIWAN_FIX
       ASSERT (0 == b0->punt_reason
 	      || (is_ip4
 		  && b0->punt_reason ==
 		  ipsec_punt_reason[IPSEC_PUNT_IP4_SPI_UDP_0]));
+#endif
 
       if (is_ip4
 	  && b0->punt_reason == ipsec_punt_reason[IPSEC_PUNT_IP4_SPI_UDP_0])

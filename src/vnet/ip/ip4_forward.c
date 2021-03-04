@@ -37,6 +37,12 @@
  *  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - Do not check IP checksum of fragmented packet if it is equal to 0.
+ */
+
 #include <vnet/vnet.h>
 #include <vnet/ip/ip.h>
 #include <vnet/ip/ip_frag.h>
@@ -2023,8 +2029,12 @@ ip4_ttl_inc (vlib_buffer_t * b, ip4_header_t * ip)
   ip->checksum = checksum;
   ttl += 1;
   ip->ttl = ttl;
-
+#ifdef FLEXIWAN_FIX
+  if (ip->checksum)
+    ASSERT (ip4_header_checksum_is_valid (ip));
+#else
   ASSERT (ip4_header_checksum_is_valid (ip));
+#endif
 }
 
 /* Decrement TTL & update checksum.
