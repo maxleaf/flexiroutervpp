@@ -13,6 +13,12 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *   - Disabled ASSERT on punting
+ */
+
 #include <vlib/vlib.h>
 #include <vlib/unix/plugin.h>
 #include <vlibmemory/api.h>
