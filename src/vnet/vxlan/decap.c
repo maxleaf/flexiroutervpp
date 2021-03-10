@@ -16,12 +16,16 @@
  */
 
 /*
- *  Copyright (C) 2020 flexiWAN Ltd.
- *  Flexiwan addition (denoted by FLEXIWAN_FIX flag):
- *  1. Fix to vxlan_input: when we send STUN request from port 4789, we receive a reposnse on
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *  1. Fix to vxlan_input: when we send STUN request from port 4789, we receive a response on
  *     port 4789 which is registered to vxlan. However, this is not a tunneled packet, but a
  *     regular one. So we need to restore location in packet processing back to L3 header, and
  *     forward this reply to IPx_PUNT node so it can be processed as a regular packet.
+ *  2. Fix to vxlan4_find_tunnel & vxlan6_find_tunnel: when we receive vxlan packet from
+ *     remote device behind NAT packet source port could be different from configured destination
+ *     port for corresponding vxlan tunnel. In this case we forward this packet to IPx_PUNT node
+ *     so it can be handled by flexiagent on the upper layer.
  */
 
 #include <vlib/vlib.h>
@@ -69,6 +73,79 @@ static const vxlan_decap_info_t decap_bad_flags = {
   .error = VXLAN_ERROR_BAD_FLAGS
 };
 
+#ifdef FLEXIWAN_FEATURE
+always_inline vxlan_decap_info_t
+vxlan4_find_tunnel (vxlan_main_t * vxm, last_tunnel_cache4 * cache, u16 * cache_port,
+		    u32 fib_index, ip4_header_t * ip4_0, udp_header_t * udp0,
+		    vxlan_header_t * vxlan0, u32 * stats_sw_if_index)
+{
+  if (PREDICT_FALSE (vxlan0->flags != VXLAN_FLAGS_I))
+    return decap_bad_flags;
+
+  /* Make sure VXLAN tunnel exist according to packet S/D IP, VRF, and VNI */
+  u32 dst = ip4_0->dst_address.as_u32;
+  u32 src = ip4_0->src_address.as_u32;
+  u16 src_port = clib_net_to_host_u16(udp0->src_port);
+  vxlan4_tunnel_key_t key4 = {
+    .key[0] = ((u64) dst << 32) | src,
+    .key[1] = ((u64) fib_index << 32) | vxlan0->vni_reserved,
+  };
+
+  if (PREDICT_TRUE
+      (key4.key[0] == cache->key[0] && key4.key[1] == cache->key[1] 
+        && src_port == *cache_port))
+    {
+      /* cache hit */
+      vxlan_decap_info_t di = {.as_u64 = cache->value };
+      *stats_sw_if_index = di.sw_if_index;
+      return di;
+    }
+
+  int rv = clib_bihash_search_inline_16_8 (&vxm->vxlan4_tunnel_by_key, &key4);
+  if (PREDICT_TRUE (rv == 0))
+    {
+      vxlan_decap_info_t di = {.as_u64 = key4.value };
+      u32 instance = vxm->tunnel_index_by_sw_if_index[di.sw_if_index];
+      vxlan_tunnel_t *t0 = pool_elt_at_index (vxm->tunnels, instance);
+      /* Validate VXLAN tunnel destination port against packet source port */
+      if (PREDICT_FALSE (t0->dest_port != src_port))
+        return decap_not_found;
+
+      *cache = key4;
+      *cache_port = src_port;
+      *stats_sw_if_index = di.sw_if_index;
+      return di;
+    }
+
+  /* try multicast */
+  if (PREDICT_TRUE (!ip4_address_is_multicast (&ip4_0->dst_address)))
+    return decap_not_found;
+
+  /* search for mcast decap info by mcast address */
+  key4.key[0] = dst;
+  rv = clib_bihash_search_inline_16_8 (&vxm->vxlan4_tunnel_by_key, &key4);
+  if (rv != 0)
+    return decap_not_found;
+
+  /* search for unicast tunnel using the mcast tunnel local(src) ip */
+  vxlan_decap_info_t mdi = {.as_u64 = key4.value };
+  key4.key[0] = ((u64) mdi.local_ip.as_u32 << 32) | src;
+  rv = clib_bihash_search_inline_16_8 (&vxm->vxlan4_tunnel_by_key, &key4);
+  if (PREDICT_FALSE (rv != 0))
+    return decap_not_found;
+
+  u32 instance = vxm->tunnel_index_by_sw_if_index[mdi.sw_if_index];
+  vxlan_tunnel_t *mcast_t0 = pool_elt_at_index (vxm->tunnels, instance);
+  /* Validate VXLAN tunnel destination port against packet source port */
+  if (PREDICT_FALSE (mcast_t0->dest_port != src_port))
+    return decap_not_found;
+
+  /* mcast traffic does not update the cache */
+  *stats_sw_if_index = mdi.sw_if_index;
+  vxlan_decap_info_t di = {.as_u64 = key4.value };
+  return di;
+}
+#else /* FLEXIWAN_FEATURE */
 always_inline vxlan_decap_info_t
 vxlan4_find_tunnel (vxlan_main_t * vxm, last_tunnel_cache4 * cache,
 		    u32 fib_index, ip4_header_t * ip4_0,
@@ -125,9 +202,76 @@ vxlan4_find_tunnel (vxlan_main_t * vxm, last_tunnel_cache4 * cache,
   vxlan_decap_info_t di = {.as_u64 = key4.value };
   return di;
 }
+#endif /* FLEXIWAN_FEATURE */
 
 typedef vxlan6_tunnel_key_t last_tunnel_cache6;
 
+#ifdef FLEXIWAN_FEATURE
+always_inline vxlan_decap_info_t
+vxlan6_find_tunnel (vxlan_main_t * vxm, last_tunnel_cache6 * cache,
+		    u32 fib_index, ip6_header_t * ip6_0, udp_header_t * udp0,
+		    vxlan_header_t * vxlan0, u32 * stats_sw_if_index)
+{
+  if (PREDICT_FALSE (vxlan0->flags != VXLAN_FLAGS_I))
+    return decap_bad_flags;
+
+  /* Make sure VXLAN tunnel exist according to packet SIP and VNI */
+  vxlan6_tunnel_key_t key6 = {
+    .key[0] = ip6_0->src_address.as_u64[0],
+    .key[1] = ip6_0->src_address.as_u64[1],
+    .key[2] = (((u64) fib_index) << 32) | vxlan0->vni_reserved,
+  };
+
+  if (PREDICT_FALSE
+      (clib_bihash_key_compare_24_8 (key6.key, cache->key) == 0))
+    {
+      int rv =
+	clib_bihash_search_inline_24_8 (&vxm->vxlan6_tunnel_by_key, &key6);
+      if (PREDICT_FALSE (rv != 0))
+	return decap_not_found;
+
+      *cache = key6;
+    }
+  vxlan_tunnel_t *t0 = pool_elt_at_index (vxm->tunnels, cache->value);
+
+  /* Validate VXLAN tunnel SIP against packet DIP */
+  if (PREDICT_TRUE (ip6_address_is_equal (&ip6_0->dst_address, &t0->src.ip6)))
+    {
+      /* Validate VXLAN tunnel destination port against packet source port */
+      if (PREDICT_FALSE (t0->dest_port != clib_net_to_host_u16(udp0->src_port)))
+        return decap_not_found;
+      *stats_sw_if_index = t0->sw_if_index;
+    }
+  else
+    {
+      /* try multicast */
+      if (PREDICT_TRUE (!ip6_address_is_multicast (&ip6_0->dst_address)))
+	return decap_not_found;
+
+      /* Make sure mcast VXLAN tunnel exist by packet DIP and VNI */
+      key6.key[0] = ip6_0->dst_address.as_u64[0];
+      key6.key[1] = ip6_0->dst_address.as_u64[1];
+      int rv =
+	clib_bihash_search_inline_24_8 (&vxm->vxlan6_tunnel_by_key, &key6);
+      if (PREDICT_FALSE (rv != 0))
+	return decap_not_found;
+
+      vxlan_tunnel_t *mcast_t0 = pool_elt_at_index (vxm->tunnels, key6.value);
+
+      /* Validate VXLAN tunnel destination port against packet source port */
+      if (PREDICT_FALSE (mcast_t0->dest_port != clib_net_to_host_u16(udp0->src_port)))
+        return decap_not_found;
+
+      *stats_sw_if_index = mcast_t0->sw_if_index;
+    }
+
+  vxlan_decap_info_t di = {
+    .sw_if_index = t0->sw_if_index,
+    .next_index = t0->decap_next_index,
+  };
+  return di;
+}
+#else /* FLEXIWAN_FEATURE */
 always_inline vxlan_decap_info_t
 vxlan6_find_tunnel (vxlan_main_t * vxm, last_tunnel_cache6 * cache,
 		    u32 fib_index, ip6_header_t * ip6_0,
@@ -182,6 +326,7 @@ vxlan6_find_tunnel (vxlan_main_t * vxm, last_tunnel_cache6 * cache,
   };
   return di;
 }
+#endif /* FLEXIWAN_FEATURE */
 
 always_inline uword
 vxlan_input (vlib_main_t * vm,
@@ -197,6 +342,9 @@ vxlan_input (vlib_main_t * vm,
   last_tunnel_cache6 last6;
   u32 pkts_dropped = 0;
   u32 thread_index = vlib_get_thread_index ();
+#ifdef FLEXIWAN_FEATURE
+  u16 last_src_port = 0;
+#endif
 
   if (is_ip4)
     clib_memset (&last4, 0xff, sizeof last4);
@@ -226,6 +374,13 @@ vxlan_input (vlib_main_t * vm,
 
       ip4_header_t *ip4_0, *ip4_1;
       ip6_header_t *ip6_0, *ip6_1;
+#ifdef FLEXIWAN_FEATURE
+      udp_header_t *udp0, *udp1;
+
+      udp0 = cur0 - sizeof (udp_header_t);
+      udp1 = cur1 - sizeof (udp_header_t);
+#endif
+
       if (is_ip4)
 	{
 	  ip4_0 = cur0 - sizeof (udp_header_t) - sizeof (ip4_header_t);
@@ -244,12 +399,21 @@ vxlan_input (vlib_main_t * vm,
       u32 fi0 = vlib_buffer_get_ip_fib_index (b[0], is_ip4);
       u32 fi1 = vlib_buffer_get_ip_fib_index (b[1], is_ip4);
 
+#ifdef FLEXIWAN_FEATURE
+      vxlan_decap_info_t di0 = is_ip4 ?
+	vxlan4_find_tunnel (vxm, &last4, &last_src_port, fi0, ip4_0, udp0, vxlan0, &stats_if0) :
+	vxlan6_find_tunnel (vxm, &last6, fi0, ip6_0, udp0, vxlan0, &stats_if0);
+      vxlan_decap_info_t di1 = is_ip4 ?
+	vxlan4_find_tunnel (vxm, &last4, &last_src_port, fi1, ip4_1, udp1, vxlan1, &stats_if1) :
+	vxlan6_find_tunnel (vxm, &last6, fi1, ip6_1, udp1, vxlan1, &stats_if1);
+#else
       vxlan_decap_info_t di0 = is_ip4 ?
 	vxlan4_find_tunnel (vxm, &last4, fi0, ip4_0, vxlan0, &stats_if0) :
 	vxlan6_find_tunnel (vxm, &last6, fi0, ip6_0, vxlan0, &stats_if0);
       vxlan_decap_info_t di1 = is_ip4 ?
 	vxlan4_find_tunnel (vxm, &last4, fi1, ip4_1, vxlan1, &stats_if1) :
 	vxlan6_find_tunnel (vxm, &last6, fi1, ip6_1, vxlan1, &stats_if1);
+#endif
 
       /* Prefetch next iteration. */
       CLIB_PREFETCH (b[2]->data, CLIB_CACHE_LINE_BYTES, LOAD);
@@ -356,6 +520,11 @@ vxlan_input (vlib_main_t * vm,
       vxlan_header_t *vxlan0 = cur0;
       ip4_header_t *ip4_0;
       ip6_header_t *ip6_0;
+#ifdef FLEXIWAN_FEATURE
+      udp_header_t *udp0;
+      udp0 = cur0 - sizeof (udp_header_t);
+#endif
+
       if (is_ip4)
 	ip4_0 = cur0 - sizeof (udp_header_t) - sizeof (ip4_header_t);
       else
@@ -366,9 +535,15 @@ vxlan_input (vlib_main_t * vm,
 
       u32 fi0 = vlib_buffer_get_ip_fib_index (b[0], is_ip4);
 
+#ifdef FLEXIWAN_FEATURE
+      vxlan_decap_info_t di0 = is_ip4 ?
+	vxlan4_find_tunnel (vxm, &last4, &last_src_port, fi0, ip4_0, udp0, vxlan0, &stats_if0) :
+	vxlan6_find_tunnel (vxm, &last6, fi0, ip6_0, udp0, vxlan0, &stats_if0);
+#else
       vxlan_decap_info_t di0 = is_ip4 ?
 	vxlan4_find_tunnel (vxm, &last4, fi0, ip4_0, vxlan0, &stats_if0) :
 	vxlan6_find_tunnel (vxm, &last6, fi0, ip6_0, vxlan0, &stats_if0);
+#endif
 
       uword len0 = vlib_buffer_length_in_chain (vm, b[0]);
 
