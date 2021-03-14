@@ -3281,7 +3281,11 @@ static_always_inline int nat_6t_flow_icmp_translate (snat_main_t *sm,
 						     ip4_header_t *ip,
 						     nat_6t_flow_t *f);
 
+#ifdef FLEXIWAN_FIX
+static_always_inline int
+#else
 static_always_inline void
+#endif
 nat_6t_flow_ip4_translate (snat_main_t *sm, vlib_buffer_t *b, ip4_header_t *ip,
 			   nat_6t_flow_t *f, nat_protocol_t proto,
 			   int is_icmp_inner_ip4)
@@ -3340,7 +3344,14 @@ nat_6t_flow_ip4_translate (snat_main_t *sm, vlib_buffer_t *b, ip4_header_t *ip,
   ip_csum_t ip_sum = ip->checksum;
   ip_sum = ip_csum_sub_even (ip_sum, f->l3_csum_delta);
   ip->checksum = ip_csum_fold (ip_sum);
+
+#ifdef FLEXIWAN_FIX /* avoid crash on bad packet (ip->length == 60672, 10.10.10.255->10.10.10.110)*/
+  if (ip->checksum != ip4_header_checksum (ip))
+    return 0;
+  return 1;
+#else
   ASSERT (ip->checksum == ip4_header_checksum (ip));
+#endif
 }
 
 static_always_inline int
@@ -3390,8 +3401,14 @@ nat_6t_flow_icmp_translate (snat_main_t *sm, vlib_buffer_t *b,
 	    {
 	    case NAT_PROTOCOL_UDP:
 	    case NAT_PROTOCOL_TCP:
+#ifdef FLEXIWAN_FIX
+	      if (!nat_6t_flow_ip4_translate (sm, b, inner_ip, f, inner_proto,
+					 1 /* is_icmp_inner_ip4 */))
+           return NAT_ED_TRNSL_ERR_TRANSLATION_FAILED;
+#else
 	      nat_6t_flow_ip4_translate (sm, b, inner_ip, f, inner_proto,
 					 1 /* is_icmp_inner_ip4 */);
+#endif
 	      icmp_sum = ip_csum_sub_even (icmp_sum, f->l3_csum_delta);
 	      icmp->checksum = ip_csum_fold (icmp_sum);
 	      break;
@@ -3436,7 +3453,12 @@ nat_6t_flow_buf_translate (snat_main_t *sm, vlib_buffer_t *b, ip4_header_t *ip,
       vnet_buffer (b)->sw_if_index[VLIB_TX] = f->rewrite.fib_index;
     }
 
+#ifdef FLEXIWAN_FIX
+  if (!nat_6t_flow_ip4_translate (sm, b, ip, f, proto, 0 /* is_icmp_inner_ip4 */))
+    return NAT_ED_TRNSL_ERR_TRANSLATION_FAILED;
+#else
   nat_6t_flow_ip4_translate (sm, b, ip, f, proto, 0 /* is_icmp_inner_ip4 */);
+#endif
 
   if (NAT_PROTOCOL_ICMP == proto)
     {

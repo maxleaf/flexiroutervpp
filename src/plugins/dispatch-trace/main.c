@@ -123,12 +123,18 @@ dispatch_pcap_trace (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  /* Is this packet traced? */
 	  if (PREDICT_FALSE (b->flags & VLIB_BUFFER_IS_TRACED))
 	    {
+#ifdef FLEXIWAN_FIX  /* temp fix for crash that happens on the very first packet to be captured */
+        if (tm->trace_buffer_pool) {
+#endif
 	      vlib_trace_header_t **h = pool_elt_at_index (
 		tm->trace_buffer_pool, vlib_buffer_get_trace_index (b));
 
 	      dtt->pcap_buffer = format (dtt->pcap_buffer, "%U%c",
 					 format_vlib_trace, vm, h[0], 0);
 	      string_count++;
+#ifdef FLEXIWAN_FIX  /* temp fix for crash that happens on the very first packet to be captured */
+	      }
+#endif
 	    }
 
 	  /* Save the string count */
