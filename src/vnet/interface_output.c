@@ -426,9 +426,10 @@ static_always_inline void vnet_interface_pcap_tx_trace
   (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * frame,
    int sw_if_index_from_buffer)
 {
+  vnet_main_t *vnm = vnet_get_main ();
   u32 n_left_from, *from;
   u32 sw_if_index;
-  vnet_pcap_t *pp = &vlib_global_main.pcap;
+  vnet_pcap_t *pp = &vnm->pcap;
 
   if (PREDICT_TRUE (pp->pcap_tx_enable == 0))
     return;
@@ -479,12 +480,8 @@ static_always_inline void vnet_interface_pcap_tx_trace
     }
 }
 
-static vlib_node_function_t CLIB_MULTIARCH_FN (vnet_interface_output_node);
-
-static uword
-CLIB_MULTIARCH_FN (vnet_interface_output_node) (vlib_main_t * vm,
-						vlib_node_runtime_t * node,
-						vlib_frame_t * frame)
+VLIB_NODE_FN (vnet_interface_output_node)
+(vlib_main_t *vm, vlib_node_runtime_t *node, vlib_frame_t *frame)
 {
   vnet_main_t *vnm = vnet_get_main ();
   vnet_hw_interface_t *hi;
@@ -502,15 +499,10 @@ CLIB_MULTIARCH_FN (vnet_interface_output_node) (vlib_main_t * vm,
 					      /* do_tx_offloads */ 1);
 }
 
-CLIB_MARCH_FN_REGISTRATION (vnet_interface_output_node);
-
-#ifndef CLIB_MARCH_VARIANT
-vlib_node_function_t *
-vnet_interface_output_node_get (void)
-{
-  return CLIB_MARCH_FN_POINTER (vnet_interface_output_node);
-}
-#endif /* CLIB_MARCH_VARIANT */
+VLIB_REGISTER_NODE (vnet_interface_output_node) = {
+  .name = "interface-output-template",
+  .vector_size = sizeof (u32),
+};
 
 /* Use buffer's sw_if_index[VNET_TX] to choose output interface. */
 VLIB_NODE_FN (vnet_per_buffer_interface_output_node) (vlib_main_t * vm,
@@ -1047,8 +1039,9 @@ VLIB_NODE_FN (interface_drop) (vlib_main_t * vm,
 			       vlib_node_runtime_t * node,
 			       vlib_frame_t * frame)
 {
+  vnet_main_t *vnm = vnet_get_main ();
   vnet_interface_main_t *im = &vnet_get_main ()->interface_main;
-  vnet_pcap_t *pp = &vlib_global_main.pcap;
+  vnet_pcap_t *pp = &vnm->pcap;
 
   if (PREDICT_FALSE (pp->pcap_drop_enable))
     pcap_drop_trace (vm, im, pp, frame);

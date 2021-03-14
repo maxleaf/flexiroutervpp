@@ -480,8 +480,11 @@ typedef struct
   struct
   {
     u32 arc_next;
-    /* cached session index from previous node */
-    u32 cached_session_index;
+    union
+    {
+      u32 cached_session_index;
+      u32 cached_dst_nat_session_index;
+    };
   } nat;
 
   union
@@ -520,6 +523,9 @@ STATIC_ASSERT (sizeof (vnet_buffer_opaque2_t) <=
 
 format_function_t format_vnet_buffer;
 format_function_t format_vnet_buffer_offload;
+format_function_t format_vnet_buffer_flags;
+format_function_t format_vnet_buffer_opaque;
+format_function_t format_vnet_buffer_opaque2;
 
 static_always_inline void
 vnet_buffer_offload_flags_set (vlib_buffer_t *b, u32 oflags)

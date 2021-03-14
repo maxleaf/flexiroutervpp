@@ -74,7 +74,6 @@ static_always_inline void nat_validate_interface_counters (snat_main_t *sm,
     }                                                                         \
   while (0)
 
-/* *INDENT-OFF* */
 /* Hook up input features */
 VNET_FEATURE_INIT (nat_pre_in2out, static) = {
   .arc_name = "ip4-unicast",
@@ -172,7 +171,6 @@ VLIB_PLUGIN_REGISTER () = {
     .version = VPP_BUILD_VER,
     .description = "Network Address Translation (NAT)",
 };
-/* *INDENT-ON* */
 
 static void nat44_ed_db_init (u32 translations, u32 translation_buckets);
 
@@ -182,9 +180,8 @@ static u32
 nat44_ed_get_worker_out2in_cb (vlib_buffer_t * b, ip4_header_t * ip,
 			       u32 rx_fib_index, u8 is_output);
 
-static u32
-nat44_ed_get_worker_in2out_cb (ip4_header_t * ip, u32 rx_fib_index,
-			       u8 is_output);
+static u32 nat44_ed_get_worker_in2out_cb (vlib_buffer_t *b, ip4_header_t *ip,
+					  u32 rx_fib_index, u8 is_output);
 
 u32 nat_calc_bihash_buckets (u32 n_elts);
 
@@ -331,7 +328,6 @@ snat_add_address (snat_main_t * sm, ip4_address_t * addr, u32 vrf_id,
   vlib_thread_main_t *tm = vlib_get_thread_main ();
 
   /* Check if address already exists */
-  /* *INDENT-OFF* */
   vec_foreach (ap, twice_nat ? sm->twice_nat_addresses : sm->addresses)
     {
       if (ap->addr.as_u32 == addr->as_u32)
@@ -340,7 +336,6 @@ snat_add_address (snat_main_t * sm, ip4_address_t * addr, u32 vrf_id,
           return VNET_API_ERROR_VALUE_EXIST;
         }
     }
-  /* *INDENT-ON* */
 
   if (twice_nat)
     vec_add2 (sm->twice_nat_addresses, ap, 1);
@@ -355,7 +350,6 @@ snat_add_address (snat_main_t * sm, ip4_address_t * addr, u32 vrf_id,
   else
     ap->fib_index = ~0;
 
-  /* *INDENT-OFF* */
   #define _(N, i, n, s) \
     clib_memset(ap->busy_##n##_port_refcounts, 0, sizeof(ap->busy_##n##_port_refcounts));\
     ap->busy_##n##_ports = 0; \
@@ -363,13 +357,11 @@ snat_add_address (snat_main_t * sm, ip4_address_t * addr, u32 vrf_id,
     vec_validate_init_empty (ap->busy_##n##_ports_per_thread, tm->n_vlib_mains - 1, 0);
     foreach_nat_protocol
   #undef _
-  /* *INDENT-ON* */
 
   if (twice_nat)
     return 0;
 
   /* Add external address to FIB */
-  /* *INDENT-OFF* */
   pool_foreach (i, sm->interfaces)
    {
      if (nat_interface_is_inside (i))
@@ -386,7 +378,6 @@ snat_add_address (snat_main_t * sm, ip4_address_t * addr, u32 vrf_id,
      snat_add_del_addr_to_fib (addr, 32, i->sw_if_index, 1);
      break;
   }
-  /* *INDENT-ON* */
 
   return 0;
 }
@@ -395,7 +386,6 @@ static int
 is_snat_address_used_in_static_mapping (snat_main_t * sm, ip4_address_t addr)
 {
   snat_static_mapping_t *m;
-  /* *INDENT-OFF* */
   pool_foreach (m, sm->static_mappings)
    {
       if (is_addr_only_static_mapping (m) ||
@@ -405,7 +395,6 @@ is_snat_address_used_in_static_mapping (snat_main_t * sm, ip4_address_t addr)
       if (m->external_addr.as_u32 == addr.as_u32)
         return 1;
   }
-  /* *INDENT-ON* */
 
   return 0;
 }
@@ -461,7 +450,6 @@ nat_ed_static_mapping_del_sessions (snat_main_t * sm,
 {
   snat_session_t *s;
   u32 *indexes_to_free = NULL;
-  /* *INDENT-OFF* */
   pool_foreach (s, tsm->sessions) {
     if (s->in2out.fib_index != fib_index ||
         s->in2out.addr.as_u32 != l_addr.as_u32)
@@ -486,7 +474,6 @@ nat_ed_static_mapping_del_sessions (snat_main_t * sm,
     if (!addr_only)
       break;
   }
-  /* *INDENT-ON* */
   u32 *ses_index;
   vec_foreach (ses_index, indexes_to_free)
   {
@@ -596,13 +583,11 @@ snat_add_static_mapping (ip4_address_t l_addr, ip4_address_t e_addr,
 	{
 	  if (is_identity_static_mapping (m))
 	    {
-              /* *INDENT-OFF* */
               pool_foreach (local, m->locals)
                {
                 if (local->vrf_id == vrf_id)
                   return VNET_API_ERROR_VALUE_EXIST;
               }
-              /* *INDENT-ON* */
 	      pool_get (m->locals, local);
 	      local->vrf_id = vrf_id;
 	      local->fib_index =
@@ -738,7 +723,8 @@ snat_add_static_mapping (ip4_address_t l_addr, ip4_address_t e_addr,
 	  ip4_header_t ip = {
 	    .src_address = m->local_addr,
 	  };
-	  vec_add1 (m->workers, sm->worker_in2out_cb (&ip, m->fib_index, 0));
+	  vec_add1 (m->workers,
+		    sm->worker_in2out_cb (0, &ip, m->fib_index, 0));
 	  tsm = vec_elt_at_index (sm->per_thread_data, m->workers[0]);
 	}
       else
@@ -770,13 +756,11 @@ snat_add_static_mapping (ip4_address_t l_addr, ip4_address_t e_addr,
 	  if (vrf_id == ~0)
 	    vrf_id = sm->inside_vrf_id;
 
-          /* *INDENT-OFF* */
           pool_foreach (local, m->locals)
            {
 	    if (local->vrf_id == vrf_id)
               find = local - m->locals;
 	  }
-          /* *INDENT-ON* */
 	  if (find == ~0)
 	    return VNET_API_ERROR_NO_SUCH_ENTRY;
 
@@ -851,7 +835,6 @@ snat_add_static_mapping (ip4_address_t l_addr, ip4_address_t e_addr,
     return 0;
 
   /* Add/delete external address to FIB */
-  /* *INDENT-OFF* */
   pool_foreach (interface, sm->interfaces)
    {
      if (nat_interface_is_inside (interface))
@@ -868,7 +851,6 @@ snat_add_static_mapping (ip4_address_t l_addr, ip4_address_t e_addr,
      snat_add_del_addr_to_fib (&e_addr, 32, interface->sw_if_index, is_add);
      break;
   }
-  /* *INDENT-ON* */
 
   return 0;
 }
@@ -988,22 +970,18 @@ nat44_add_del_lb_static_mapping (ip4_address_t e_addr, u16 e_port,
 	      ip4_header_t ip = {
 		.src_address = locals[i].addr,
 	      };
-	      bitmap =
-		clib_bitmap_set (bitmap,
-				 sm->worker_in2out_cb (&ip, m->fib_index, 0),
-				 1);
+	      bitmap = clib_bitmap_set (
+		bitmap, sm->worker_in2out_cb (0, &ip, m->fib_index, 0), 1);
 	    }
 	}
 
       /* Assign workers */
       if (sm->num_workers > 1)
 	{
-          /* *INDENT-OFF* */
           clib_bitmap_foreach (i, bitmap)
              {
                vec_add1(m->workers, i);
             }
-          /* *INDENT-ON* */
 	}
     }
   else
@@ -1050,16 +1028,17 @@ nat44_add_del_lb_static_mapping (ip4_address_t e_addr, u16 e_port,
 	  return VNET_API_ERROR_UNSPECIFIED;
 	}
 
-      /* *INDENT-OFF* */
       pool_foreach (local, m->locals)
       {
           fib_table_unlock (local->fib_index, FIB_PROTOCOL_IP4,
                             sm->fib_src_low);
           if (!out2in_only)
             {
-init_nat_k(&              kv, local->addr, local->port, local->fib_index, m->proto);
-              if (clib_bihash_add_del_8_8(&sm->static_mapping_by_local, &kv, 0))
-                {
+	      init_nat_k (&kv, local->addr, local->port, local->fib_index,
+			  m->proto);
+	      if (clib_bihash_add_del_8_8 (&sm->static_mapping_by_local, &kv,
+					   0))
+		{
 		  nat_elog_err (sm, "static_mapping_by_local key del failed");
 		  return VNET_API_ERROR_UNSPECIFIED;
 		}
@@ -1070,9 +1049,9 @@ init_nat_k(&              kv, local->addr, local->port, local->fib_index, m->pro
 	      ip4_header_t ip = {
 		.src_address = local->addr,
 	      };
-	      tsm =
-		vec_elt_at_index (sm->per_thread_data,
-				  sm->worker_in2out_cb (&ip, m->fib_index, 0));
+	      tsm = vec_elt_at_index (
+		sm->per_thread_data,
+		sm->worker_in2out_cb (0, &ip, m->fib_index, 0));
 	    }
 	  else
 	    tsm = vec_elt_at_index (sm->per_thread_data, sm->num_workers);
@@ -1091,7 +1070,6 @@ init_nat_k(&              kv, local->addr, local->port, local->fib_index, m->pro
 	      nat_ed_session_delete (sm, s, tsm - sm->per_thread_data, 1);
 	    }
       }
-      /* *INDENT-ON* */
       if (m->affinity)
 	nat_affinity_flush_service (m->affinity_per_service_list_head_index);
       pool_free (m->locals);
@@ -1130,7 +1108,6 @@ nat44_lb_static_mapping_add_del_local (ip4_address_t e_addr, u16 e_port,
   if (!is_lb_static_mapping (m))
     return VNET_API_ERROR_INVALID_VALUE;
 
-  /* *INDENT-OFF* */
   pool_foreach (local, m->locals)
    {
     if ((local->addr.as_u32 == l_addr.as_u32) && (local->port == l_port) &&
@@ -1140,7 +1117,6 @@ nat44_lb_static_mapping_add_del_local (ip4_address_t e_addr, u16 e_port,
         break;
       }
   }
-  /* *INDENT-ON* */
 
   if (is_add)
     {
@@ -1188,15 +1164,14 @@ nat44_lb_static_mapping_add_del_local (ip4_address_t e_addr, u16 e_port,
 	  ip4_header_t ip = {
 	    .src_address = local->addr,
 	  };
-	  tsm = vec_elt_at_index (sm->per_thread_data,
-				  sm->worker_in2out_cb (&ip, m->fib_index,
-							0));
+	  tsm =
+	    vec_elt_at_index (sm->per_thread_data,
+			      sm->worker_in2out_cb (0, &ip, m->fib_index, 0));
 	}
       else
 	tsm = vec_elt_at_index (sm->per_thread_data, sm->num_workers);
 
       /* Delete sessions */
-      /* *INDENT-OFF* */
       pool_foreach (s, tsm->sessions) {
         if (!(is_lb_session (s)))
           continue;
@@ -1208,27 +1183,23 @@ nat44_lb_static_mapping_add_del_local (ip4_address_t e_addr, u16 e_port,
         nat_free_session_data (sm, s, tsm - sm->per_thread_data, 0);
         nat_ed_session_delete (sm, s, tsm - sm->per_thread_data, 1);
       }
-      /* *INDENT-ON* */
 
       pool_put (m->locals, match_local);
     }
 
   vec_free (m->workers);
 
-  /* *INDENT-OFF* */
   pool_foreach (local, m->locals)
    {
     vec_add1 (locals, local - m->locals);
     if (sm->num_workers > 1)
       {
         ip4_header_t ip;
-        ip.src_address.as_u32 = local->addr.as_u32,
-        bitmap = clib_bitmap_set (bitmap,
-                                  sm->worker_in2out_cb (&ip, local->fib_index, 0),
-                                  1);
+	ip.src_address.as_u32 = local->addr.as_u32,
+	bitmap = clib_bitmap_set (
+	  bitmap, sm->worker_in2out_cb (0, &ip, local->fib_index, 0), 1);
       }
   }
-  /* *INDENT-ON* */
 
   ASSERT (vec_len (locals) > 1);
 
@@ -1244,9 +1215,7 @@ nat44_lb_static_mapping_add_del_local (ip4_address_t e_addr, u16 e_port,
   /* Assign workers */
   if (sm->num_workers > 1)
     {
-      /* *INDENT-OFF* */
       clib_bitmap_foreach (i, bitmap)  { vec_add1(m->workers, i); }
-      /* *INDENT-ON* */
     }
 
   return 0;
@@ -1284,7 +1253,6 @@ snat_del_address (snat_main_t * sm, ip4_address_t addr, u8 delete_sm,
   if (delete_sm)
     {
       ip4_address_t pool_addr = { 0 };
-      /* *INDENT-OFF* */
       pool_foreach (m, sm->static_mappings)
        {
           if (m->external_addr.as_u32 == addr.as_u32)
@@ -1299,7 +1267,6 @@ snat_del_address (snat_main_t * sm, ip4_address_t addr, u8 delete_sm,
                                             is_identity_static_mapping(m),
                                             pool_addr, 0);
       }
-      /* *INDENT-ON* */
     }
   else
     {
@@ -1377,7 +1344,6 @@ expire_per_vrf_sessions (u32 fib_index)
   snat_main_per_thread_data_t *tsm;
   snat_main_t *sm = &snat_main;
 
-  /* *INDENT-OFF* */
   vec_foreach (tsm, sm->per_thread_data)
     {
       vec_foreach (per_vrf_sessions, tsm->per_vrf_sessions_vec)
@@ -1389,7 +1355,6 @@ expire_per_vrf_sessions (u32 fib_index)
             }
         }
     }
-  /* *INDENT-ON* */
 }
 
 void
@@ -1447,7 +1412,6 @@ snat_interface_add_del (u32 sw_if_index, u8 is_inside, int is_del)
       return VNET_API_ERROR_UNSUPPORTED;
     }
 
-  /* *INDENT-OFF* */
   pool_foreach (i, sm->output_feature_interfaces)
    {
     if (i->sw_if_index == sw_if_index)
@@ -1456,7 +1420,6 @@ snat_interface_add_del (u32 sw_if_index, u8 is_inside, int is_del)
         return VNET_API_ERROR_VALUE_EXIST;
       }
   }
-  /* *INDENT-ON* */
 
   if (sm->static_mapping_only && !(sm->static_mapping_connection_tracking))
     feature_name = is_inside ? "nat44-in2out-fast" : "nat44-out2in-fast";
@@ -1484,7 +1447,6 @@ snat_interface_add_del (u32 sw_if_index, u8 is_inside, int is_del)
 
   if (!is_inside)
     {
-      /* *INDENT-OFF* */
       vec_foreach (outside_fib, sm->outside_fibs)
         {
           if (outside_fib->fib_index == fib_index)
@@ -1500,7 +1462,6 @@ snat_interface_add_del (u32 sw_if_index, u8 is_inside, int is_del)
               goto feature_set;
             }
         }
-      /* *INDENT-ON* */
       if (!is_del)
 	{
 	  vec_add2 (sm->outside_fibs, outside_fib, 1);
@@ -1510,7 +1471,6 @@ snat_interface_add_del (u32 sw_if_index, u8 is_inside, int is_del)
     }
 
 feature_set:
-  /* *INDENT-OFF* */
   pool_foreach (i, sm->interfaces)
    {
     if (i->sw_if_index == sw_if_index)
@@ -1588,7 +1548,6 @@ feature_set:
 	goto fib;
       }
   }
-  /* *INDENT-ON* */
 
   if (is_del)
     {
@@ -1619,7 +1578,6 @@ set_flags:
 
   /* Add/delete external addresses to FIB */
 fib:
-  /* *INDENT-OFF* */
   vec_foreach (ap, sm->addresses)
     snat_add_del_addr_to_fib(&ap->addr, 32, sw_if_index, !is_del);
 
@@ -1630,7 +1588,6 @@ fib:
 
     snat_add_del_addr_to_fib(&m->external_addr, 32, sw_if_index, !is_del);
   }
-  /* *INDENT-ON* */
 
   return 0;
 }
@@ -1659,7 +1616,6 @@ snat_interface_add_del_output_feature (u32 sw_if_index,
       return VNET_API_ERROR_UNSUPPORTED;
     }
 
-  /* *INDENT-OFF* */
   pool_foreach (i, sm->interfaces)
    {
     if (i->sw_if_index == sw_if_index)
@@ -1668,13 +1624,11 @@ snat_interface_add_del_output_feature (u32 sw_if_index,
         return VNET_API_ERROR_VALUE_EXIST;
       }
   }
-  /* *INDENT-ON* */
 
   update_per_vrf_sessions_vec (fib_index, is_del);
 
   if (!is_inside)
     {
-      /* *INDENT-OFF* */
       vec_foreach (outside_fib, sm->outside_fibs)
         {
           if (outside_fib->fib_index == fib_index)
@@ -1690,7 +1644,6 @@ snat_interface_add_del_output_feature (u32 sw_if_index,
               goto feature_set;
             }
         }
-      /* *INDENT-ON* */
       if (!is_del)
 	{
 	  vec_add2 (sm->outside_fibs, outside_fib, 1);
@@ -1756,7 +1709,6 @@ fq:
     sm->fq_out2in_index =
       vlib_frame_queue_main_init (sm->out2in_node_index, 0);
 
-  /* *INDENT-OFF* */
   pool_foreach (i, sm->output_feature_interfaces)
    {
     if (i->sw_if_index == sw_if_index)
@@ -1769,7 +1721,6 @@ fq:
         goto fib;
       }
   }
-  /* *INDENT-ON* */
 
   if (is_del)
     {
@@ -1791,7 +1742,6 @@ fib:
   if (is_inside)
     return 0;
 
-  /* *INDENT-OFF* */
   vec_foreach (ap, sm->addresses)
     snat_add_del_addr_to_fib(&ap->addr, 32, sw_if_index, !is_del);
 
@@ -1802,7 +1752,6 @@ fib:
 
     snat_add_del_addr_to_fib(&m->external_addr, 32, sw_if_index, !is_del);
   }
-  /* *INDENT-ON* */
 
   return 0;
 }
@@ -1820,7 +1769,6 @@ snat_set_workers (uword * bitmap)
     return VNET_API_ERROR_INVALID_WORKER;
 
   vec_free (sm->workers);
-  /* *INDENT-OFF* */
   clib_bitmap_foreach (i, bitmap)
     {
       vec_add1(sm->workers, i);
@@ -1828,7 +1776,6 @@ snat_set_workers (uword * bitmap)
       sm->per_thread_data[sm->first_worker_index + i].thread_index = i;
       j++;
     }
-  /* *INDENT-ON* */
 
   sm->port_per_thread = (0xffff - 1024) / _vec_len (sm->workers);
 
@@ -1861,7 +1808,6 @@ snat_update_outside_fib (ip4_main_t * im, uword opaque,
       return;
     }
 
-  /* *INDENT-OFF* */
   pool_foreach (i, sm->interfaces)
      {
       if (i->sw_if_index == sw_if_index)
@@ -1881,7 +1827,6 @@ snat_update_outside_fib (ip4_main_t * im, uword opaque,
           match = 1;
         }
     }
-  /* *INDENT-ON* */
 
   if (!match)
     return;
@@ -2011,10 +1956,10 @@ nat44_set_node_indexes (snat_main_t * sm, vlib_main_t * vm)
   vlib_node_t *node;
 
   node = vlib_get_node_by_name (vm, (u8 *) "nat44-ed-out2in");
-  sm->in2out_node_index = node->index;
+  sm->out2in_node_index = node->index;
 
   node = vlib_get_node_by_name (vm, (u8 *) "nat44-ed-in2out");
-  sm->out2in_node_index = node->index;
+  sm->in2out_node_index = node->index;
 
   node = vlib_get_node_by_name (vm, (u8 *) "nat44-ed-in2out-output");
   sm->in2out_output_node_index = node->index;
@@ -2406,19 +2351,14 @@ nat_set_outside_address_and_port (snat_address_t *addresses, u32 thread_index,
 }
 
 int
-snat_static_mapping_match (snat_main_t * sm,
-			   ip4_address_t match_addr,
-			   u16 match_port,
-			   u32 match_fib_index,
-			   nat_protocol_t match_protocol,
-			   ip4_address_t * mapping_addr,
-			   u16 * mapping_port,
-			   u32 * mapping_fib_index,
-			   u8 by_external,
-			   u8 * is_addr_only,
-			   twice_nat_type_t * twice_nat,
-			   lb_nat_type_t * lb, ip4_address_t * ext_host_addr,
-			   u8 * is_identity_nat, snat_static_mapping_t ** out)
+snat_static_mapping_match (vlib_main_t *vm, snat_main_t *sm,
+			   ip4_address_t match_addr, u16 match_port,
+			   u32 match_fib_index, nat_protocol_t match_protocol,
+			   ip4_address_t *mapping_addr, u16 *mapping_port,
+			   u32 *mapping_fib_index, u8 by_external,
+			   u8 *is_addr_only, twice_nat_type_t *twice_nat,
+			   lb_nat_type_t *lb, ip4_address_t *ext_host_addr,
+			   u8 *is_identity_nat, snat_static_mapping_t **out)
 {
   clib_bihash_kv_8_8_t kv, value;
   clib_bihash_8_8_t *mapping_hash;
@@ -2461,11 +2401,9 @@ snat_static_mapping_match (snat_main_t * sm,
 	{
 	  if (PREDICT_FALSE (lb != 0))
 	    *lb = m->affinity ? AFFINITY_LB_NAT : LB_NAT;
-	  if (m->affinity && !nat_affinity_find_and_lock (ext_host_addr[0],
-							  match_addr,
-							  match_protocol,
-							  match_port,
-							  &backend_index))
+	  if (m->affinity && !nat_affinity_find_and_lock (
+			       vm, ext_host_addr[0], match_addr,
+			       match_protocol, match_port, &backend_index))
 	    {
 	      local = pool_elt_at_index (m->locals, backend_index);
 	      *mapping_addr = local->addr;
@@ -2485,12 +2423,12 @@ snat_static_mapping_match (snat_main_t * sm,
 		  .src_address = local->addr,
 	        };
 
-	        if (sm->worker_in2out_cb (&ip, m->fib_index, 0) ==
+		if (sm->worker_in2out_cb (0, &ip, m->fib_index, 0) ==
 		    thread_index)
-                  {
-                    vec_add1 (tmp, i);
-                  }
-              }
+		  {
+		    vec_add1 (tmp, i);
+		  }
+	       }
 	      ASSERT (vec_len (tmp) != 0);
 	    }
 	  else
@@ -2562,76 +2500,78 @@ end:
 }
 
 static u32
-nat44_ed_get_worker_in2out_cb (ip4_header_t *ip, u32 rx_fib_index,
-			       u8 is_output)
+nat44_ed_get_worker_in2out_cb (vlib_buffer_t *b, ip4_header_t *ip,
+			       u32 rx_fib_index, u8 is_output)
 {
   snat_main_t *sm = &snat_main;
   u32 next_worker_index = sm->first_worker_index;
   u32 hash;
 
   clib_bihash_kv_16_8_t kv16, value16;
-  snat_main_per_thread_data_t *tsm;
-  udp_header_t *udp;
 
-  if (PREDICT_FALSE (is_output))
+  u32 fib_index = rx_fib_index;
+  if (b)
     {
-      u32 fib_index = sm->outside_fib_index;
-      nat_outside_fib_t *outside_fib;
-      fib_node_index_t fei = FIB_NODE_INDEX_INVALID;
-      fib_prefix_t pfx = {
-	.fp_proto = FIB_PROTOCOL_IP4,
-	.fp_len = 32,
-	.fp_addr = {
-		    .ip4.as_u32 = ip->dst_address.as_u32,
-		    }
-	,
-      };
-
-      udp = ip4_next_header (ip);
-
-      switch (vec_len (sm->outside_fibs))
+      if (PREDICT_FALSE (is_output))
 	{
-	case 0:
 	  fib_index = sm->outside_fib_index;
-	  break;
-	case 1:
-	  fib_index = sm->outside_fibs[0].fib_index;
-	  break;
-	default:
-            /* *INDENT-OFF* */
-            vec_foreach (outside_fib, sm->outside_fibs)
-              {
-                fei = fib_table_lookup (outside_fib->fib_index, &pfx);
-                if (FIB_NODE_INDEX_INVALID != fei)
-                  {
-                    if (fib_entry_get_resolving_interface (fei) != ~0)
-                      {
-                        fib_index = outside_fib->fib_index;
-                        break;
-                      }
-                  }
-              }
-            /* *INDENT-ON* */
-	  break;
+	  nat_outside_fib_t *outside_fib;
+	  fib_node_index_t fei = FIB_NODE_INDEX_INVALID;
+	  fib_prefix_t pfx = {
+		  .fp_proto = FIB_PROTOCOL_IP4,
+		  .fp_len = 32,
+		  .fp_addr = {
+			  .ip4.as_u32 = ip->dst_address.as_u32,
+		  } ,
+	  };
+
+	  switch (vec_len (sm->outside_fibs))
+	    {
+	    case 0:
+	      fib_index = sm->outside_fib_index;
+	      break;
+	    case 1:
+	      fib_index = sm->outside_fibs[0].fib_index;
+	      break;
+	    default:
+	      vec_foreach (outside_fib, sm->outside_fibs)
+		{
+		  fei = fib_table_lookup (outside_fib->fib_index, &pfx);
+		  if (FIB_NODE_INDEX_INVALID != fei)
+		    {
+		      if (fib_entry_get_resolving_interface (fei) != ~0)
+			{
+			  fib_index = outside_fib->fib_index;
+			  break;
+			}
+		    }
+		}
+	      break;
+	    }
 	}
 
-      init_ed_k (&kv16, ip->src_address, udp->src_port, ip->dst_address,
-		 udp->dst_port, fib_index, ip->protocol);
+      init_ed_k (&kv16, ip->src_address, vnet_buffer (b)->ip.reass.l4_src_port,
+		 ip->dst_address, vnet_buffer (b)->ip.reass.l4_dst_port,
+		 fib_index, ip->protocol);
 
-      if (PREDICT_TRUE (
-	    !clib_bihash_search_16_8 (&sm->flow_hash, &kv16, &value16)))
+      if (!clib_bihash_search_16_8 (&sm->flow_hash, &kv16, &value16))
 	{
-	  tsm =
-	    vec_elt_at_index (sm->per_thread_data,
-			      ed_value_get_thread_index (&value16));
-	  next_worker_index += tsm->thread_index;
+	  next_worker_index = ed_value_get_thread_index (&value16);
+	  vnet_buffer2 (b)->nat.cached_session_index =
+	    ed_value_get_session_index (&value16);
+	  goto out;
+	}
 
-	  nat_elog_debug_handoff (
-	    sm, "HANDOFF IN2OUT-OUTPUT-FEATURE (session)", next_worker_index,
-	    fib_index, clib_net_to_host_u32 (ip->src_address.as_u32),
-	    clib_net_to_host_u32 (ip->dst_address.as_u32));
-
-	  return next_worker_index;
+      // dst NAT
+      init_ed_k (&kv16, ip->dst_address, vnet_buffer (b)->ip.reass.l4_dst_port,
+		 ip->src_address, vnet_buffer (b)->ip.reass.l4_src_port,
+		 rx_fib_index, ip->protocol);
+      if (!clib_bihash_search_16_8 (&sm->flow_hash, &kv16, &value16))
+	{
+	  next_worker_index = ed_value_get_thread_index (&value16);
+	  vnet_buffer2 (b)->nat.cached_dst_nat_session_index =
+	    ed_value_get_session_index (&value16);
+	  goto out;
 	}
     }
 
@@ -2643,6 +2583,7 @@ nat44_ed_get_worker_in2out_cb (ip4_header_t *ip, u32 rx_fib_index,
   else
     next_worker_index += sm->workers[hash % _vec_len (sm->workers)];
 
+out:
   if (PREDICT_TRUE (!is_output))
     {
       nat_elog_debug_handoff (sm, "HANDOFF IN2OUT", next_worker_index,
@@ -2682,8 +2623,9 @@ nat44_ed_get_worker_out2in_cb (vlib_buffer_t * b, ip4_header_t * ip,
     {
       udp = ip4_next_header (ip);
 
-      init_ed_k (&kv16, ip->dst_address, udp->dst_port, ip->src_address,
-		 udp->src_port, rx_fib_index, ip->protocol);
+      init_ed_k (&kv16, ip->dst_address, vnet_buffer (b)->ip.reass.l4_dst_port,
+		 ip->src_address, vnet_buffer (b)->ip.reass.l4_src_port,
+		 rx_fib_index, ip->protocol);
 
       if (PREDICT_TRUE (
 	    !clib_bihash_search_16_8 (&sm->flow_hash, &kv16, &value16)))
@@ -2750,7 +2692,7 @@ nat44_ed_get_worker_out2in_cb (vlib_buffer_t * b, ip4_header_t * ip,
     }
 
   udp = ip4_next_header (ip);
-  port = udp->dst_port;
+  port = vnet_buffer (b)->ip.reass.l4_dst_port;
 
   if (PREDICT_FALSE (ip->protocol == IP_PROTOCOL_ICMP))
     {
@@ -3220,9 +3162,8 @@ nat44_del_ed_session (snat_main_t * sm, ip4_address_t * addr, u16 port,
 
   ip.dst_address.as_u32 = ip.src_address.as_u32 = addr->as_u32;
   if (sm->num_workers > 1)
-    tsm =
-      vec_elt_at_index (sm->per_thread_data,
-			sm->worker_in2out_cb (&ip, fib_index, 0));
+    tsm = vec_elt_at_index (sm->per_thread_data,
+			    sm->worker_in2out_cb (0, &ip, fib_index, 0));
   else
     tsm = vec_elt_at_index (sm->per_thread_data, sm->num_workers);
 
@@ -3247,7 +3188,6 @@ VLIB_NODE_FN (nat_default_node) (vlib_main_t * vm,
   return 0;
 }
 
-/* *INDENT-OFF* */
 VLIB_REGISTER_NODE (nat_default_node) = {
   .name = "nat-default",
   .vector_size = sizeof (u32),
@@ -3268,7 +3208,6 @@ VLIB_REGISTER_NODE (nat_default_node) = {
     [NAT_NEXT_OUT2IN_CLASSIFY] = "nat44-out2in-worker-handoff",
   },
 };
-/* *INDENT-ON* */
 
 void
 nat_6t_l3_l4_csum_calc (nat_6t_flow_t *f)
