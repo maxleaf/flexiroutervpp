@@ -1555,7 +1555,11 @@ VLIB_NODE_FN (nat44_ed_out2in_handoff_node) (vlib_main_t * vm,
 					     vlib_frame_t * frame)
 {
   return nat_handoff_node_fn_inline (vm, node, frame,
+#ifdef FLEXIWAN_FIX
+				     snat_main.fq_out2in_index);
+#else
 				     snat_main.ed_out2in_node_index);
+#endif
 }
 
 /* *INDENT-OFF* */
