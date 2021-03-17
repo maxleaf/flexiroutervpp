@@ -497,7 +497,11 @@ create_bypass_for_fwd (snat_main_t * sm, vlib_buffer_t * b, ip4_header_t * ip,
       s->in2out.port = s->out2in.port;
       s->in2out.fib_index = s->out2in.fib_index;
 
+#ifdef FLEXIWAN_FIX  /*They forgot to add thread_index to the hashed value, so "ASSERT (thread_index == ed_value_get_thread_index (&value));" above crashes*/
+      kv.value = (u64) thread_index << 32 | (s - tsm->sessions);
+#else
       kv.value = s - tsm->sessions;
+#endif
       if (clib_bihash_add_del_16_8 (&tsm->in2out_ed, &kv, 1))
 	nat_elog_notice ("in2out_ed key add failed");
 
