@@ -16,7 +16,8 @@
 /*
  *  Copyright (C) 2020 flexiWAN Ltd.
  *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
- *   - Disabled ASSERT on punting
+ *   - Disabled ASSERT on punting.
+ *   - Reinitiate connection on authentication failure.
  */
 
 #include <vlib/vlib.h>
@@ -5040,7 +5041,12 @@ ikev2_mngr_process_fn (vlib_main_t * vm, vlib_node_runtime_t * rt,
         pool_foreach (sa, tkm->sas)  {
           ikev2_child_sa_t *c;
           u8 del_old_ids = 0;
-
+#ifdef FLEXIWAN_FIX
+          if (sa->state == IKEV2_STATE_AUTH_FAILED){
+            vec_add1 (to_be_deleted, sa - tkm->sas);
+          }
+          else {
+#endif /* FLEXIWAN_FIX */
           if (sa->state != IKEV2_STATE_AUTHENTICATED)
             continue;
 
@@ -5057,6 +5063,9 @@ ikev2_mngr_process_fn (vlib_main_t * vm, vlib_node_runtime_t * rt,
 
           if (!km->dpd_disabled && ikev2_mngr_process_responder_sas (sa))
             vec_add1 (to_be_deleted, sa - tkm->sas);
+#ifdef FLEXIWAN_FIX
+          }
+#endif /* FLEXIWAN_FIX */
         }
         /* *INDENT-ON* */
 
