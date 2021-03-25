@@ -56,10 +56,20 @@
  * vlib_load_new_plugins().
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *   - Increased VPP version string size up to 64.
+ */
+
 /* *INDENT-OFF* */
 typedef CLIB_PACKED(struct {
   u8 default_disabled;
+#ifdef FLEXIWAN_FEATURE
+  const char version[64];
+#else /* FLEXIWAN_FEATURE */
   const char version[32];
+#endif /* FLEXIWAN_FEATURE */
   const char version_required[32];
   const char overrides[256];
   const char *early_init;
