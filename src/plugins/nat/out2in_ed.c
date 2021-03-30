@@ -297,7 +297,7 @@ create_session_for_static_mapping_ed (snat_main_t * sm,
 				 ip->src_address.as_u32 == l_key.addr.as_u32))
     {
       eh_key.protocol = e_key.protocol;
-      if (snat_alloc_outside_address_and_port (sm->twice_nat_addresses, 0,
+      if (snat_alloc_outside_address_and_port (sm->twice_nat_addresses, 0, ~0,
 					       thread_index, &eh_key,
 					       sm->port_per_thread,
 					       tsm->snat_thread_index))

@@ -513,7 +513,7 @@ snat_add_del_addr_to_fib (ip4_address_t * addr, u8 p_len, u32 sw_if_index,
 }
 
 int
-snat_add_address (snat_main_t * sm, ip4_address_t * addr, u32 vrf_id,
+snat_add_address (snat_main_t * sm, u32 tx_sw_if_index, ip4_address_t * addr, u32 vrf_id,
 		  u8 twice_nat)
 {
   snat_address_t *ap;
@@ -538,6 +538,7 @@ snat_add_address (snat_main_t * sm, ip4_address_t * addr, u32 vrf_id,
     vec_add2 (sm->addresses, ap, 1);
 
   ap->addr = *addr;
+  ap->tx_sw_if_index = tx_sw_if_index;
   if (vrf_id != ~0)
     ap->fib_index =
       fib_table_find_or_create_and_lock (FIB_PROTOCOL_IP4, vrf_id,
@@ -2131,6 +2132,7 @@ nat_ip4_add_del_addr_only_sm_cb (ip4_main_t * im,
 static int
 nat_alloc_addr_and_port_default (snat_address_t * addresses,
 				 u32 fib_index,
+				 u32 tx_sw_if_index,
 				 u32 thread_index,
 				 snat_session_key_t * k,
 				 u16 port_per_thread, u32 snat_thread_index);
@@ -2440,6 +2442,7 @@ snat_random_port (u16 min, u16 max)
 int
 snat_alloc_outside_address_and_port (snat_address_t * addresses,
 				     u32 fib_index,
+				     u32 tx_sw_if_index,
 				     u32 thread_index,
 				     snat_session_key_t * k,
 				     u16 port_per_thread,
@@ -2447,13 +2450,14 @@ snat_alloc_outside_address_and_port (snat_address_t * addresses,
 {
   snat_main_t *sm = &snat_main;
 
-  return sm->alloc_addr_and_port (addresses, fib_index, thread_index, k,
+  return sm->alloc_addr_and_port (addresses, fib_index, tx_sw_if_index, thread_index, k,
 				  port_per_thread, snat_thread_index);
 }
 
 static int
 nat_alloc_addr_and_port_default (snat_address_t * addresses,
 				 u32 fib_index,
+				 u32 tx_sw_if_index,
 				 u32 thread_index,
 				 snat_session_key_t * k,
 				 u16 port_per_thread, u32 snat_thread_index)
@@ -2465,6 +2469,8 @@ nat_alloc_addr_and_port_default (snat_address_t * addresses,
   for (i = 0; i < vec_len (addresses); i++)
     {
       a = addresses + i;
+      if ((a->tx_sw_if_index != ~0) && (a->tx_sw_if_index != tx_sw_if_index))
+	continue;
       switch (k->protocol)
 	{
 #define _(N, j, n, s) \
@@ -2541,6 +2547,7 @@ nat_alloc_addr_and_port_default (snat_address_t * addresses,
 static int
 nat_alloc_addr_and_port_mape (snat_address_t * addresses,
 			      u32 fib_index,
+			      u32 tx_sw_if_index,
 			      u32 thread_index,
 			      snat_session_key_t * k,
 			      u16 port_per_thread, u32 snat_thread_index)
@@ -2591,6 +2598,7 @@ exhausted:
 static int
 nat_alloc_addr_and_port_range (snat_address_t * addresses,
 			       u32 fib_index,
+			       u32 tx_sw_if_index,
 			       u32 thread_index,
 			       snat_session_key_t * k,
 			       u16 port_per_thread, u32 snat_thread_index)
@@ -3262,7 +3270,7 @@ match:
 	if (addresses[j].addr.as_u32 == address->as_u32)
 	  return;
 
-      (void) snat_add_address (sm, address, ~0, twice_nat);
+      (void) snat_add_address (sm, sw_if_index, address, ~0, twice_nat);
       /* Scan static map resolution vector */
       for (j = 0; j < vec_len (sm->to_resolve); j++)
 	{
@@ -3366,7 +3374,7 @@ snat_add_interface_address (snat_main_t * sm, u32 sw_if_index, int is_del,
 
   /* If the address is already bound - or static - add it now */
   if (first_int_addr)
-    (void) snat_add_address (sm, first_int_addr, ~0, twice_nat);
+    (void) snat_add_address (sm, sw_if_index, first_int_addr, ~0, twice_nat);
 
   return 0;
 }
@@ -3488,6 +3496,47 @@ nat_set_alloc_addr_and_port_default (void)
 
   sm->addr_and_port_alloc_alg = NAT_ADDR_AND_PORT_ALLOC_ALG_DEFAULT;
   sm->alloc_addr_and_port = nat_alloc_addr_and_port_default;
+}
+
+u32
+nat44_output_is_enabled (u32 sw_if_index)
+{
+  snat_main_t *sm = &snat_main;
+  snat_interface_t *i;
+
+  pool_foreach (i, sm->output_feature_interfaces,
+    ({
+      if (i->sw_if_index == sw_if_index)
+	{
+	    return 1;
+	}
+    }));
+  return 0;
+}
+
+u32
+nat44_output_setup_in2out_handoff (u32* handoff_index,
+				   u16* handoff_thread_index)
+{
+  snat_main_t *sm = &snat_main;
+
+  if (sm->num_workers == 0)
+    {
+      *handoff_index = sm->in2out_output_node_index;
+    }
+  else if (sm->num_workers == 1)
+    {
+      if (sm->fq_in2out_output_index == ~0)
+	sm->fq_in2out_output_index =
+	  vlib_frame_queue_main_init (sm->in2out_output_node_index, 0);
+      *handoff_index = sm->fq_in2out_output_index;
+      *handoff_thread_index = sm->first_worker_index;
+    }
+  else
+    {
+      *handoff_index = snat_in2out_output_worker_handoff_node.index;
+    }
+  return sm->num_workers;
 }
 
 /*

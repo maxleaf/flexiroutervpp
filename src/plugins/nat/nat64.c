@@ -531,7 +531,7 @@ nat64_alloc_out_addr_and_port (u32 fib_index, snat_protocol_t proto,
     worker_index = thread_index - sm->first_worker_index;
 
   rv =
-    sm->alloc_addr_and_port (nm->addr_pool, fib_index, thread_index, &k,
+    sm->alloc_addr_and_port (nm->addr_pool, fib_index, ~0, thread_index, &k,
 			     sm->port_per_thread, worker_index);
 
   if (!rv)

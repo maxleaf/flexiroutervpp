@@ -242,6 +242,7 @@ typedef struct
 {
   ip4_address_t addr;
   u32 fib_index;
+  u32 tx_sw_if_index;
 /* *INDENT-OFF* */
 #define _(N, i, n, s) \
   u16 busy_##n##_ports; \
@@ -422,6 +423,7 @@ typedef u32 (snat_get_worker_function_t) (ip4_header_t * ip,
 typedef int (nat_alloc_out_addr_and_port_function_t) (snat_address_t *
 						      addresses,
 						      u32 fib_index,
+						      u32 tx_sw_if_index,
 						      u32 thread_index,
 						      snat_session_key_t * k,
 						      u16 port_per_thread,
@@ -786,13 +788,14 @@ void increment_v4_address (ip4_address_t * a);
  * @brief Add external address to NAT44 pool
  *
  * @param addr      IPv4 address
+ * @param tx_sw_if_index Index of the TX interface in the in2out direction
  * @param vrf_id    VRF id of tenant, ~0 means independent of VRF
  * @param twice_nat 1 if twice NAT address
  *
  * @return 0 on success, non-zero value otherwise
  */
-int snat_add_address (snat_main_t * sm, ip4_address_t * addr, u32 vrf_id,
-		      u8 twice_nat);
+int snat_add_address (snat_main_t * sm, u32 tx_sw_if_index,
+		      ip4_address_t * addr, u32 vrf_id, u8 twice_nat);
 
 /**
  * @brief Delete external address from NAT44 pool
@@ -1026,6 +1029,7 @@ void snat_free_outside_address_and_port (snat_address_t * addresses,
  *
  * @param addresses         vector of outside addresses
  * @param fib_index         FIB table index
+ * @param tx_sw_if_index    Index of the TX interface in the in2out direction
  * @param thread_index      thread index
  * @param k                 allocated address and port pair
  * @param port_per_thread   number of ports per threead
@@ -1035,6 +1039,7 @@ void snat_free_outside_address_and_port (snat_address_t * addresses,
  */
 int snat_alloc_outside_address_and_port (snat_address_t * addresses,
 					 u32 fib_index,
+					 u32 tx_sw_if_index,
 					 u32 thread_index,
 					 snat_session_key_t * k,
 					 u16 port_per_thread,
@@ -1096,6 +1101,19 @@ typedef struct
 {
   u16 src_port, dst_port;
 } tcp_udp_header_t;
+
+/**
+ * @brief Returns 1 if the sw_if_index has output nat44 enabled
+ */
+u32 nat44_output_is_enabled (u32 sw_if_index);
+/**
+ * @brief Sets the index and thread index corresponding to nat output feature
+ * Initializes queue mains if required
+ * Returns number of nat44 workers
+ */
+u32 nat44_output_setup_in2out_handoff (u32* handoff_index,
+				       u16* handoff_thread_index);
+
 
 #endif /* __included_nat_h__ */
 

@@ -21,6 +21,7 @@
 #include <vnet/vnet.h>
 #include <vnet/pg/pg.h>
 #include <vnet/ip/ip.h>
+#include <vnet/udp/udp.h>
 #include <vnet/ethernet/ethernet.h>
 #include <vnet/fib/ip4_fib.h>
 #include <vppinfra/error.h>
@@ -312,11 +313,17 @@ slow_path_ed (snat_main_t * sm,
     {
       /* Try to create dynamic translation */
       if (snat_alloc_outside_address_and_port (sm->addresses, rx_fib_index,
+					       vnet_buffer (b)->sw_if_index[VLIB_TX],
 					       thread_index, &key1,
 					       sm->port_per_thread,
 					       tsm->snat_thread_index))
 	{
-	  nat_log_notice ("addresses exhausted");
+	  //nat_log_notice ("addresses exhausted");
+	  if ((proto == SNAT_PROTOCOL_UDP) &&
+			     (key->r_port == clib_host_to_net_u16 (UDP_DST_PORT_dhcp_to_server)))
+	    {
+	      return next;
+	    }
 	  b->error = node->errors[NAT_IN2OUT_ED_ERROR_OUT_OF_PORTS];
 	  return NAT_IN2OUT_ED_NEXT_DROP;
 	}
