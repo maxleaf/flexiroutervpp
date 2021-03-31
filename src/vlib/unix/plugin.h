@@ -59,8 +59,8 @@
 /* *INDENT-OFF* */
 typedef CLIB_PACKED(struct {
   u8 default_disabled;
-  const char version[32];
-  const char version_required[32];
+  const char version[64];
+  const char version_required[64];
   const char *early_init;
   const char *description;
 }) vlib_plugin_registration_t;
