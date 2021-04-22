@@ -320,6 +320,9 @@ typedef struct
 {
   ip4_address_t addr;
   u32 fib_index;
+#ifdef FLEXIWAN
+  u32 tx_sw_if_index;
+#endif
 /* *INDENT-OFF* */
 #define _(N, i, n, s) \
   u32 busy_##n##_ports; \
@@ -1160,6 +1163,21 @@ int nat44_plugin_enable (nat44_config_t c);
  */
 int nat44_plugin_disable ();
 
+#ifdef FLEXIWAN
+/**
+ * @brief Add external address to NAT44 pool
+ *
+ * @param sm		  snat global configuration data
+ * @param addr		  IPv4 address
+ * @param tx_sw_if_index  Index of the TX interface in the in2out direction
+ * @param vrf_id	  VRF id of tenant, ~0 means independent of VRF
+ * @param twice_nat	  1 if twice NAT address
+ *
+ * @return 0 on success, non-zero value otherwise
+ */
+int snat_add_address (snat_main_t * sm, u32 tx_sw_if_index,
+		      ip4_address_t * addr, u32 vrf_id, u8 twice_nat);
+#else
 /**
  * @brief Add external address to NAT44 pool
  *
@@ -1171,7 +1189,9 @@ int nat44_plugin_disable ();
  * @return 0 on success, non-zero value otherwise
  */
 int snat_add_address (snat_main_t * sm, ip4_address_t * addr, u32 vrf_id,
-		      u8 twice_nat);
+		     u8 twice_nat);
+
+#endif
 
 /**
  * @brief Delete external address from NAT44 pool
