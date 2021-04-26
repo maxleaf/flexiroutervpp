@@ -5042,7 +5042,8 @@ ikev2_mngr_process_fn (vlib_main_t * vm, vlib_node_runtime_t * rt,
           ikev2_child_sa_t *c;
           u8 del_old_ids = 0;
 #ifdef FLEXIWAN_FIX
-          if (sa->state == IKEV2_STATE_AUTH_FAILED){
+          if (sa->state == IKEV2_STATE_AUTH_FAILED ||
+              sa->state == IKEV2_STATE_NO_PROPOSAL_CHOSEN){
             vec_add1 (to_be_deleted, sa - tkm->sas);
           }
           else {
