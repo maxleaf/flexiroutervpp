@@ -12,6 +12,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - added escaping natting for flexiEdge-to-flexiEdge vxlan tunnels.
+ *     These tunnels do not need NAT, so there is no need to create NAT session
+ *     for them. That improves performance on multi-core machines,
+ *     as NAT session are bound to the specific worker thread / core.
+ */
+
 #include <vnet/vnet.h>
 #include <vppinfra/vec.h>
 #include <vppinfra/error.h>
@@ -328,6 +338,9 @@ dpdk_device_input (vlib_main_t * vm, dpdk_main_t * dm, dpdk_device_t * xd,
   bt->buffer_pool_index = rxq->buffer_pool_index;
   bt->ref_count = 1;
   vnet_buffer (bt)->feature_arc_index = 0;
+#ifdef FLEXIWAN_FEATURE
+  vnet_buffer (bt)->escape_feature_groups = 0;
+#endif
   bt->current_config_index = 0;
 
   /* receive burst of packets from DPDK PMD */

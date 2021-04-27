@@ -17,6 +17,15 @@
  * @brief NAT44 worker handoff
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - added escaping natting for flexiEdge-to-flexiEdge vxlan tunnels.
+ *     These tunnels do not need NAT, so there is no need to create NAT session
+ *     for them. That improves performance on multi-core machines,
+ *     as NAT session are bound to the specific worker thread / core.
+ */
+
 #include <vlib/vlib.h>
 #include <vnet/vnet.h>
 #include <vnet/handoff.h>
@@ -93,33 +102,33 @@ nat44_worker_handoff_fn_inline (vlib_main_t * vm,
       ip4_header_t *ip0, *ip1, *ip2, *ip3;
 
       if (PREDICT_TRUE (n_left_from >= 8))
-	{
-	  vlib_prefetch_buffer_header (b[4], LOAD);
-	  vlib_prefetch_buffer_header (b[5], LOAD);
-	  vlib_prefetch_buffer_header (b[6], LOAD);
-	  vlib_prefetch_buffer_header (b[7], LOAD);
-	  CLIB_PREFETCH (&b[4]->data, CLIB_CACHE_LINE_BYTES, LOAD);
-	  CLIB_PREFETCH (&b[5]->data, CLIB_CACHE_LINE_BYTES, LOAD);
-	  CLIB_PREFETCH (&b[6]->data, CLIB_CACHE_LINE_BYTES, LOAD);
-	  CLIB_PREFETCH (&b[7]->data, CLIB_CACHE_LINE_BYTES, LOAD);
-	}
+        {
+          vlib_prefetch_buffer_header (b[4], LOAD);
+          vlib_prefetch_buffer_header (b[5], LOAD);
+          vlib_prefetch_buffer_header (b[6], LOAD);
+          vlib_prefetch_buffer_header (b[7], LOAD);
+          CLIB_PREFETCH (&b[4]->data, CLIB_CACHE_LINE_BYTES, LOAD);
+          CLIB_PREFETCH (&b[5]->data, CLIB_CACHE_LINE_BYTES, LOAD);
+          CLIB_PREFETCH (&b[6]->data, CLIB_CACHE_LINE_BYTES, LOAD);
+          CLIB_PREFETCH (&b[7]->data, CLIB_CACHE_LINE_BYTES, LOAD);
+        }
 
       if (is_output)
-	{
-	  iph_offset0 = vnet_buffer (b[0])->ip.save_rewrite_length;
-	  iph_offset1 = vnet_buffer (b[1])->ip.save_rewrite_length;
-	  iph_offset2 = vnet_buffer (b[2])->ip.save_rewrite_length;
-	  iph_offset3 = vnet_buffer (b[3])->ip.save_rewrite_length;
-	}
+        {
+          iph_offset0 = vnet_buffer (b[0])->ip.save_rewrite_length;
+          iph_offset1 = vnet_buffer (b[1])->ip.save_rewrite_length;
+          iph_offset2 = vnet_buffer (b[2])->ip.save_rewrite_length;
+          iph_offset3 = vnet_buffer (b[3])->ip.save_rewrite_length;
+        }
 
-      ip0 = (ip4_header_t *) ((u8 *) vlib_buffer_get_current (b[0]) +
-			      iph_offset0);
-      ip1 = (ip4_header_t *) ((u8 *) vlib_buffer_get_current (b[1]) +
-			      iph_offset1);
-      ip2 = (ip4_header_t *) ((u8 *) vlib_buffer_get_current (b[2]) +
-			      iph_offset2);
-      ip3 = (ip4_header_t *) ((u8 *) vlib_buffer_get_current (b[3]) +
-			      iph_offset3);
+      ip0 =
+          (ip4_header_t *)((u8 *)vlib_buffer_get_current (b[0]) + iph_offset0);
+      ip1 =
+          (ip4_header_t *)((u8 *)vlib_buffer_get_current (b[1]) + iph_offset1);
+      ip2 =
+          (ip4_header_t *)((u8 *)vlib_buffer_get_current (b[2]) + iph_offset2);
+      ip3 =
+          (ip4_header_t *)((u8 *)vlib_buffer_get_current (b[3]) + iph_offset3);
 
       vnet_feature_next (&arc_next0, b[0]);
       vnet_feature_next (&arc_next1, b[1]);
@@ -141,40 +150,85 @@ nat44_worker_handoff_fn_inline (vlib_main_t * vm,
       rx_fib_index2 = ip4_fib_table_get_index_for_sw_if_index (sw_if_index2);
       rx_fib_index3 = ip4_fib_table_get_index_for_sw_if_index (sw_if_index3);
 
+#ifndef FLEXIWAN_FEATURE
       if (is_in2out)
-	{
-	  ti[0] = sm->worker_in2out_cb (ip0, rx_fib_index0, is_output);
-	  ti[1] = sm->worker_in2out_cb (ip1, rx_fib_index1, is_output);
-	  ti[2] = sm->worker_in2out_cb (ip2, rx_fib_index2, is_output);
-	  ti[3] = sm->worker_in2out_cb (ip3, rx_fib_index3, is_output);
-	}
+        {
+          ti[0] = sm->worker_in2out_cb (ip0, rx_fib_index0, is_output);
+          ti[1] = sm->worker_in2out_cb (ip1, rx_fib_index1, is_output);
+          ti[2] = sm->worker_in2out_cb (ip2, rx_fib_index2, is_output);
+          ti[3] = sm->worker_in2out_cb (ip3, rx_fib_index3, is_output);
+        }
       else
-	{
-	  ti[0] = sm->worker_out2in_cb (b[0], ip0, rx_fib_index0, is_output);
-	  ti[1] = sm->worker_out2in_cb (b[1], ip1, rx_fib_index1, is_output);
-	  ti[2] = sm->worker_out2in_cb (b[2], ip2, rx_fib_index2, is_output);
-	  ti[3] = sm->worker_out2in_cb (b[3], ip3, rx_fib_index3, is_output);
-	}
+        {
+          ti[0] = sm->worker_out2in_cb (b[0], ip0, rx_fib_index0, is_output);
+          ti[1] = sm->worker_out2in_cb (b[1], ip1, rx_fib_index1, is_output);
+          ti[2] = sm->worker_out2in_cb (b[2], ip2, rx_fib_index2, is_output);
+          ti[3] = sm->worker_out2in_cb (b[3], ip3, rx_fib_index3, is_output);
+        }
+#else /*#ifndef FLEXIWAN_FEATURE*/
+      /* The VxLAN flexiEdge-to-flexiEdge tunnel traffic should not be NAT-ed,
+         so we can avoid handoff of packets to the session thread, thus utilizing
+         multi core power for the tunnel.
+      */
+      if (is_in2out)
+        {
+          if (vnet_buffer(b[0])->escape_feature_groups & VNET_FEATURE_GROUP_NAT)
+            ti[0] = thread_index;
+          else
+            ti[0] = sm->worker_in2out_cb (ip0, rx_fib_index0, is_output);
+          if (vnet_buffer(b[1])->escape_feature_groups & VNET_FEATURE_GROUP_NAT)
+            ti[1] = thread_index;
+          else
+            ti[1] = sm->worker_in2out_cb (ip1, rx_fib_index1, is_output);
+          if (vnet_buffer(b[2])->escape_feature_groups & VNET_FEATURE_GROUP_NAT)
+            ti[2] = thread_index;
+          else
+            ti[2] = sm->worker_in2out_cb (ip2, rx_fib_index2, is_output);
+          if (vnet_buffer(b[3])->escape_feature_groups & VNET_FEATURE_GROUP_NAT)
+            ti[3] = thread_index;
+          else
+            ti[3] = sm->worker_in2out_cb (ip3, rx_fib_index3, is_output);
+        }
+      else
+        {
+          if (vnet_buffer(b[0])->escape_feature_groups & VNET_FEATURE_GROUP_NAT)
+            ti[0] = thread_index;
+          else
+            ti[0] = sm->worker_out2in_cb (b[0], ip0, rx_fib_index0, is_output);
+          if (vnet_buffer(b[1])->escape_feature_groups & VNET_FEATURE_GROUP_NAT)
+            ti[1] = thread_index;
+          else
+            ti[1] = sm->worker_out2in_cb (b[1], ip1, rx_fib_index1, is_output);
+          if (vnet_buffer(b[2])->escape_feature_groups & VNET_FEATURE_GROUP_NAT)
+            ti[2] = thread_index;
+          else
+            ti[2] = sm->worker_out2in_cb (b[2], ip2, rx_fib_index2, is_output);
+          if (vnet_buffer(b[3])->escape_feature_groups & VNET_FEATURE_GROUP_NAT)
+            ti[3] = thread_index;
+          else
+            ti[3] = sm->worker_out2in_cb (b[3], ip3, rx_fib_index3, is_output);
+        }
+#endif /*#ifndef FLEXIWAN_FEATURE #else*/
 
       if (ti[0] == thread_index)
-	same_worker++;
+        same_worker++;
       else
-	do_handoff++;
+        do_handoff++;
 
       if (ti[1] == thread_index)
-	same_worker++;
+        same_worker++;
       else
-	do_handoff++;
+        do_handoff++;
 
       if (ti[2] == thread_index)
-	same_worker++;
+        same_worker++;
       else
-	do_handoff++;
+        do_handoff++;
 
       if (ti[3] == thread_index)
-	same_worker++;
+        same_worker++;
       else
-	do_handoff++;
+        do_handoff++;
 
       b += 4;
       ti += 4;
@@ -189,32 +243,46 @@ nat44_worker_handoff_fn_inline (vlib_main_t * vm,
       u32 iph_offset0 = 0;
       ip4_header_t *ip0;
 
-
       if (is_output)
-	iph_offset0 = vnet_buffer (b[0])->ip.save_rewrite_length;
+        iph_offset0 = vnet_buffer (b[0])->ip.save_rewrite_length;
 
-      ip0 = (ip4_header_t *) ((u8 *) vlib_buffer_get_current (b[0]) +
-			      iph_offset0);
+      ip0 =
+          (ip4_header_t *)((u8 *)vlib_buffer_get_current (b[0]) + iph_offset0);
 
       vnet_feature_next (&arc_next0, b[0]);
       vnet_buffer2 (b[0])->nat.arc_next = arc_next0;
 
-      sw_if_index0 = vnet_buffer (b[0])->sw_if_index[VLIB_RX];
-      rx_fib_index0 = ip4_fib_table_get_index_for_sw_if_index (sw_if_index0);
-
-      if (is_in2out)
-	{
-	  ti[0] = sm->worker_in2out_cb (ip0, rx_fib_index0, is_output);
-	}
+#ifdef FLEXIWAN_FEATURE
+      /* The VxLAN flexiEdge-to-flexiEdge tunnel traffic should not be NAT-ed,
+         so we can avoid handoff of packets to the session thread, thus utilizing
+         multi core power for the tunnel.
+      */
+      if (vnet_buffer(b[0])->escape_feature_groups & VNET_FEATURE_GROUP_NAT)
+      {
+        ti[0] = thread_index;
+      }
       else
-	{
-	  ti[0] = sm->worker_out2in_cb (b[0], ip0, rx_fib_index0, is_output);
-	}
+      {
+#endif
+        sw_if_index0 = vnet_buffer (b[0])->sw_if_index[VLIB_RX];
+        rx_fib_index0 = ip4_fib_table_get_index_for_sw_if_index (sw_if_index0);
+
+        if (is_in2out)
+          {
+            ti[0] = sm->worker_in2out_cb (ip0, rx_fib_index0, is_output);
+          }
+        else
+          {
+            ti[0] = sm->worker_out2in_cb (b[0], ip0, rx_fib_index0, is_output);
+          }
+#ifdef FLEXIWAN_FEATURE
+      }
+#endif
 
       if (ti[0] == thread_index)
-	same_worker++;
+        same_worker++;
       else
-	do_handoff++;
+        do_handoff++;
 
       b += 1;
       ti += 1;
@@ -228,38 +296,38 @@ nat44_worker_handoff_fn_inline (vlib_main_t * vm,
       ti = thread_indices;
 
       for (i = 0; i < frame->n_vectors; i++)
-	{
-	  if (b[0]->flags & VLIB_BUFFER_IS_TRACED)
-	    {
-	      nat44_handoff_trace_t *t =
-		vlib_add_trace (vm, node, b[0], sizeof (*t));
-	      t->next_worker_index = ti[0];
-	      t->trace_index = vlib_buffer_get_trace_index (b[0]);
-	      t->in2out = is_in2out;
-	      t->output = is_output;
+        {
+          if (b[0]->flags & VLIB_BUFFER_IS_TRACED)
+            {
+              nat44_handoff_trace_t *t =
+                  vlib_add_trace (vm, node, b[0], sizeof (*t));
+              t->next_worker_index = ti[0];
+              t->trace_index = vlib_buffer_get_trace_index (b[0]);
+              t->in2out = is_in2out;
+              t->output = is_output;
 
-	      b += 1;
-	      ti += 1;
-	    }
-	  else
-	    break;
-	}
+              b += 1;
+              ti += 1;
+            }
+          else
+            break;
+        }
     }
 
   n_enq = vlib_buffer_enqueue_to_thread (vm, fq_index, from, thread_indices,
-					 frame->n_vectors, 1);
+                                         frame->n_vectors, 1);
 
   if (n_enq < frame->n_vectors)
     {
       vlib_node_increment_counter (vm, node->node_index,
-				   NAT44_HANDOFF_ERROR_CONGESTION_DROP,
-				   frame->n_vectors - n_enq);
+                                   NAT44_HANDOFF_ERROR_CONGESTION_DROP,
+                                   frame->n_vectors - n_enq);
     }
 
   vlib_node_increment_counter (vm, node->node_index,
-			       NAT44_HANDOFF_ERROR_SAME_WORKER, same_worker);
+                               NAT44_HANDOFF_ERROR_SAME_WORKER, same_worker);
   vlib_node_increment_counter (vm, node->node_index,
-			       NAT44_HANDOFF_ERROR_DO_HANDOFF, do_handoff);
+                               NAT44_HANDOFF_ERROR_DO_HANDOFF, do_handoff);
   return frame->n_vectors;
 }
 

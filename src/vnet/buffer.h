@@ -37,6 +37,15 @@
  *  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - added escaping natting for flexiEdge-to-flexiEdge vxlan tunnels.
+ *     These tunnels do not need NAT, so there is no need to create NAT session
+ *     for them. That improves performance on multi-core machines,
+ *     as NAT session are bound to the specific worker thread / core.
+ */
+
 #ifndef included_vnet_buffer_h
 #define included_vnet_buffer_h
 
@@ -138,8 +147,11 @@ typedef struct
   i16 l3_hdr_offset;
   i16 l4_hdr_offset;
   u8 feature_arc_index;
+#ifndef FLEXIWAN_FEATURE
   u8 dont_waste_me;
-
+#else
+  u8 escape_feature_groups;
+#endif
   union
   {
     /* IP4/6 buffer opaque. */

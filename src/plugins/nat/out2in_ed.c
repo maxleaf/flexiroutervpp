@@ -17,6 +17,15 @@
  * @brief NAT44 endpoint-dependent outside to inside network translation
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - added escaping natting for flexiEdge-to-flexiEdge vxlan tunnels.
+ *     These tunnels do not need NAT, so there is no need to create NAT session
+ *     for them. That improves performance on multi-core machines,
+ *     as NAT session are bound to the specific worker thread / core.
+ */
+
 #include <vlib/vlib.h>
 #include <vnet/vnet.h>
 #include <vnet/ip/ip.h>
@@ -851,6 +860,18 @@ nat44_ed_out2in_fast_path_node_fn_inline (vlib_main_t * vm,
 	  next[0] = NAT_NEXT_ICMP_ERROR;
 	  goto trace0;
 	}
+
+#ifdef FLEXIWAN_FEATURE
+      /* The VxLAN flexiEdge-to-flexiEdge tunnel traffic should not be NAT-ed,
+         so we do not perform handoff of packets to the session thread, thus utilizing
+         multi core power for the tunnel. As buffers are not handoff-ed, we can't
+		 access / create session!
+      */
+      if (vnet_buffer(b0)->escape_feature_groups & VNET_FEATURE_GROUP_NAT)
+	{
+	   	goto trace0;
+	}
+#endif
 
       udp0 = ip4_next_header (ip0);
       tcp0 = (tcp_header_t *) udp0;
