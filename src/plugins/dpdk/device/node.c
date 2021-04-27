@@ -12,6 +12,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - added ESCAPE FEATURES ON ARC feature to escape NAT-ting of traffic on vxlan
+ *     tunnels, as it limits multicore utilization for tunnel traffic to one
+ *     core (one worker thread). We can do it as NAT is not needed at all.
+ *     Nice side effect of this fix is no need in suppressing NAT by
+ *     static identity mappings.
+ */
+
 #include <vnet/vnet.h>
 #include <vppinfra/vec.h>
 #include <vppinfra/error.h>
@@ -328,7 +339,11 @@ dpdk_device_input (vlib_main_t * vm, dpdk_main_t * dm, dpdk_device_t * xd,
   bt->buffer_pool_index = rxq->buffer_pool_index;
   bt->ref_count = 1;
   vnet_buffer (bt)->feature_arc_index = 0;
+#ifdef FLEXIWAN_FEATURE
+  vnet_buffer (bt)->escape_feature_groups = 0;
+#endif
   bt->current_config_index = 0;
+
 
   /* receive burst of packets from DPDK PMD */
   if (PREDICT_FALSE (xd->per_interface_next_index != ~0))

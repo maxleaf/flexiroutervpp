@@ -987,6 +987,9 @@ VNET_FEATURE_INIT (ip4_sv_reass_output_feature) = {
     .node_name = "ip4-sv-reassembly-output-feature",
     .runs_before = 0,
     .runs_after = 0,
+#ifdef FLEXIWAN_FEATURE
+    .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 /* *INDENT-ON* */
 

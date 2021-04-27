@@ -13,6 +13,16 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - added ESCAPE FEATURES ON ARC feature to escape NAT-ting of traffic on vxlan
+ *     tunnels, as it limits multicore utilization for tunnel traffic to one
+ *     core (one worker thread). We can do it as NAT is not needed at all.
+ *     Nice side effect of this fix is no need in suppressing NAT by
+ *     static identity mappings.
+ */
+
 #include <vnet/feature/feature.h>
 
 vnet_feature_main_t feature_main;
@@ -247,9 +257,32 @@ vnet_get_feature_index (u8 arc, const char *s)
   return reg->feature_index;
 }
 
+#ifdef FLEXIWAN_FEATURE
+vnet_feature_group_t
+vnet_get_feature_group (u8 arc, const char *s)
+{
+  vnet_feature_main_t *fm = &feature_main;
+  vnet_feature_registration_t *reg;
+  uword *p;
+
+  if (s == 0)
+    return ~0;
+
+  p = hash_get_mem (fm->next_feature_by_name[arc], s);
+  if (p == 0)
+    return ~0;
+
+  reg = uword_to_pointer (p[0], vnet_feature_registration_t *);
+  return reg->feature_group;
+}
+#endif /*#ifdef FLEXIWAN_FEATURE #else */
+
 int
 vnet_feature_enable_disable_with_index (u8 arc_index, u32 feature_index,
 					u32 sw_if_index, int enable_disable,
+#ifdef FLEXIWAN_FEATURE
+					u8  feature_group,
+#endif
 					void *feature_config,
 					u32 n_feature_config_bytes)
 {
@@ -274,11 +307,21 @@ vnet_feature_enable_disable_with_index (u8 arc_index, u32 feature_index,
   if (!enable_disable && feature_count < 1)
     return 0;
 
+#ifdef FLEXIWAN_FEATURE
+  if (enable_disable)
+    ci = vnet_config_add_feature(vlib_get_main (),
+            &cm->config_main, ci, feature_index, feature_group, feature_config, n_feature_config_bytes);
+  else
+    ci = vnet_config_del_feature(vlib_get_main (),
+            &cm->config_main, ci, feature_index, feature_config, n_feature_config_bytes);
+#else
   ci = (enable_disable
 	? vnet_config_add_feature
 	: vnet_config_del_feature)
     (vlib_get_main (), &cm->config_main, ci, feature_index, feature_config,
      n_feature_config_bytes);
+#endif /*#ifdef FLEXIWAN_FEATURE #else*/
+
   if (ci == ~0)
     {
       return 0;
@@ -313,9 +356,16 @@ vnet_feature_enable_disable (const char *arc_name, const char *node_name,
     return VNET_API_ERROR_INVALID_VALUE;
 
   feature_index = vnet_get_feature_index (arc_index, node_name);
+#ifdef FLEXIWAN_FEATURE
+  vnet_feature_group_t
+  feature_group = vnet_get_feature_group (arc_index, node_name);
+#endif
 
   return vnet_feature_enable_disable_with_index (arc_index, feature_index,
 						 sw_if_index, enable_disable,
+#ifdef FLEXIWAN_FEATURE
+						 (u8)feature_group,
+#endif
 						 feature_config,
 						 n_feature_config_bytes);
 }

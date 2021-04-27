@@ -13,12 +13,40 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - added ESCAPE FEATURES ON ARC feature to escape NAT-ting of traffic on vxlan
+ *     tunnels, as it limits multicore utilization for tunnel traffic to one
+ *     core (one worker thread). We can do it as NAT is not needed at all.
+ *     Nice side effect of this fix is no need in suppressing NAT by
+ *     static identity mappings.
+ */
+
 #ifndef included_features_h
 #define included_features_h
 
 #include <vnet/vnet.h>
 #include <vnet/api_errno.h>
 #include <vnet/devices/devices.h>
+
+#ifdef FLEXIWAN_FEATURE
+/**
+ * Groups of features that can be escaped by vnet_feature_next(&next0, b0).
+ */
+#define foreach_vnet_feature_group      \
+  _(0, NAT)	                          \
+  _(8, ULTIMATELY_LAST)  /* should be never used as long as group is u8 to accommodate vnet_buffer_opaque_t::escape_feature_groups field*/
+
+typedef enum vnet_feature_group_t_
+{
+#define _(bit, name) VNET_FEATURE_GROUP_##name  = (1 << bit),
+  foreach_vnet_feature_group
+#undef _
+} vnet_feature_group_t;
+
+#endif /*#ifdef FLEXIWAN_FEATURE*/
+
 
 /** feature registration object */
 typedef struct _vnet_feature_arc_registration
@@ -57,6 +85,10 @@ typedef struct _vnet_feature_registration
   char **runs_before;
   /** Constraints of the form "this feature runs after Y" */
   char **runs_after;
+#ifdef FLEXIWAN_FEATURE
+  /** Group which this feature belong to, e.g. NAT */
+  vnet_feature_group_t feature_group;
+#endif
 
   /** Function to enable/disable feature  **/
   vnet_feature_enable_disable_function_t *enable_disable_cb;
@@ -210,6 +242,9 @@ vnet_feature_registration_t *vnet_get_feature_reg (const char *arc_name,
 int
 vnet_feature_enable_disable_with_index (u8 arc_index, u32 feature_index,
 					u32 sw_if_index, int enable_disable,
+#ifdef FLEXIWAN_FEATURE
+					u8  feature_group,
+#endif
 					void *feature_config,
 					u32 n_feature_config_bytes);
 
@@ -313,9 +348,15 @@ vnet_feature_next_with_data (u32 * next0, vlib_buffer_t * b0,
   u8 arc = vnet_buffer (b0)->feature_arc_index;
   vnet_feature_config_main_t *cm = &fm->feature_config_mains[arc];
 
+#ifdef FLEXIWAN_FIX
+  return vnet_get_config_data_escaped (&cm->config_main,
+			       &b0->current_config_index, next0,
+			       n_data_bytes, vnet_buffer(b0)->escape_feature_groups);
+#else
   return vnet_get_config_data (&cm->config_main,
 			       &b0->current_config_index, next0,
 			       n_data_bytes);
+#endif /*#ifdef FLEXIWAN_FIX*/
 }
 
 static_always_inline void

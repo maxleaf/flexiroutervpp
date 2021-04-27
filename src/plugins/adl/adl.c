@@ -12,6 +12,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - added ESCAPE FEATURES ON ARC feature to escape NAT-ting of traffic on vxlan
+ *     tunnels, as it limits multicore utilization for tunnel traffic to one
+ *     core (one worker thread). We can do it as NAT is not needed at all.
+ *     Nice side effect of this fix is no need in suppressing NAT by
+ *     static identity mappings.
+ */
+
 #include <vnet/ethernet/ethernet.h>
 #include <vnet/plugin/plugin.h>
 #include <vpp/app/version.h>
@@ -114,8 +125,13 @@ adl_sw_interface_add_del (vnet_main_t * vnm, u32 sw_if_index, u32 is_add)
 	default_next = DEFAULT_RX_ADL_INPUT;
 
       if (is_add)
+#ifndef FLEXIWAN_FEATURE
 	ci = vnet_config_add_feature (vm, &acm->config_main,
 				      ci, default_next, data, sizeof (*data));
+#else
+	ci = vnet_config_add_feature (vm, &acm->config_main,
+				      ci, default_next, 0, data, sizeof (*data));
+#endif /*#ifndef FLEXIWAN_FEATURE*/
       else
 	{
 	  /* If the feature was actually configured */
@@ -303,6 +319,9 @@ int adl_allowlist_enable_disable (adl_allowlist_enable_disable_args_t *a)
 	ci = vnet_config_add_feature (vm, &acm->config_main,
 				      ci,
                                       next_to_add_del,
+#ifdef FLEXIWAN_FEATURE
+                                      0,
+#endif /*#ifdef FLEXIWAN_FEATURE*/
                                       data, sizeof (*data));
       else
         {

@@ -15,6 +15,16 @@
  *------------------------------------------------------------------
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - added ESCAPE FEATURES ON ARC feature to escape NAT-ting of traffic on vxlan
+ *     tunnels, as it limits multicore utilization for tunnel traffic to one
+ *     core (one worker thread). We can do it as NAT is not needed at all.
+ *     Nice side effect of this fix is no need in suppressing NAT by
+ *     static identity mappings.
+ */
+
 #include <vlib/vlib.h>
 #include <vlib/unix/unix.h>
 #include <vlib/pci/pci.h>
@@ -262,6 +272,9 @@ vmxnet3_device_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
       vnet_buffer (b0)->sw_if_index[VLIB_RX] = vd->sw_if_index;
       vnet_buffer (b0)->sw_if_index[VLIB_TX] = (u32) ~ 0;
       vnet_buffer (b0)->feature_arc_index = 0;
+#ifdef FLEXIWAN_FEATURE
+      vnet_buffer (b0)->escape_feature_groups = 0;
+#endif
       b0->current_length = rx_comp->len & VMXNET3_RXCL_LEN_MASK;
       b0->current_data = 0;
       b0->total_length_not_including_first_buffer = 0;

@@ -37,6 +37,16 @@
  *  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - added ESCAPE FEATURES ON ARC feature to escape NAT-ting of traffic on vxlan
+ *     tunnels, as it limits multicore utilization for tunnel traffic to one
+ *     core (one worker thread). We can do it as NAT is not needed at all.
+ *     Nice side effect of this fix is no need in suppressing NAT by
+ *     static identity mappings.
+ */
+
 #include <vnet/vnet.h>
 
 static vnet_config_feature_t *
@@ -108,6 +118,12 @@ find_config_with_features (vlib_main_t * vm,
     /* Store next index in config string. */
     vec_add1 (config_string, f->next_index);
 
+#ifdef FLEXIWAN_FEATURE
+    /* Store feature group, so features could be escaped by vnet_feature_next() */
+    u32 feature_group = VNET_CONFIG_PACK_GROUP(f);
+    vec_add1 (config_string, feature_group);
+#endif /*#ifdef FLEXIWAN_FEATURE*/
+
     /* Store feature config. */
     vec_add (config_string, f->feature_config, vec_len (f->feature_config));
   }
@@ -117,6 +133,13 @@ find_config_with_features (vlib_main_t * vm,
     {
       u32 next_index = add_next (vm, cm, last_node_index, end_node_index);
       vec_add1 (config_string, next_index);
+#ifdef FLEXIWAN_FEATURE
+      /*Add zero group to the next for end node to ensure that
+        the "while (escape_feature_groups & next_group)" loop in
+        vnet_get_config_data_escaped() will break.
+      */
+      vec_add1 (config_string, 0);
+#endif /*#ifdef FLEXIWAN_FEATURE*/
     }
 
   /* See if config string is unique. */
@@ -308,6 +331,9 @@ vnet_config_add_feature (vlib_main_t * vm,
 			 vnet_config_main_t * cm,
 			 u32 config_string_heap_index,
 			 u32 feature_index,
+#ifdef FLEXIWAN_FEATURE
+			 u8  feature_group,
+#endif /*#ifdef FLEXIWAN_FEATURE*/
 			 void *feature_config, u32 n_feature_config_bytes)
 {
   vnet_config_t *old, *new;
@@ -338,6 +364,10 @@ vnet_config_add_feature (vlib_main_t * vm,
   vec_add2 (new_features, f, 1);
   f->feature_index = feature_index;
   f->node_index = node_index;
+#ifdef FLEXIWAN_FEATURE
+  f->feature_group = feature_group;
+#endif /*#ifdef FLEXIWAN_FEATURE*/
+
 
   if (n_feature_config_bytes)
     {

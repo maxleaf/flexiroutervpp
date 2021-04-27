@@ -20,6 +20,11 @@
  *     packets from. This is need for the FlexiWAN Multi-link feature.
  *   - Add destination port for vxlan tunnel, if remote device is behind NAT. Port is
  *     provisioned by fleximanage when creating the tunnel.
+ *   - added ESCAPE FEATURES ON ARC feature to escape NAT-ting of traffic on vxlan
+ *     tunnels, as it limits multicore utilization for tunnel traffic to one
+ *     core (one worker thread). We can do it as NAT is not needed at all.
+ *     Nice side effect of this fix is no need in suppressing NAT by
+ *     static identity mappings.
  *
  *  List of fixes made for FlexiWAN (demoted by FLEXIWAN_FIX flag):
  *  - For none vxlan packet received on port 4789, add ipx_punt node to next_nodes.
@@ -264,6 +269,220 @@ void vnet_int_vxlan_bypass_mode (u32 sw_if_index, u8 is_ip6, u8 is_enable);
 int vnet_vxlan_add_del_rx_flow (u32 hw_if_index, u32 t_imdex, int is_add);
 
 u32 vnet_vxlan_get_tunnel_index (u32 sw_if_index);
+
+#ifdef FLEXIWAN_FEATURE
+typedef vxlan4_tunnel_key_t last_tunnel_cache4;
+
+static const vxlan_decap_info_t decap_not_found = {
+  .sw_if_index = ~0,
+  .next_index = VXLAN_INPUT_NEXT_DROP,
+  .error = VXLAN_ERROR_NO_SUCH_TUNNEL
+};
+
+static const vxlan_decap_info_t decap_bad_flags = {
+  .sw_if_index = ~0,
+  .next_index = VXLAN_INPUT_NEXT_DROP,
+  .error = VXLAN_ERROR_BAD_FLAGS
+};
+
+always_inline vxlan_decap_info_t
+vxlan4_find_tunnel (vxlan_main_t * vxm, last_tunnel_cache4 * cache, u16 * cache_port,
+		    u32 fib_index, ip4_header_t * ip4_0, udp_header_t * udp0,
+		    vxlan_header_t * vxlan0, u32 * stats_sw_if_index)
+{
+  if (PREDICT_FALSE (vxlan0->flags != VXLAN_FLAGS_I))
+    return decap_bad_flags;
+
+  /* Make sure VXLAN tunnel exist according to packet S/D IP, VRF, and VNI */
+  u32 dst = ip4_0->dst_address.as_u32;
+  u32 src = ip4_0->src_address.as_u32;
+  u16 src_port = clib_net_to_host_u16(udp0->src_port);
+  vxlan4_tunnel_key_t key4 = {
+    .key[0] = ((u64) dst << 32) | src,
+    .key[1] = ((u64) fib_index << 32) | vxlan0->vni_reserved,
+  };
+
+  if (PREDICT_TRUE
+      (key4.key[0] == cache->key[0] && key4.key[1] == cache->key[1]
+        && src_port == *cache_port))
+    {
+      /* cache hit */
+      vxlan_decap_info_t di = {.as_u64 = cache->value };
+      *stats_sw_if_index = di.sw_if_index;
+      return di;
+    }
+
+  int rv = clib_bihash_search_inline_16_8 (&vxm->vxlan4_tunnel_by_key, &key4);
+  if (PREDICT_TRUE (rv == 0))
+    {
+      vxlan_decap_info_t di = {.as_u64 = key4.value };
+      u32 instance = vxm->tunnel_index_by_sw_if_index[di.sw_if_index];
+      vxlan_tunnel_t *t0 = pool_elt_at_index (vxm->tunnels, instance);
+      /* Validate VXLAN tunnel destination port against packet source port */
+      if (PREDICT_FALSE (t0->dest_port != src_port))
+        return decap_not_found;
+
+      *cache = key4;
+      *cache_port = src_port;
+      *stats_sw_if_index = di.sw_if_index;
+      return di;
+    }
+
+  /* try multicast */
+  if (PREDICT_TRUE (!ip4_address_is_multicast (&ip4_0->dst_address)))
+    return decap_not_found;
+
+  /* search for mcast decap info by mcast address */
+  key4.key[0] = dst;
+  rv = clib_bihash_search_inline_16_8 (&vxm->vxlan4_tunnel_by_key, &key4);
+  if (rv != 0)
+    return decap_not_found;
+
+  /* search for unicast tunnel using the mcast tunnel local(src) ip */
+  vxlan_decap_info_t mdi = {.as_u64 = key4.value };
+  key4.key[0] = ((u64) mdi.local_ip.as_u32 << 32) | src;
+  rv = clib_bihash_search_inline_16_8 (&vxm->vxlan4_tunnel_by_key, &key4);
+  if (PREDICT_FALSE (rv != 0))
+    return decap_not_found;
+
+  u32 instance = vxm->tunnel_index_by_sw_if_index[mdi.sw_if_index];
+  vxlan_tunnel_t *mcast_t0 = pool_elt_at_index (vxm->tunnels, instance);
+  /* Validate VXLAN tunnel destination port against packet source port */
+  if (PREDICT_FALSE (mcast_t0->dest_port != src_port))
+    return decap_not_found;
+
+  /* mcast traffic does not update the cache */
+  *stats_sw_if_index = mdi.sw_if_index;
+  vxlan_decap_info_t di = {.as_u64 = key4.value };
+  return di;
+}
+
+always_inline void
+vnet_vxlan4_set_escape_feature_group_x1(vnet_feature_group_t g, vlib_buffer_t *b0)
+{
+  void            *cur0   = vlib_buffer_get_current (b0);
+  ip4_header_t    *ip40   = cur0;
+  udp_header_t    *udp0   = cur0 + sizeof(ip4_header_t);
+  vxlan_header_t  *vxlan0 = cur0 + sizeof(ip4_header_t) + sizeof(udp_header_t);
+  u32             fi0    = vlib_buffer_get_ip4_fib_index (b0);
+
+  u32                 sw_if_index;
+  u16                 last_src_port = 0;
+  last_tunnel_cache4  last4;
+  vxlan_decap_info_t  di;
+
+  clib_memset (&last4, 0xff, sizeof last4);
+  last_src_port = 0;
+
+  if (ip40->protocol == IP_PROTOCOL_UDP  &&  udp0->dst_port == clib_host_to_net_u16(4789))
+  {
+    di = vxlan4_find_tunnel (&vxlan_main, &last4, &last_src_port, fi0, ip40, udp0, vxlan0, &sw_if_index);
+    if (di.sw_if_index != ~0)
+      vnet_buffer(b0)->escape_feature_groups |= g;
+  }
+}
+
+always_inline void
+vnet_vxlan4_set_escape_feature_group_x2(vnet_feature_group_t g,
+                                        vlib_buffer_t *b0, vlib_buffer_t *b1)
+{
+  void                *cur0   = vlib_buffer_get_current (b0);
+  ip4_header_t        *ip40   = cur0;
+  udp_header_t        *udp0   = cur0 + sizeof(ip4_header_t);
+  vxlan_header_t      *vxlan0 = cur0 + sizeof(ip4_header_t) + sizeof(udp_header_t);
+  u32                 fi0    = vlib_buffer_get_ip4_fib_index (b0);
+
+  void                *cur1   = vlib_buffer_get_current (b1);
+  ip4_header_t        *ip41   = cur1;
+  udp_header_t        *udp1   = cur1 + sizeof(ip4_header_t);
+  vxlan_header_t      *vxlan1 = cur1 + sizeof(ip4_header_t) + sizeof(udp_header_t);
+  u32                 fi1    = vlib_buffer_get_ip4_fib_index (b1);
+
+  u32                 sw_if_index;
+  u16                 last_src_port = 0;
+  last_tunnel_cache4  last4;
+  vxlan_decap_info_t  di;
+
+  clib_memset (&last4, 0xff, sizeof last4);
+  last_src_port = 0;
+
+  if (ip40->protocol == IP_PROTOCOL_UDP  &&  udp0->dst_port == clib_host_to_net_u16(4789))
+  {
+    di = vxlan4_find_tunnel (&vxlan_main, &last4, &last_src_port, fi0, ip40, udp0, vxlan0, &sw_if_index);
+    if (di.sw_if_index != ~0)
+      vnet_buffer(b0)->escape_feature_groups |= g;
+  }
+  if (ip41->protocol == IP_PROTOCOL_UDP  &&  udp1->dst_port == clib_host_to_net_u16(4789))
+  {
+    di = vxlan4_find_tunnel (&vxlan_main, &last4, &last_src_port, fi1, ip41, udp1, vxlan1, &sw_if_index);
+    if (di.sw_if_index != ~0)
+      vnet_buffer(b1)->escape_feature_groups |= g;
+  }
+}
+
+always_inline void vnet_vxlan4_set_escape_feature_group_x4(vnet_feature_group_t g,
+            vlib_buffer_t *b0, vlib_buffer_t *b1, vlib_buffer_t *b2, vlib_buffer_t *b3)
+{
+  void                *cur0   = vlib_buffer_get_current (b0);
+  ip4_header_t        *ip40   = cur0;
+  udp_header_t        *udp0   = cur0 + sizeof(ip4_header_t);
+  vxlan_header_t      *vxlan0 = cur0 + sizeof(ip4_header_t) + sizeof(udp_header_t);
+  u32                 fi0    = vlib_buffer_get_ip4_fib_index (b0);
+
+  void                *cur1   = vlib_buffer_get_current (b1);
+  ip4_header_t        *ip41   = cur1;
+  udp_header_t        *udp1   = cur1 + sizeof(ip4_header_t);
+  vxlan_header_t      *vxlan1 = cur1 + sizeof(ip4_header_t) + sizeof(udp_header_t);
+  u32                 fi1    = vlib_buffer_get_ip4_fib_index (b1);
+
+  void                *cur2   = vlib_buffer_get_current (b2);
+  ip4_header_t        *ip42   = cur2;
+  udp_header_t        *udp2   = cur2 + sizeof(ip4_header_t);
+  vxlan_header_t      *vxlan2 = cur2 + sizeof(ip4_header_t) + sizeof(udp_header_t);
+  u32                 fi2    = vlib_buffer_get_ip4_fib_index (b2);
+
+  void                *cur3   = vlib_buffer_get_current (b3);
+  ip4_header_t        *ip43   = cur3;
+  udp_header_t        *udp3   = cur3 + sizeof(ip4_header_t);
+  vxlan_header_t      *vxlan3 = cur3 + sizeof(ip4_header_t) + sizeof(udp_header_t);
+  u32                 fi3    = vlib_buffer_get_ip4_fib_index (b3);
+
+  u32                 sw_if_index;
+  u16                 last_src_port = 0;
+  last_tunnel_cache4  last4;
+  vxlan_decap_info_t  di;
+
+  clib_memset (&last4, 0xff, sizeof last4);
+  last_src_port = 0;
+
+  if (ip40->protocol == IP_PROTOCOL_UDP  &&  udp0->dst_port == clib_host_to_net_u16(4789))
+  {
+    di = vxlan4_find_tunnel (&vxlan_main, &last4, &last_src_port, fi0, ip40, udp0, vxlan0, &sw_if_index);
+    if (di.sw_if_index != ~0)
+      vnet_buffer(b0)->escape_feature_groups |= g;
+  }
+  if (ip41->protocol == IP_PROTOCOL_UDP  &&  udp1->dst_port == clib_host_to_net_u16(4789))
+  {
+    di = vxlan4_find_tunnel (&vxlan_main, &last4, &last_src_port, fi1, ip41, udp1, vxlan1, &sw_if_index);
+    if (di.sw_if_index != ~0)
+      vnet_buffer(b1)->escape_feature_groups |= g;
+  }
+  if (ip42->protocol == IP_PROTOCOL_UDP  &&  udp2->dst_port == clib_host_to_net_u16(4789))
+  {
+    di = vxlan4_find_tunnel (&vxlan_main, &last4, &last_src_port, fi2, ip42, udp2, vxlan2, &sw_if_index);
+    if (di.sw_if_index != ~0)
+      vnet_buffer(b2)->escape_feature_groups |= g;
+  }
+  if (ip43->protocol == IP_PROTOCOL_UDP  &&  udp3->dst_port == clib_host_to_net_u16(4789))
+  {
+    di = vxlan4_find_tunnel (&vxlan_main, &last4, &last_src_port, fi3, ip43, udp3, vxlan3, &sw_if_index);
+    if (di.sw_if_index != ~0)
+      vnet_buffer(b3)->escape_feature_groups |= g;
+  }
+}
+#endif /*#ifdef FLEXIWAN_FEATURE*/
+
+
 #endif /* included_vnet_vxlan_h */
 
 /*

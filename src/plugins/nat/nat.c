@@ -15,6 +15,17 @@
  * limitations under the License.
  */
 
+
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - added ESCAPE FEATURES ON ARC feature to escape NAT-ting of traffic on vxlan
+ *     tunnels, as it limits multicore utilization for tunnel traffic to one
+ *     core (one worker thread). We can do it as NAT is not needed at all.
+ *     Nice side effect of this fix is no need in suppressing NAT by
+ *     static identity mappings.
+ */
+
 #include <vnet/vnet.h>
 #include <vnet/ip/ip.h>
 #include <vnet/ip/ip4.h>
@@ -45,6 +56,9 @@ VNET_FEATURE_INIT (nat_pre_in2out, static) = {
   .node_name = "nat-pre-in2out",
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip4-fa",
 			       "ip4-sv-reassembly-feature"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (nat_pre_out2in, static) = {
   .arc_name = "ip4-unicast",
@@ -52,75 +66,117 @@ VNET_FEATURE_INIT (nat_pre_out2in, static) = {
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip4-fa",
                                "ip4-dhcp-client-detect",
 			       "ip4-sv-reassembly-feature"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (snat_in2out_worker_handoff, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "nat44-in2out-worker-handoff",
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip4-fa"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (snat_out2in_worker_handoff, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "nat44-out2in-worker-handoff",
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip4-fa",
                                "ip4-dhcp-client-detect"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (ip4_snat_in2out, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "nat44-in2out",
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip4-fa","ip4-sv-reassembly-feature"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (ip4_snat_out2in, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "nat44-out2in",
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip4-fa","ip4-sv-reassembly-feature",
                                "ip4-dhcp-client-detect"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (ip4_nat_classify, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "nat44-classify",
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip4-fa","ip4-sv-reassembly-feature"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (ip4_nat44_ed_in2out, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "nat44-ed-in2out",
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip4-fa","ip4-sv-reassembly-feature"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (ip4_nat44_ed_out2in, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "nat44-ed-out2in",
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip4-fa","ip4-sv-reassembly-feature",
                                "ip4-dhcp-client-detect"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (ip4_nat44_ed_classify, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "nat44-ed-classify",
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip4-fa","ip4-sv-reassembly-feature"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (ip4_nat_handoff_classify, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "nat44-handoff-classify",
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip4-fa","ip4-sv-reassembly-feature"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (ip4_snat_in2out_fast, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "nat44-in2out-fast",
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip4-fa","ip4-sv-reassembly-feature"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (ip4_snat_out2in_fast, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "nat44-out2in-fast",
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip4-fa","ip4-sv-reassembly-feature",
                                "ip4-dhcp-client-detect"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (ip4_snat_hairpin_dst, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "nat44-hairpin-dst",
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip4-fa","ip4-sv-reassembly-feature"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (ip4_nat44_ed_hairpin_dst, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "nat44-ed-hairpin-dst",
   .runs_after = VNET_FEATURES ("acl-plugin-in-ip4-fa","ip4-sv-reassembly-feature"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 
 /* Hook up output features */
@@ -128,34 +184,52 @@ VNET_FEATURE_INIT (ip4_snat_in2out_output, static) = {
   .arc_name = "ip4-output",
   .node_name = "nat44-in2out-output",
   .runs_after = VNET_FEATURES ("acl-plugin-out-ip4-fa","ip4-sv-reassembly-output-feature"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (ip4_snat_in2out_output_worker_handoff, static) = {
   .arc_name = "ip4-output",
   .node_name = "nat44-in2out-output-worker-handoff",
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
   .runs_after = VNET_FEATURES ("acl-plugin-out-ip4-fa","ip4-sv-reassembly-output-feature"),
 };
 VNET_FEATURE_INIT (ip4_snat_hairpin_src, static) = {
   .arc_name = "ip4-output",
   .node_name = "nat44-hairpin-src",
   .runs_after = VNET_FEATURES ("acl-plugin-out-ip4-fa","ip4-sv-reassembly-output-feature"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (nat_pre_in2out_output, static) = {
   .arc_name = "ip4-output",
   .node_name = "nat-pre-in2out-output",
   .runs_after = VNET_FEATURES ("ip4-sv-reassembly-output-feature"),
   .runs_before = VNET_FEATURES ("acl-plugin-out-ip4-fa"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (ip4_nat44_ed_in2out_output, static) = {
   .arc_name = "ip4-output",
   .node_name = "nat44-ed-in2out-output",
   .runs_after = VNET_FEATURES ("ip4-sv-reassembly-output-feature"),
   .runs_before = VNET_FEATURES ("acl-plugin-out-ip4-fa"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (ip4_nat44_ed_hairpin_src, static) = {
   .arc_name = "ip4-output",
   .node_name = "nat44-ed-hairpin-src",
   .runs_after = VNET_FEATURES ("ip4-sv-reassembly-output-feature"),
   .runs_before = VNET_FEATURES ("acl-plugin-out-ip4-fa"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 
 /* Hook up ip4-local features */
@@ -164,12 +238,18 @@ VNET_FEATURE_INIT (ip4_nat_hairpinning, static) =
   .arc_name = "ip4-local",
   .node_name = "nat44-hairpinning",
   .runs_before = VNET_FEATURES("ip4-local-end-of-arc"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 VNET_FEATURE_INIT (ip4_nat44_ed_hairpinning, static) =
 {
   .arc_name = "ip4-local",
   .node_name = "nat44-ed-hairpinning",
   .runs_before = VNET_FEATURES("ip4-local-end-of-arc"),
+#ifdef FLEXIWAN_FEATURE
+  .feature_group = VNET_FEATURE_GROUP_NAT,
+#endif
 };
 
 
