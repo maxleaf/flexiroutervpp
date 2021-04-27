@@ -195,6 +195,17 @@ icmp_in2out_ed_slow_path (snat_main_t * sm, vlib_buffer_t * b0,
   return next0;
 }
 
+#ifdef FLEXIWAN
+static int
+nat_ed_alloc_addr_and_port (snat_main_t * sm, u32 rx_fib_index, u32 tx_sw_if_index,
+			    u32 nat_proto, u32 thread_index,
+			    ip4_address_t r_addr, u16 r_port, u8 proto,
+			    u16 port_per_thread, u32 snat_thread_index,
+			    snat_session_t * s,
+			    ip4_address_t * outside_addr,
+			    u16 * outside_port,
+			    clib_bihash_kv_16_8_t * out2in_ed_kv)
+#else
 static int
 nat_ed_alloc_addr_and_port (snat_main_t * sm, u32 rx_fib_index,
 			    u32 nat_proto, u32 thread_index,
@@ -204,6 +215,7 @@ nat_ed_alloc_addr_and_port (snat_main_t * sm, u32 rx_fib_index,
 			    ip4_address_t * outside_addr,
 			    u16 * outside_port,
 			    clib_bihash_kv_16_8_t * out2in_ed_kv)
+#endif
 {
   int i;
   snat_address_t *a, *ga = 0;
@@ -214,6 +226,10 @@ nat_ed_alloc_addr_and_port (snat_main_t * sm, u32 rx_fib_index,
   for (i = 0; i < vec_len (sm->addresses); i++)
     {
       a = sm->addresses + i;
+#ifdef FLEXIWAN
+      if ((a->tx_sw_if_index != ~0) && (a->tx_sw_if_index != tx_sw_if_index))
+       continue;
+#endif
       switch (nat_proto)
 	{
 #define _(N, j, n, unused)                                                   \
@@ -394,12 +410,23 @@ slow_path_ed (snat_main_t * sm,
 
       /* Try to create dynamic translation */
       outside_port = l_port;	// suggest using local port to allocation function
+#ifdef FLEXIWAN
+      if (nat_ed_alloc_addr_and_port (sm, rx_fib_index,
+				      vnet_buffer (b)->sw_if_index[VLIB_TX],
+				      nat_proto,
+				      thread_index, r_addr, r_port, proto,
+				      sm->port_per_thread,
+				      tsm->snat_thread_index, s,
+				      &outside_addr,
+				      &outside_port, &out2in_ed_kv))
+#else
       if (nat_ed_alloc_addr_and_port (sm, rx_fib_index, nat_proto,
 				      thread_index, r_addr, r_port, proto,
 				      sm->port_per_thread,
 				      tsm->snat_thread_index, s,
 				      &outside_addr,
 				      &outside_port, &out2in_ed_kv))
+#endif
 	{
 	  nat_elog_notice ("addresses exhausted");
 	  b->error = node->errors[NAT_IN2OUT_ED_ERROR_OUT_OF_PORTS];
