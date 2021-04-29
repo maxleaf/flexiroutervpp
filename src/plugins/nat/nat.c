@@ -676,9 +676,15 @@ snat_add_del_addr_to_fib (ip4_address_t * addr, u8 p_len, u32 sw_if_index,
     fib_table_entry_delete (fib_index, &prefix, sm->fib_src_low);
 }
 
+#ifdef FLEXIWAN
+int
+snat_add_address (snat_main_t * sm, u32 tx_sw_if_index, ip4_address_t * addr, u32 vrf_id,
+		  u8 twice_nat)
+#else
 int
 snat_add_address (snat_main_t * sm, ip4_address_t * addr, u32 vrf_id,
 		  u8 twice_nat)
+#endif
 {
   snat_address_t *ap;
   snat_interface_t *i;
@@ -708,6 +714,9 @@ snat_add_address (snat_main_t * sm, ip4_address_t * addr, u32 vrf_id,
     vec_add2 (sm->addresses, ap, 1);
 
   ap->addr = *addr;
+#ifdef FLEXIWAN
+  ap->tx_sw_if_index = tx_sw_if_index;
+#endif
   if (vrf_id != ~0)
     ap->fib_index =
       fib_table_find_or_create_and_lock (FIB_PROTOCOL_IP4, vrf_id,
@@ -4508,7 +4517,11 @@ match:
 	if (addresses[j].addr.as_u32 == address->as_u32)
 	  return;
 
+#ifdef FLEXIWAN
+      (void) snat_add_address (sm, sw_if_index, address, ~0, twice_nat);
+#else
       (void) snat_add_address (sm, address, ~0, twice_nat);
+#endif
       /* Scan static map resolution vector */
       for (j = 0; j < vec_len (sm->to_resolve); j++)
 	{
@@ -4613,7 +4626,11 @@ snat_add_interface_address (snat_main_t * sm, u32 sw_if_index, int is_del,
 
   /* If the address is already bound - or static - add it now */
   if (first_int_addr)
+#ifdef FLEXIWAN
+    (void) snat_add_address (sm, sw_if_index, first_int_addr, ~0, twice_nat);
+#else
     (void) snat_add_address (sm, first_int_addr, ~0, twice_nat);
+#endif
 
   return 0;
 }

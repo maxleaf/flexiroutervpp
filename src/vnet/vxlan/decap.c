@@ -80,6 +80,79 @@ static const vxlan_decap_info_t decap_bad_flags = {
   .error = VXLAN_ERROR_BAD_FLAGS
 };
 
+#ifdef FLEXIWAN_FEATURE
+always_inline vxlan_decap_info_t
+vxlan4_find_tunnel (vxlan_main_t * vxm, last_tunnel_cache4 * cache, u16 * cache_port,
+		    u32 fib_index, ip4_header_t * ip4_0, udp_header_t * udp0,
+		    vxlan_header_t * vxlan0, u32 * stats_sw_if_index)
+{
+  if (PREDICT_FALSE (vxlan0->flags != VXLAN_FLAGS_I))
+    return decap_bad_flags;
+
+  /* Make sure VXLAN tunnel exist according to packet S/D IP, VRF, and VNI */
+  u32 dst = ip4_0->dst_address.as_u32;
+  u32 src = ip4_0->src_address.as_u32;
+  u16 src_port = clib_net_to_host_u16(udp0->src_port);
+  vxlan4_tunnel_key_t key4 = {
+    .key[0] = ((u64) dst << 32) | src,
+    .key[1] = ((u64) fib_index << 32) | vxlan0->vni_reserved,
+  };
+
+  if (PREDICT_TRUE
+      (key4.key[0] == cache->key[0] && key4.key[1] == cache->key[1] 
+        && src_port == *cache_port))
+    {
+      /* cache hit */
+      vxlan_decap_info_t di = {.as_u64 = cache->value };
+      *stats_sw_if_index = di.sw_if_index;
+      return di;
+    }
+
+  int rv = clib_bihash_search_inline_16_8 (&vxm->vxlan4_tunnel_by_key, &key4);
+  if (PREDICT_TRUE (rv == 0))
+    {
+      vxlan_decap_info_t di = {.as_u64 = key4.value };
+      u32 instance = vxm->tunnel_index_by_sw_if_index[di.sw_if_index];
+      vxlan_tunnel_t *t0 = pool_elt_at_index (vxm->tunnels, instance);
+      /* Validate VXLAN tunnel destination port against packet source port */
+      if (PREDICT_FALSE (t0->dest_port != src_port))
+        return decap_not_found;
+
+      *cache = key4;
+      *cache_port = src_port;
+      *stats_sw_if_index = di.sw_if_index;
+      return di;
+    }
+
+  /* try multicast */
+  if (PREDICT_TRUE (!ip4_address_is_multicast (&ip4_0->dst_address)))
+    return decap_not_found;
+
+  /* search for mcast decap info by mcast address */
+  key4.key[0] = dst;
+  rv = clib_bihash_search_inline_16_8 (&vxm->vxlan4_tunnel_by_key, &key4);
+  if (rv != 0)
+    return decap_not_found;
+
+  /* search for unicast tunnel using the mcast tunnel local(src) ip */
+  vxlan_decap_info_t mdi = {.as_u64 = key4.value };
+  key4.key[0] = ((u64) mdi.local_ip.as_u32 << 32) | src;
+  rv = clib_bihash_search_inline_16_8 (&vxm->vxlan4_tunnel_by_key, &key4);
+  if (PREDICT_FALSE (rv != 0))
+    return decap_not_found;
+
+  u32 instance = vxm->tunnel_index_by_sw_if_index[mdi.sw_if_index];
+  vxlan_tunnel_t *mcast_t0 = pool_elt_at_index (vxm->tunnels, instance);
+  /* Validate VXLAN tunnel destination port against packet source port */
+  if (PREDICT_FALSE (mcast_t0->dest_port != src_port))
+    return decap_not_found;
+
+  /* mcast traffic does not update the cache */
+  *stats_sw_if_index = mdi.sw_if_index;
+  vxlan_decap_info_t di = {.as_u64 = key4.value };
+  return di;
+}
+#else /* FLEXIWAN_FEATURE */
 always_inline vxlan_decap_info_t
 vxlan4_find_tunnel (vxlan_main_t * vxm, last_tunnel_cache4 * cache,
 		    u32 fib_index, ip4_header_t * ip4_0,

@@ -606,7 +606,11 @@ static void
   for (i = 0; i < count; i++)
     {
       if (is_add)
+#ifdef FLEXIWAN
+	rv = snat_add_address (sm, ~0, &this_addr, vrf_id, twice_nat);
+#else
 	rv = snat_add_address (sm, &this_addr, vrf_id, twice_nat);
+#endif
       else
 	rv = snat_del_address (sm, this_addr, 0, twice_nat);
 
