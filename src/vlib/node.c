@@ -37,14 +37,6 @@
  *  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-/*
- *  Copyright (C) 2021 flexiWAN Ltd.
- *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
- *   - Increased initial size of node name mapping hash table. This is done to avoid random crash
- *     on hash_resize(). 2048 is chosen based on the current nodes number that is almost 1500 with
- *     only 30 tunnels. VPP creates 2 nodes per interface.
- */
-
 #include <vlib/vlib.h>
 #include <vlib/threads.h>
 
@@ -349,13 +341,8 @@ register_node (vlib_main_t * vm, vlib_node_registration_t * r)
     n->name = format (0, "%s", r->name);
 
   if (!nm->node_by_name)
-#ifdef FLEXIWAN_FIX
-    nm->node_by_name = hash_create_vec ( /* size */ 2048,
-					sizeof (n->name[0]), sizeof (uword));
-#else
     nm->node_by_name = hash_create_vec ( /* size */ 32,
 					sizeof (n->name[0]), sizeof (uword));
-#endif /* FLEXIWAN_FIX */
 
   /* Node names must be unique. */
   {
