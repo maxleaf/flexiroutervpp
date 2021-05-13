@@ -13,6 +13,12 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *   - Increased stats segment thread stack size to avoid stuck in the infinite loop.
+ */
+
 #include <vppinfra/mem.h>
 #include <vlib/vlib.h>
 #include <vlib/unix/unix.h>
@@ -985,6 +991,9 @@ VLIB_REGISTER_NODE (stat_segment_collector, static) =
 .function = stat_segment_collector_process,
 .name = "statseg-collector-process",
 .type = VLIB_NODE_TYPE_PROCESS,
+#ifdef FLEXIWAN_FIX
+.process_log2_n_stack_bytes = 19,
+#endif
 };
 
 /* *INDENT-ON* */
