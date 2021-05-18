@@ -341,8 +341,7 @@ register_node (vlib_main_t * vm, vlib_node_registration_t * r)
     n->name = format (0, "%s", r->name);
 
   if (!nm->node_by_name)
-    nm->node_by_name = hash_create_vec ( /* size */ 32,
-					sizeof (n->name[0]), sizeof (uword));
+    nm->node_by_name = hash_create_string (0, sizeof (uword));
 
   /* Node names must be unique. */
   {
