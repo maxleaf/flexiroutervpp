@@ -2035,7 +2035,11 @@ static size_t traverse_and_check(mstate m) {
       mchunkptr lastq = 0;
       assert(pinuse(q));
       while (segment_holds(s, q) &&
-             q != m->top && q->head != FENCEPOST_HEAD) {
+             q != m->top && q->head != FENCEPOST_HEAD
+#ifdef FLEXIWAN_FIX
+             && q->head != 0
+#endif
+             ) {
         sum += chunksize(q);
         if (is_inuse(q)) {
           assert(!bin_find(m, q));
@@ -2151,7 +2155,11 @@ static void internal_malloc_stats(mstate m) {
       while (s != 0) {
         mchunkptr q = align_as_chunk(s->base);
         while (segment_holds(s, q) &&
-               q != m->top && q->head != FENCEPOST_HEAD) {
+               q != m->top && q->head != FENCEPOST_HEAD
+#ifdef FLEXIWAN_FIX
+               && q->head != 0
+#endif
+               ) {
           if (!is_inuse(q))
             used -= chunksize(q);
           q = next_chunk(q);
@@ -3772,7 +3780,11 @@ static void internal_inspect_all(mstate m,
     msegmentptr s;
     for (s = &m->seg; s != 0; s = s->next) {
       mchunkptr q = align_as_chunk(s->base);
-      while (segment_holds(s, q) && q->head != FENCEPOST_HEAD) {
+      while (segment_holds(s, q) && q->head != FENCEPOST_HEAD
+#ifdef FLEXIWAN_FIX
+               && q->head != 0
+#endif
+            ) {
         mchunkptr next = next_chunk(q);
         size_t sz = chunksize(q);
         size_t used;
