@@ -5,6 +5,12 @@
   comments, complaints, performance data, etc to dl@cs.oswego.edu
 */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *   - Add check that offset to next element is not zero to avoid stuck in a chunks loop forever.
+ */
+
 #include <vppinfra/dlmalloc.h>
 #include <vppinfra/sanitizer.h>
 
@@ -2097,7 +2103,11 @@ static struct dlmallinfo internal_mallinfo(mstate m) {
       while (s != 0) {
         mchunkptr q = align_as_chunk(s->base);
         while (segment_holds(s, q) &&
-               q != m->top && q->head != FENCEPOST_HEAD) {
+               q != m->top && q->head != FENCEPOST_HEAD
+#ifdef FLEXIWAN_FIX
+               && q->head != 0
+#endif
+               ) {
           size_t sz = chunksize(q);
           sum += sz;
           if (!is_inuse(q)) {
