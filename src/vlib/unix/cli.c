@@ -45,6 +45,17 @@
 /*? %%clicmd:group_label Command line session %% ?*/
 /*? %%syscfg:group_label Command line session %% ?*/
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *   - Fixed dangling pointer inside node_by_name(member of vlib_node_main_t) hash table.
+ *     When CLI node name is changed, node_by_name hash has to be properly updated.
+ *     Before the change node name, used as a key in node_by_name was simply released by free().
+ *     As a result we got a on calculating hash sum using a dangling pointer to previously released node name.
+ *     Current change removes old node name and adds a new one into node_by_name hash table.
+ *
+ */
+
 #include <vlib/vlib.h>
 #include <vlib/unix/unix.h>
 
@@ -2902,6 +2913,11 @@ unix_cli_file_add (unix_cli_main_t * cm, char *name, int fd)
 			     cm->unused_cli_process_node_indices[l - 1]);
 	  old_name = n->name;
 	  n->name = (u8 *) name;
+#ifdef FLEXIWAN_FIX
+    vlib_node_main_t *this_nm = &this_vlib_main->node_main;
+    hash_unset(this_nm->node_by_name, old_name);
+    hash_set (this_nm->node_by_name, n->name, n->index);
+#endif /* FLEXIWAN_FIX */
 	}
       vec_free (old_name);
 
