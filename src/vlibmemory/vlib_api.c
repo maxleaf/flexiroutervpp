@@ -17,12 +17,6 @@
  *------------------------------------------------------------------
  */
 
-/*
- *  Copyright (C) 2021 flexiWAN Ltd.
- *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
- *   - Increased API client thread stack size to avoid crashes.
- */
-
 #include <fcntl.h>
 #include <pthread.h>
 #include <vppinfra/vec.h>
@@ -442,11 +436,7 @@ VLIB_REGISTER_NODE (vl_api_clnt_node) =
   .type = VLIB_NODE_TYPE_PROCESS,
   .name = "api-rx-from-ring",
   .state = VLIB_NODE_STATE_DISABLED,
-#ifdef FLEXIWAN_FIX
-  .process_log2_n_stack_bytes = 19,
-#else
   .process_log2_n_stack_bytes = 18,
-#endif
 };
 /* *INDENT-ON* */
 
