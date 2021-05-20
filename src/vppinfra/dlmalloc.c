@@ -5,6 +5,12 @@
   comments, complaints, performance data, etc to dl@cs.oswego.edu
 */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *   - Add check that offset to next element is not zero to avoid stuck in a chunks loop forever.
+ */
+
 #include <vppinfra/dlmalloc.h>
 #include <vppinfra/sanitizer.h>
 
@@ -2029,7 +2035,11 @@ static size_t traverse_and_check(mstate m) {
       mchunkptr lastq = 0;
       assert(pinuse(q));
       while (segment_holds(s, q) &&
-             q != m->top && q->head != FENCEPOST_HEAD) {
+             q != m->top && q->head != FENCEPOST_HEAD
+#ifdef FLEXIWAN_FIX
+             && q->head != 0
+#endif
+             ) {
         sum += chunksize(q);
         if (is_inuse(q)) {
           assert(!bin_find(m, q));
@@ -2097,7 +2107,11 @@ static struct dlmallinfo internal_mallinfo(mstate m) {
       while (s != 0) {
         mchunkptr q = align_as_chunk(s->base);
         while (segment_holds(s, q) &&
-               q != m->top && q->head != FENCEPOST_HEAD) {
+               q != m->top && q->head != FENCEPOST_HEAD
+#ifdef FLEXIWAN_FIX
+               && q->head != 0
+#endif
+               ) {
           size_t sz = chunksize(q);
           sum += sz;
           if (!is_inuse(q)) {
@@ -2141,7 +2155,11 @@ static void internal_malloc_stats(mstate m) {
       while (s != 0) {
         mchunkptr q = align_as_chunk(s->base);
         while (segment_holds(s, q) &&
-               q != m->top && q->head != FENCEPOST_HEAD) {
+               q != m->top && q->head != FENCEPOST_HEAD
+#ifdef FLEXIWAN_FIX
+               && q->head != 0
+#endif
+               ) {
           if (!is_inuse(q))
             used -= chunksize(q);
           q = next_chunk(q);
@@ -3762,7 +3780,11 @@ static void internal_inspect_all(mstate m,
     msegmentptr s;
     for (s = &m->seg; s != 0; s = s->next) {
       mchunkptr q = align_as_chunk(s->base);
-      while (segment_holds(s, q) && q->head != FENCEPOST_HEAD) {
+      while (segment_holds(s, q) && q->head != FENCEPOST_HEAD
+#ifdef FLEXIWAN_FIX
+               && q->head != 0
+#endif
+            ) {
         mchunkptr next = next_chunk(q);
         size_t sz = chunksize(q);
         size_t used;
