@@ -2902,6 +2902,13 @@ unix_cli_file_add (unix_cli_main_t * cm, char *name, int fd)
 			     cm->unused_cli_process_node_indices[l - 1]);
 	  old_name = n->name;
 	  n->name = (u8 *) name;
+
+	  vlib_node_main_t *nm = &this_vlib_main->node_main;
+	  if (nm->node_by_name)
+	    {
+	      hash_unset (nm->node_by_name, old_name);
+	      hash_set (nm->node_by_name, n->name, n->index);
+	    }
 	}
       vec_free (old_name);
 
