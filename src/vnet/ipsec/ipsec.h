@@ -205,6 +205,11 @@ typedef struct
   u32 esp6_dec_tun_fq_index;
 
   u8 async_mode;
+
+  /* Thread settings */
+  u32 num_workers;
+  u32 first_worker_index;
+
 } ipsec_main_t;
 
 typedef enum ipsec_format_flags_t_

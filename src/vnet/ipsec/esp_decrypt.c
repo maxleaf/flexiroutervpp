@@ -1113,6 +1113,17 @@ esp_decrypt_inline (vlib_main_t * vm,
 	  /* this is the first packet to use this SA, claim the SA
 	   * for this thread. this could happen simultaneously on
 	   * another thread */
+	  // nnoww temp code
+#ifdef FLEXIWAN_FEATURE
+      if (im->num_workers > 0)
+	  {
+		u32 worker_thread_index = im->first_worker_index;
+  		worker_thread_index += current_sa_index % im->num_workers;
+		clib_atomic_cmp_and_swap (&sa0->decrypt_thread_index, ~0,
+						ipsec_sa_assign_thread (worker_thread_index));
+	  }
+	  else
+#endif /*#ifdef FLEXIWAN_FEATURE*/
 	  clib_atomic_cmp_and_swap (&sa0->decrypt_thread_index, ~0,
 				    ipsec_sa_assign_thread (thread_index));
 	}

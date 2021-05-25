@@ -570,6 +570,25 @@ ipsec_init (vlib_main_t * vm)
   im->async_mode = 0;
   crypto_engine_backend_register_post_node (vm);
 
+  {
+    vlib_thread_main_t         *tm = vlib_get_thread_main ();
+    vlib_thread_registration_t *tr;
+    uword *p;
+
+    im->num_workers = 0;
+
+    p = hash_get_mem (tm->thread_registrations_by_name, "workers");
+    if (p)
+    {
+      tr = (vlib_thread_registration_t *) p[0];
+      if (tr && tr->count > 0)
+      {
+        im->num_workers = tr->count;
+        im->first_worker_index = tr->first_index;
+      }
+    }
+  }
+
   return 0;
 }
 
