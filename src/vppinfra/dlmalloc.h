@@ -526,10 +526,10 @@ MAX_RELEASE_CHECK_RATE   default: 4095 unless not HAVE_MMAP
 
 /* --- begin vpp customizations --- */
 
-#if CLIB_DEBUG > 0
+//#if CLIB_DEBUG > 0
 #define FOOTERS 1  /* extra debugging */
 #define DLM_MAGIC_CONSTANT 0xdeaddabe
-#endif
+//#endif
 #define USE_LOCKS 1
 #define DLM_ABORT {extern void os_panic(void); os_panic(); abort();}
 #define ONLY_MSPACES 1
