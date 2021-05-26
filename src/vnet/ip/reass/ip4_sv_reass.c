@@ -13,6 +13,15 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - added escaping natting for flexiEdge-to-flexiEdge vxlan tunnels.
+ *     These tunnels do not need NAT, so there is no need to create NAT session
+ *     for them. That improves performance on multi-core machines,
+ *     as NAT session are bound to the specific worker thread / core.
+ */
+
 /**
  * @file
  * @brief IPv4 Shallow Virtual Reassembly.
@@ -482,6 +491,17 @@ ip4_sv_reass_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 				     (is_output_feature ? 1 : 0) *
 				     vnet_buffer (b1)->
 				     ip.save_rewrite_length);
+
+#ifdef FLEXIWAN_FEATURE
+      /* The VxLAN flexiEdge-to-flexiEdge tunnel should not be NAT-ed, so there
+         is no need to reassable fragments, which means no need to go slowpath.
+         Note the ip4-sv-reassembly-output-feature node is used by NAT feature only.
+      */
+      if (PREDICT_FALSE(!(is_output_feature && \
+            (vnet_buffer(b0)->escape_feature_groups & VNET_FEATURE_GROUP_NAT)  && \
+            (vnet_buffer(b1)->escape_feature_groups & VNET_FEATURE_GROUP_NAT))))
+      {
+#endif
       if (PREDICT_FALSE
 	  (ip4_get_fragment_more (ip0) || ip4_get_fragment_offset (ip0))
 	  || (ip4_get_fragment_more (ip1) || ip4_get_fragment_offset (ip1)))
@@ -495,6 +515,9 @@ ip4_sv_reass_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 	    }
 	  goto slow_path;
 	}
+#ifdef FLEXIWAN_FEATURE
+      }
+#endif
       if (is_feature)
 	{
 	  vnet_feature_next (&next0, b0);
@@ -584,6 +607,15 @@ ip4_sv_reass_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 				     (is_output_feature ? 1 : 0) *
 				     vnet_buffer (b0)->
 				     ip.save_rewrite_length);
+#ifdef FLEXIWAN_FEATURE
+      /* The VxLAN flexiEdge-to-flexiEdge tunnel should not be NAT-ed, so there
+         is no need to reassable fragments, which means no need to go slowpath.
+         Note the ip4-sv-reassembly-output-feature node is used by NAT feature only.
+      */
+      if (PREDICT_FALSE(!(is_output_feature && \
+            (vnet_buffer(b0)->escape_feature_groups & VNET_FEATURE_GROUP_NAT))))
+      {
+#endif
       if (PREDICT_FALSE
 	  (ip4_get_fragment_more (ip0) || ip4_get_fragment_offset (ip0)))
 	{
@@ -596,6 +628,10 @@ ip4_sv_reass_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 	    }
 	  goto slow_path;
 	}
+#ifdef FLEXIWAN_FEATURE
+      }
+#endif
+
       if (is_feature)
 	{
 	  vnet_feature_next (&next0, b0);

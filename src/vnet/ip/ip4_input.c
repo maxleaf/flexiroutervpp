@@ -37,11 +37,25 @@
  *  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - added escaping natting for flexiEdge-to-flexiEdge vxlan tunnels.
+ *     These tunnels do not need NAT, so there is no need to create NAT session
+ *     for them. That improves performance on multi-core machines,
+ *     as NAT session are bound to the specific worker thread / core.
+ */
+
 #include <vnet/ip/ip4_input.h>
 #include <vnet/ethernet/ethernet.h>
 #include <vnet/ppp/ppp.h>
 #include <vnet/hdlc/hdlc.h>
 #include <vnet/util/throttle.h>
+
+#ifdef FLEXIWAN_FEATURE
+#include <vnet/vxlan/vxlan.h>
+#endif
+
 
 typedef struct
 {
@@ -229,6 +243,10 @@ ip4_input_inline (vlib_main_t * vm,
 
       ip4_input_check_x4 (vm, error_node, b, ip, next, verify_checksum);
 
+#ifdef FLEXIWAN_FEATURE
+      vnet_vxlan4_set_escape_feature_group_x4(VNET_FEATURE_GROUP_NAT,b[0],b[1],b[2],b[3]);
+#endif
+
       /* next */
       b += 4;
       next += 4;
@@ -294,6 +312,10 @@ ip4_input_inline (vlib_main_t * vm,
       next[0] = (u16) next0;
       next[1] = (u16) next1;
 
+#ifdef FLEXIWAN_FEATURE
+      vnet_vxlan4_set_escape_feature_group_x2(VNET_FEATURE_GROUP_NAT,b[0],b[1]);
+#endif
+
       /* next */
       b += 2;
       next += 2;
@@ -313,6 +335,10 @@ ip4_input_inline (vlib_main_t * vm,
       ip4_input_check_x1 (vm, error_node, b[0], ip[0], &next0,
 			  verify_checksum);
       next[0] = next0;
+
+#ifdef FLEXIWAN_FEATURE
+      vnet_vxlan4_set_escape_feature_group_x1(VNET_FEATURE_GROUP_NAT,b[0]);
+#endif
 
       /* next */
       b += 1;

@@ -3361,8 +3361,8 @@ snat_alloc_outside_address_and_port (snat_address_t * addresses,
   snat_main_t *sm = &snat_main;
 
   return sm->alloc_addr_and_port (addresses, fib_index, thread_index, proto,
-				 addr, port, port_per_thread,
-				 snat_thread_index);
+				  addr, port, port_per_thread,
+				  snat_thread_index);
 }
 
 static int

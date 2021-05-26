@@ -300,6 +300,14 @@ vxlan_encap_inline (vlib_main_t * vm,
           udp0->dst_port = clib_host_to_net_u16(t0->dest_port);
           udp1->dst_port = clib_host_to_net_u16(t1->dest_port);
 #endif
+#ifdef FLEXIWAN_FIX
+		  /* Escape nat-ing on vxlan tunnel traffic, as it is not exposed to internet.
+		     Nat binds all tunnel traffic to one worker thread,
+			 negating thus multi-core advantage.
+		  */
+	      vnet_buffer(b0)->escape_feature_groups |= VNET_FEATURE_GROUP_NAT;
+	      vnet_buffer(b1)->escape_feature_groups |= VNET_FEATURE_GROUP_NAT;
+#endif /* #ifdef FLEXIWAN_FIX #else */
 	  if (csum_offload)
 	    {
 	      b0->flags |= csum_flags;
@@ -481,8 +489,13 @@ vxlan_encap_inline (vlib_main_t * vm,
 	  udp0->src_port = flow_hash0;
 #endif /* FLEXIWAN_FIX */
 #ifdef FLEXIWAN_FEATURE
-/* setting dest port provisioned my fleximanage, if dest behind NAT */
+          /* setting dest port provisioned by flexiManage, if dest behind NAT */
           udp0->dst_port = clib_host_to_net_u16(t0->dest_port);
+		  /* Escape nat-ing on vxlan tunnel traffic, as it is not exposed to internet.
+		     Nat binds all tunnel traffic to one worker thread,
+			 negating thus multi-core advantage.
+		  */
+	      vnet_buffer(b0)->escape_feature_groups |= VNET_FEATURE_GROUP_NAT;
  #endif
 
 	  if (csum_offload)

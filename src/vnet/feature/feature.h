@@ -13,12 +13,39 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - added escaping natting for flexiEdge-to-flexiEdge vxlan tunnels.
+ *     These tunnels do not need NAT, so there is no need to create NAT session
+ *     for them. That improves performance on multi-core machines,
+ *     as NAT session are bound to the specific worker thread / core.
+ */
+
 #ifndef included_features_h
 #define included_features_h
 
 #include <vnet/vnet.h>
 #include <vnet/api_errno.h>
 #include <vnet/devices/devices.h>
+
+#ifdef FLEXIWAN_FEATURE
+/**
+ * Groups of features that can be escaped by vnet_feature_next(&next0, b0).
+ */
+#define foreach_vnet_feature_group      \
+  _(0, NAT)	                          \
+  _(8, ULTIMATELY_LAST)  /* should be never used as long as group is u8 to accommodate vnet_buffer_opaque_t::escape_feature_groups field*/
+
+typedef enum vnet_feature_group_t_
+{
+#define _(bit, name) VNET_FEATURE_GROUP_##name  = (1 << bit),
+  foreach_vnet_feature_group
+#undef _
+} vnet_feature_group_t;
+
+#endif /*#ifdef FLEXIWAN_FEATURE*/
+
 
 /** feature registration object */
 typedef struct _vnet_feature_arc_registration
