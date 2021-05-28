@@ -8,7 +8,7 @@
 /*
  *  Copyright (C) 2021 flexiWAN Ltd.
  *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
- *   - Add check that offset to next element is not zero to avoid stuck in a chunks loop forever.
+ *   - Add assert that offset to next element is correct to avoid stuck in a chunks loop forever.
  */
 
 #include <vppinfra/dlmalloc.h>
@@ -2035,11 +2035,7 @@ static size_t traverse_and_check(mstate m) {
       mchunkptr lastq = 0;
       assert(pinuse(q));
       while (segment_holds(s, q) &&
-             q != m->top && q->head != FENCEPOST_HEAD
-#ifdef FLEXIWAN_FIX
-             && q->head != 0
-#endif
-             ) {
+             q != m->top && q->head != FENCEPOST_HEAD) {
         sum += chunksize(q);
         if (is_inuse(q)) {
           assert(!bin_find(m, q));
@@ -2091,7 +2087,9 @@ static void do_check_malloc_state(mstate m) {
 #endif /* DEBUG */
 
 /* ----------------------------- statistics ------------------------------ */
-
+#ifdef FLEXIWAN_FIX
+extern void _clib_error (int how_to_die, char *function_name, uword line_number, char *fmt, ...);
+#endif
 #if !NO_MALLINFO
 CLIB_NOSANITIZE_ADDR
 static struct dlmallinfo internal_mallinfo(mstate m) {
@@ -2107,12 +2105,15 @@ static struct dlmallinfo internal_mallinfo(mstate m) {
       while (s != 0) {
         mchunkptr q = align_as_chunk(s->base);
         while (segment_holds(s, q) &&
-               q != m->top && q->head != FENCEPOST_HEAD
-#ifdef FLEXIWAN_FIX
-               && q->head != 0
-#endif
-               ) {
+               q != m->top && q->head != FENCEPOST_HEAD) {
           size_t sz = chunksize(q);
+#ifdef FLEXIWAN_FIX
+          if (sz < MIN_CHUNK_SIZE) {
+            _clib_error(4 /* CLIB_ERROR_WARNING */, (char *) __FUNCTION__, __LINE__,
+                "Corrupted dlmalloc structure chunksize %u", sz);
+            assert(sz >= MIN_CHUNK_SIZE);
+          }
+#endif
           sum += sz;
           if (!is_inuse(q)) {
             mfree += sz;
@@ -2155,11 +2156,15 @@ static void internal_malloc_stats(mstate m) {
       while (s != 0) {
         mchunkptr q = align_as_chunk(s->base);
         while (segment_holds(s, q) &&
-               q != m->top && q->head != FENCEPOST_HEAD
+               q != m->top && q->head != FENCEPOST_HEAD) {
 #ifdef FLEXIWAN_FIX
-               && q->head != 0
+               size_t sz = chunksize(q);
+               if (sz < MIN_CHUNK_SIZE) {
+                  _clib_error(4 /* CLIB_ERROR_WARNING */, (char *) __FUNCTION__, __LINE__,
+                      "Corrupted dlmalloc structure chunksize %u", sz);
+                  assert(sz >= MIN_CHUNK_SIZE);
+               }
 #endif
-               ) {
           if (!is_inuse(q))
             used -= chunksize(q);
           q = next_chunk(q);
@@ -3780,11 +3785,7 @@ static void internal_inspect_all(mstate m,
     msegmentptr s;
     for (s = &m->seg; s != 0; s = s->next) {
       mchunkptr q = align_as_chunk(s->base);
-      while (segment_holds(s, q) && q->head != FENCEPOST_HEAD
-#ifdef FLEXIWAN_FIX
-               && q->head != 0
-#endif
-            ) {
+      while (segment_holds(s, q) && q->head != FENCEPOST_HEAD) {
         mchunkptr next = next_chunk(q);
         size_t sz = chunksize(q);
         size_t used;
