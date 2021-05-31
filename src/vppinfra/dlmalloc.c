@@ -3329,6 +3329,9 @@ void dlfree(void* mem) {
       USAGE_ERROR_ACTION(fm, p);
       return;
     }
+#ifdef FLEXIWAN
+    assert(fm == gm);
+#endif/* FLEXIWAN */
 #else /* FOOTERS */
 #define fm gm
 #endif /* FOOTERS */
@@ -3842,6 +3845,9 @@ void* dlrealloc(void* oldmem, size_t bytes) {
       USAGE_ERROR_ACTION(m, oldmem);
       return 0;
     }
+#ifdef FLEXIWAN
+    assert(m == gm);
+#endif /* FLEXIWAN */
 #endif /* FOOTERS */
     if (!PREACTION(m)) {
       mchunkptr newp = try_realloc_chunk(m, oldp, nb, 1);
@@ -3880,6 +3886,9 @@ void* dlrealloc_in_place(void* oldmem, size_t bytes) {
         USAGE_ERROR_ACTION(m, oldmem);
         return 0;
       }
+#ifdef FLEXIWAN
+      assert(m == gm);
+#endif /* FLEXIWAN */
 #endif /* FOOTERS */
       if (!PREACTION(m)) {
         mchunkptr newp = try_realloc_chunk(m, oldp, nb, 0);
@@ -4486,6 +4495,13 @@ void mspace_free(mspace msp, void* mem) {
 #if FOOTERS
     mstate fm = get_mstate_for(p);
     (void)msp; /* placate people compiling -Wunused */
+#ifdef FLEXIWAN
+    if (!ok_magic(fm)) {
+      USAGE_ERROR_ACTION(fm, p);
+      return;
+    }
+    assert(fm == msp);
+#endif /*FLEXIWAN */
 #else /* FOOTERS */
     mstate fm = (mstate)msp;
 #endif /* FOOTERS */
@@ -4625,6 +4641,9 @@ void* mspace_realloc(mspace msp, void* oldmem, size_t bytes) {
       USAGE_ERROR_ACTION(m, oldmem);
       return 0;
     }
+#ifdef FLEXIWAN
+    assert(m == msp);
+#endif /*FLEXIWAN */
 #endif /* FOOTERS */
     if (!PREACTION(m)) {
       mchunkptr newp = try_realloc_chunk(m, oldp, nb, 1);
@@ -4664,6 +4683,9 @@ void* mspace_realloc_in_place(mspace msp, void* oldmem, size_t bytes) {
         USAGE_ERROR_ACTION(m, oldmem);
         return 0;
       }
+#ifdef FLEXIWAN
+      assert(m == msp);
+#endif /*FLEXIWAN */
 #endif /* FOOTERS */
       if (!PREACTION(m)) {
         mchunkptr newp = try_realloc_chunk(m, oldp, nb, 0);
