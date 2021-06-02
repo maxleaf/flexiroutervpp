@@ -284,6 +284,12 @@ static const vxlan_decap_info_t decap_bad_flags = {
   .error = VXLAN_ERROR_BAD_FLAGS
 };
 
+static const vxlan_decap_info_t decap_invalid_next_l2 = {
+  .sw_if_index = ~0,
+  .next_index = VXLAN_INPUT_NEXT_DROP,
+  .error = VXLAN_ERROR_INVALID_NEXT_L2
+};
+
 always_inline vxlan_decap_info_t
 vxlan4_find_tunnel (vxlan_main_t * vxm, last_tunnel_cache4 * cache, u16 * cache_port,
 		    u32 fib_index, ip4_header_t * ip4_0, udp_header_t * udp0,

@@ -205,6 +205,30 @@ vxlan6_find_tunnel (vxlan_main_t * vxm, last_tunnel_cache6 * cache,
   };
   return di;
 }
+
+static inline i32
+vxlan_decap_setup_next (vlib_node_runtime_t * node, vlib_buffer_t *b,
+                            vxlan_decap_info_t *di, u32 *pkts_dropped)
+{
+  u32 next_index = di->next_index;
+  if (di->next_index == VXLAN_INPUT_NEXT_L2_INPUT)
+    {
+      if (b->current_length < sizeof(ethernet_header_t))
+        {
+          /* Not enough data to have next L2 header */
+	  next_index = decap_invalid_next_l2.next_index;
+          b->error = node->errors[decap_invalid_next_l2.error];
+          (*pkts_dropped)++;
+        }
+      else
+        {
+          /* Required to make the l2 tag push / pop code work on l2 subifs */
+          vnet_update_l2_len (b);
+        }
+    }
+  return next_index;
+}
+
 #else /* FLEXIWAN_FEATURE */
 always_inline vxlan_decap_info_t
 vxlan6_find_tunnel (vxlan_main_t * vxm, last_tunnel_cache6 * cache,
@@ -362,9 +386,14 @@ vxlan_input (vlib_main_t * vm,
       u8 any_error = di0.error | di1.error;
       if (PREDICT_TRUE (any_error == 0))
 	{
+#ifdef FLEXIWAN_FIX
+          next[0] = vxlan_decap_setup_next (node, b[0], &di0, &pkts_dropped);
+          next[1] = vxlan_decap_setup_next (node, b[1], &di1, &pkts_dropped);
+#else
 	  /* Required to make the l2 tag push / pop code work on l2 subifs */
 	  vnet_update_l2_len (b[0]);
 	  vnet_update_l2_len (b[1]);
+#endif
 	  /* Set packet input sw_if_index to unicast VXLAN tunnel for learning */
 	  vnet_buffer (b[0])->sw_if_index[VLIB_RX] = di0.sw_if_index;
 	  vnet_buffer (b[1])->sw_if_index[VLIB_RX] = di1.sw_if_index;
@@ -377,7 +406,11 @@ vxlan_input (vlib_main_t * vm,
 	{
 	  if (di0.error == 0)
 	    {
+#ifdef FLEXIWAN_FIX
+              next[0] = vxlan_decap_setup_next (node, b[0], &di0, &pkts_dropped);
+#else
 	      vnet_update_l2_len (b[0]);
+#endif
 	      vnet_buffer (b[0])->sw_if_index[VLIB_RX] = di0.sw_if_index;
 	      vlib_increment_combined_counter (rx_counter, thread_index,
 					       stats_if0, 1, len0);
@@ -400,7 +433,11 @@ vxlan_input (vlib_main_t * vm,
 
 	  if (di1.error == 0)
 	    {
+#ifdef FLEXIWAN_FIX
+              next[1] = vxlan_decap_setup_next (node, b[1], &di1, &pkts_dropped);
+#else
 	      vnet_update_l2_len (b[1]);
+#endif
 	      vnet_buffer (b[1])->sw_if_index[VLIB_RX] = di1.sw_if_index;
 	      vlib_increment_combined_counter (rx_counter, thread_index,
 					       stats_if1, 1, len1);
@@ -486,8 +523,12 @@ vxlan_input (vlib_main_t * vm,
       /* Validate VXLAN tunnel encap-fib index against packet */
       if (di0.error == 0)
 	{
+#ifdef FLEXIWAN_FIX
+          next[0] = vxlan_decap_setup_next (node, b[0], &di0, &pkts_dropped);
+#else
 	  /* Required to make the l2 tag push / pop code work on l2 subifs */
 	  vnet_update_l2_len (b[0]);
+#endif
 
 	  /* Set packet input sw_if_index to unicast VXLAN tunnel for learning */
 	  vnet_buffer (b[0])->sw_if_index[VLIB_RX] = di0.sw_if_index;
