@@ -37,6 +37,13 @@
  *  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - add an error message if we get EPOLLERR event and close the file descriptor 
+ *     in order to inform user and help to troubleshoot such issues
+ */
+
 #include <vlib/vlib.h>
 #include <vlib/unix/unix.h>
 #include <signal.h>
@@ -334,8 +341,12 @@ linux_epoll_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 	      errors[n_errors] = f->error_function (f);
 	      n_errors += errors[n_errors] != 0;
 	    }
-	  else
+	  else {
+#ifdef FLEXIWAN_FIX
+      clib_warning("ERROR: epoll event EPOLLERR on fd %d - close fd", f->file_descriptor);
+#endif /* FLEXIWAN_FIX */
 	    close (f->file_descriptor);
+    }
 	}
 
       ASSERT (n_errors < ARRAY_LEN (errors));
