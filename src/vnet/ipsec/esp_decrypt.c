@@ -15,6 +15,13 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  FlexiWAN change summary - Can be identified using FLEXIWAN* keyword
+ *     - esp_decrypt_inline: Preventive fix to bail out on invalid sa-id in pkt
+ */
+
+
 #include <vnet/vnet.h>
 #include <vnet/api_errno.h>
 #include <vnet/ip/ip.h>
@@ -56,6 +63,24 @@ typedef enum
     ESP_DECRYPT_POST_N_NEXT,
 } esp_decrypt_post_next_t;
 
+#ifdef FLEXIWAN_FIX
+#define foreach_esp_decrypt_error                               \
+ _(RX_PKTS, "ESP pkts received")                                \
+ _(RX_POST_PKTS, "ESP-POST pkts received")                      \
+ _(DECRYPTION_FAILED, "ESP decryption failed")                  \
+ _(INTEG_ERROR, "Integrity check failed")                       \
+ _(CRYPTO_ENGINE_ERROR, "crypto engine error (packet dropped)") \
+ _(REPLAY, "SA replayed packet")                                \
+ _(RUNT, "undersized packet")                                   \
+ _(NO_BUFFERS, "no buffers (packet dropped)")                   \
+ _(OVERSIZED_HEADER, "buffer with oversized header (dropped)")  \
+ _(NO_TAIL_SPACE, "no enough buffer tail space (dropped)")      \
+ _(TUN_NO_PROTO, "no tunnel protocol")                          \
+ _(UNSUP_PAYLOAD, "unsupported payload")                        \
+ _(SA_NOT_FOUND, "SA context not found")                        \
+
+#else
+
 #define foreach_esp_decrypt_error                               \
  _(RX_PKTS, "ESP pkts received")                                \
  _(RX_POST_PKTS, "ESP-POST pkts received")                      \
@@ -70,6 +95,7 @@ typedef enum
  _(TUN_NO_PROTO, "no tunnel protocol")                          \
  _(UNSUP_PAYLOAD, "unsupported payload")                        \
 
+#endif /*FLEXIWAN_FIX */
 
 typedef enum
 {
@@ -1082,6 +1108,21 @@ esp_decrypt_inline (vlib_main_t * vm,
 	  current_sa_bytes = current_sa_pkts = 0;
 
 	  current_sa_index = vnet_buffer (b[0])->ipsec.sad_index;
+#ifdef FLEXIWAN_FIX
+	  /*
+	     The code flow leading to here is not yet known and has to be investigated.
+	     As provtional fix, Log error and bail out on if sa-context does not exist
+	   */
+	  if (PREDICT_FALSE(pool_is_free_index (im->sad, current_sa_index)))
+	    {
+	      b[0]->error = node->errors[ESP_DECRYPT_ERROR_SA_NOT_FOUND];
+	      esp_set_next_index (is_async, from, nexts, from[b - bufs],
+				  &n_async_drop, ESP_DECRYPT_NEXT_DROP, next);
+	      goto next;
+	    }
+	  else
+	    {
+#endif /*FLEXIWAN_FIX */
 	  sa0 = pool_elt_at_index (im->sad, current_sa_index);
 
 	  /* fetch the second cacheline ASAP */
@@ -1106,6 +1147,9 @@ esp_decrypt_inline (vlib_main_t * vm,
 		vnet_crypto_async_get_frame (vm, sa0->crypto_async_dec_op_id);
 	      last_async_op = sa0->crypto_async_dec_op_id;
 	    }
+#ifdef FLEXIWAN_FIX
+	    }
+#endif /*FLEXIWAN_FIX */
 	}
 
       if (PREDICT_FALSE (~0 == sa0->decrypt_thread_index))

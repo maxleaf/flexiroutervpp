@@ -18,6 +18,7 @@
  *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
  *   - Disabled ASSERT on punting.
  *   - Reinitiate connection on authentication failure.
+ *   - ikev2_mngr_process_child_sa: Check if profile exists before accessing it
  */
 
 #include <vlib/vlib.h>
@@ -4700,7 +4701,17 @@ ikev2_mngr_process_child_sa (ikev2_sa_t * sa, ikev2_child_sa_t * csa,
   f64 now = vlib_time_now (vm);
   u8 res = 0;
 
+#ifdef FLEXIWAN_FIX
+  /*
+     Suspected sequence leading to this check : ikev2_profile_add_del code path
+     can delete profile contexts but IKE contexts can exist till it gets freed
+     in ikev2_mngr_process_fn
+   */
+  if ((sa->profile_index != ~0) && !(pool_is_free_index(km->profiles,
+							sa->profile_index)))
+#else
   if (sa->profile_index != ~0)
+#endif /* FLEXIWAN_FIX */
     p = pool_elt_at_index (km->profiles, sa->profile_index);
 
   if (sa->is_initiator && p && csa->time_to_expiration
