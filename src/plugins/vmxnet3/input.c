@@ -17,7 +17,7 @@
 
 /*
  *  Copyright (C) 2021 flexiWAN Ltd.
- *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
  *   - added escaping natting for flexiEdge-to-flexiEdge vxlan tunnels.
  *     These tunnels do not need NAT, so there is no need to create NAT session
  *     for them. That improves performance on multi-core machines,
@@ -439,7 +439,13 @@ vmxnet3_device_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 		vlib_add_trace (vm, node, b, sizeof (*tr));
 	      tr->next_index = next[0];
 	      tr->hw_if_index = vd->hw_if_index;
+#ifndef FLEXIWAN_FIX
+		  /* This copy causes crash on specific machine, see more details on
+		     https://gitlab.com/flexiwangroup/flexiroutervpp/-/issues/17.
+			 Having no buffer in trace hurts neither packet trace nor pcap.
+	      */
 	      tr->buffer = *b;
+#endif
 	      n_trace--;
 	    }
 	  n_left--;
