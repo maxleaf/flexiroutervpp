@@ -37,6 +37,12 @@
  *  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - fix crash on "pcap dispatch trace on" command in multithread vpp
+ */
+
 #include <math.h>
 #include <vppinfra/format.h>
 #include <vlib/vlib.h>
@@ -1094,6 +1100,17 @@ dispatch_pcap_trace (vlib_main_t * vm,
 	  /* Is this packet traced? */
 	  if (PREDICT_FALSE (b->flags & VLIB_BUFFER_IS_TRACED))
 	    {
+#ifdef FLEXIWAN_FIX
+        /* In multithread vpp this node function might be called from thread
+           that is not the same where the buffer was captured.
+           In this case the current vlib_main_t can't be used to fetch buffer
+           trace data. This fix utilize proper vlib_main_t and, as a result,
+           proper trace_buffer_pool.
+        */
+        u32          thread_index = vlib_buffer_get_trace_thread (b);
+        vlib_main_t* pcap_vm      = vlib_mains[thread_index];
+        tm = &pcap_vm->trace_main;
+#endif
 	      vlib_trace_header_t **h
 		= pool_elt_at_index (tm->trace_buffer_pool,
 				     vlib_buffer_get_trace_index (b));
