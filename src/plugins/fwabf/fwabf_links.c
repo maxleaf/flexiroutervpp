@@ -440,9 +440,14 @@ dpo_id_t fwabf_links_get_dpo (
   return invalid_dpo;
 }
 
-int fwabf_links_is_dpo_labeled (const load_balance_t* lb)
+int fwabf_links_is_dpo_labeled_or_default_route (
+                            const load_balance_t* lb,
+                            dpo_proto_t           proto)
 {
   dpo_id_t lookup_dpo;
+  u32*     default_route_adjacencies = (proto == DPO_PROTO_IP4) ?
+                            fwabf_default_route.dr4.adj_index_map :
+                            fwabf_default_route.dr6.adj_index_map;
 
   for (u32 i = 0; i < lb->lb_n_buckets; i++)
   {
@@ -452,6 +457,8 @@ int fwabf_links_is_dpo_labeled (const load_balance_t* lb)
 
     ASSERT(lookup_dpo.dpoi_index < FWABF_MAX_ADJ_INDEX);
     if (adj_indexes_to_labels[lookup_dpo.dpoi_index] != FWABF_INVALID_LABEL)
+        return 1;
+    if (default_route_adjacencies[lookup_dpo.dpoi_index] == 1)
         return 1;
   }
   return 0;  /*No even single labeled DPO was found*/
