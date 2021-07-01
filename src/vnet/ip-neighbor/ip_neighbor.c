@@ -15,6 +15,13 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - IP neighbor API to check if ARP entry is dynamic. We need this in vppsb
+ *     to not delete static ARP entries.
+ */
+
 #include <vppinfra/llist.h>
 
 #include <vnet/ip-neighbor/ip_neighbor.h>
@@ -568,6 +575,29 @@ check_customers:
 				 ipn->ipn_key->ipnk_sw_if_index);
   return 0;
 }
+
+#ifdef FLEXIWAN_FEATURE
+bool
+ip_neighbor_is_dynamic_external (const ip_address_t * ip, u32 sw_if_index)
+{
+  ip_neighbor_t *ipn;
+
+  /* main thread only */
+  ASSERT (0 == vlib_get_thread_index ());
+
+  const ip_neighbor_key_t key = {
+    .ipnk_ip = *ip,
+    .ipnk_sw_if_index = sw_if_index,
+  };
+
+  ipn = ip_neighbor_db_find (&key);
+
+  if (NULL == ipn)
+    return false;
+
+  return ip_neighbor_is_dynamic(ipn);
+}
+#endif
 
 int
 ip_neighbor_del (const ip_address_t * ip, u32 sw_if_index)
