@@ -24,11 +24,17 @@
  *     These tunnels do not need NAT, so there is no need to create NAT session
  *     for them. That improves performance on multi-core machines,
  *     as NAT session are bound to the specific worker thread / core.
+ *
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - identity_nat_tcp_out2in: Fix to make out2in identity NAT TCP flows work
  */
 
 #include <vlib/vlib.h>
 #include <vnet/vnet.h>
 #include <vnet/ip/ip.h>
+#ifdef FLEXIWAN_FIX
+#include <vnet/udp/udp.h>
+#endif
 #include <vnet/ethernet/ethernet.h>
 #include <vnet/fib/ip4_fib.h>
 #include <vnet/udp/udp_local.h>
@@ -364,6 +370,47 @@ slow_path_ed (snat_main_t * sm,
   snat_session_t *s = NULL;
   lb_nat_type_t lb = 0;
 
+#ifdef FLEXIWAN_FIX /* identity_nat_tcp_out2in */
+  if (PREDICT_FALSE
+      (nat44_ed_maximum_sessions_exceeded (sm, rx_fib_index, thread_index)))
+    {
+      if (!nat_lru_free_one (sm, thread_index, now))
+	{
+	  b->error = node->errors[NAT_IN2OUT_ED_ERROR_MAX_SESSIONS_EXCEEDED];
+	  nat_ipfix_logging_max_sessions (thread_index,
+					  sm->max_translations_per_thread);
+	  nat_elog_notice ("maximum sessions exceeded");
+	  return NAT_NEXT_DROP;
+	}
+    }
+
+  ip4_address_t sm_addr;
+  u16 sm_port;
+  u32 sm_fib_index;
+  /* First try to match static mapping by local address and port */
+  i32 rc = snat_static_mapping_match
+      (sm, l_addr, l_port, rx_fib_index, nat_proto, &sm_addr, &sm_port,
+       &sm_fib_index, 0, 0, 0, &lb, 0, &identity_nat, 0);
+  if ((rc) || (identity_nat == 0))
+    /*
+       In current NAT code flow - Identity NAT flows do not create session
+       entries. So TCP flag validations are possible only for
+       non identity NAT entries.
+     */
+    {
+      if (PREDICT_TRUE (nat_proto == NAT_PROTOCOL_TCP))
+	{
+	  if (PREDICT_FALSE
+	      (!tcp_flags_is_init
+	       (vnet_buffer (b)->ip.reass.icmp_type_or_tcp_flags)))
+	    {
+	      b->error = node->errors[NAT_IN2OUT_ED_ERROR_NON_SYN];
+	      return NAT_NEXT_DROP;
+	    }
+	}
+    }
+  if (rc)
+#else
   if (PREDICT_TRUE (nat_proto == NAT_PROTOCOL_TCP))
     {
       if (PREDICT_FALSE
@@ -395,6 +442,8 @@ slow_path_ed (snat_main_t * sm,
   if (snat_static_mapping_match
       (sm, l_addr, l_port, rx_fib_index, nat_proto, &sm_addr, &sm_port,
        &sm_fib_index, 0, 0, 0, &lb, 0, &identity_nat, 0))
+#endif /* FLEXIWAN_FIX */
+
     {
       s = nat_ed_session_alloc (sm, thread_index, now, proto);
       ASSERT (s);

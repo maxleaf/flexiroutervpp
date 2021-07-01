@@ -41,6 +41,10 @@
  *  Copyright (C) 2021 flexiWAN Ltd.
  *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
  *   - Do not check IP checksum of fragmented packet if it is equal to 0.
+ *
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - nat-tap-inject: NAT support for packets sourced from tap-inject
+ *
  */
 
 #include <vnet/vnet.h>
@@ -1032,7 +1036,18 @@ VNET_FEATURE_INIT (ip4_lookup_mc, static) =
 VNET_FEATURE_ARC_INIT (ip4_output, static) =
 {
   .arc_name = "ip4-output",
+#ifdef FLEXIWAN_FEATURE /* nat-tap-inject */
+  /*
+     tap-inject packets come with the ip4 output interface set as part of
+     tap-inject module. It does not need the usual ip4-rewrite flow which is
+     based on fib entry based processing. This is done to enable NAT for
+     packets forwarded by tap-inject module
+   */
+  .start_nodes = VNET_FEATURES ("ip4-rewrite", "ip4-midchain", "ip4-dvr-dpo",
+				"ip4-output-tap-inject"),
+#else
   .start_nodes = VNET_FEATURES ("ip4-rewrite", "ip4-midchain", "ip4-dvr-dpo"),
+#endif /* FLEXIWAN_FEATURE */
   .last_in_arc = "interface-output",
   .arc_index_ptr = &ip4_main.lookup_main.output_feature_arc_index,
 };
@@ -2682,6 +2697,50 @@ VLIB_REGISTER_NODE (ip4_midchain_node) = {
   .format_trace = format_ip4_rewrite_trace,
   .sibling_of = "ip4-rewrite",
 };
+
+#ifdef FLEXIWAN_FEATURE /* nat-tap-inject */
+VLIB_NODE_FN (ip4_output_tap_inject) (vlib_main_t * vm,
+				    vlib_node_runtime_t * node,
+				    vlib_frame_t * frame)
+{
+  ip_lookup_main_t *lm = &ip4_main.lookup_main;
+  u32 *from = vlib_frame_vector_args (frame);
+  vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b;
+  u16 nexts[VLIB_FRAME_SIZE], *next;
+  u32 n_left_from;
+  u32 next_index;
+
+  n_left_from = frame->n_vectors;
+  vlib_get_buffers (vm, from, bufs, n_left_from);
+  next = nexts;
+  b = bufs;
+
+  while (n_left_from > 0)
+    {
+      next_index = ~0;
+      vnet_feature_arc_start (lm->output_feature_arc_index,
+			      vnet_buffer (b[0])->sw_if_index[VLIB_TX],
+			      &next_index, b[0]);
+      if (next_index != ~0)
+	next[0] = next_index;
+      else
+	next[0] = IP4_REWRITE_NEXT_DROP;
+      next += 1;
+      b += 1;
+      n_left_from -= 1;
+    }
+
+  vlib_buffer_enqueue_to_next (vm, node, from, nexts, frame->n_vectors);
+  return frame->n_vectors;
+}
+
+VLIB_REGISTER_NODE (ip4_output_tap_inject) = {
+  .name = "ip4-output-tap-inject",
+  .vector_size = sizeof (u32),
+  .sibling_of = "ip4-rewrite"
+};
+#endif /* FLEXIWAN_FEATURE */
+
 /* *INDENT-ON */
 
 static int
