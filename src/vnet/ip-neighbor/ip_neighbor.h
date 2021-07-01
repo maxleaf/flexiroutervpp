@@ -15,6 +15,13 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - IP neighbor API to check if ARP entry is dynamic. We need this in vppsb
+ *     to not delete static ARP entries.
+ */
+
 #ifndef __INCLUDE_IP_NEIGHBOR_H__
 #define __INCLUDE_IP_NEIGHBOR_H__
 
@@ -33,6 +40,9 @@ extern int ip_neighbor_add (const ip_address_t * ip,
 			    u32 sw_if_index,
 			    ip_neighbor_flags_t flags, u32 * stats_index);
 extern int ip_neighbor_del (const ip_address_t * ip, u32 sw_if_index);
+#ifdef FLEXIWAN_FEATURE
+extern bool ip_neighbor_is_dynamic_external (const ip_address_t * ip, u32 sw_if_index);
+#endif
 
 extern int ip_neighbor_config (ip_address_family_t af,
 			       u32 limit, u32 age, bool recycle);
