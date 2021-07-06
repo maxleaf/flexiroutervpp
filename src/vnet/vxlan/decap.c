@@ -462,6 +462,16 @@ vxlan_input (vlib_main_t * vm,
 	    }
 	}
 
+#ifdef FLEXIWAN_FEATURE
+    /* Once the incoming packet was out of the tunnel local end,
+      clear the "escape NAT" mark as the out2in translation is behind of us.
+      This is needed to enforce in2out translation, if this packet will be
+      forwarded back to out.
+    */
+    vnet_buffer(b[0])->escape_feature_groups &= ~VNET_FEATURE_GROUP_NAT;
+    vnet_buffer(b[1])->escape_feature_groups &= ~VNET_FEATURE_GROUP_NAT;
+#endif /*#ifdef FLEXIWAN_FEATURE*/
+
       if (PREDICT_FALSE (b[0]->flags & VLIB_BUFFER_IS_TRACED))
 	{
 	  vxlan_rx_trace_t *tr =
@@ -554,6 +564,15 @@ vxlan_input (vlib_main_t * vm,
 	  pkts_dropped++;
 #endif
 	}
+
+#ifdef FLEXIWAN_FEATURE
+    /* Once the incoming packet was out of the tunnel local end,
+      clear the "escape NAT" mark as the out2in translation is behind of us.
+      This is needed to enforce in2out translation, if this packet will be
+      forwarded back to out.
+    */
+    vnet_buffer(b[0])->escape_feature_groups &= ~VNET_FEATURE_GROUP_NAT;
+#endif /*#ifdef FLEXIWAN_FEATURE*/
 
       if (PREDICT_FALSE (b[0]->flags & VLIB_BUFFER_IS_TRACED))
 	{
