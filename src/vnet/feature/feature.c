@@ -412,6 +412,35 @@ feature_cmp (void *a1, void *a2)
   return (int) reg1->feature_index - reg2->feature_index;
 }
 
+#ifdef FLEXIWAN_FEATURE
+u8 *
+format_feature_group_bitmap (u8 * s, va_list * args)
+{
+  static char *display_names[] = {
+#define _(bit,name) #name,
+    foreach_vnet_feature_group
+#undef _
+  };
+  u32 feature_group_bitmap = va_arg (*args, u32);
+
+  if (feature_group_bitmap == 0)
+    {
+      s = format (s, " <none>");
+      return s;
+    }
+
+  int i;
+  for (i = 0; i < VNET_FEATURE_N_GROUPS; i++)
+    {
+      if (feature_group_bitmap & (1 << i))
+	      {
+	        s = format (s, "%s ", display_names[i]);
+	      }
+    }
+  return s;
+}
+#endif /*#ifdef FLEXIWAN_FEATURE*/
+
 /** Display the set of available driver features.
     Useful for verifying that expected features are present
 */
