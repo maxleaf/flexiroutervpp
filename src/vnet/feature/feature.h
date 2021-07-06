@@ -33,16 +33,22 @@
 /**
  * Groups of features that can be escaped by vnet_feature_next(&next0, b0).
  */
-#define foreach_vnet_feature_group      \
-  _(0, NAT)	                          \
-  _(8, ULTIMATELY_LAST)  /* should be never used as long as group is u8 to accommodate vnet_buffer_opaque_t::escape_feature_groups field*/
+#define foreach_vnet_feature_group \
+  _(0, NAT)
 
 typedef enum vnet_feature_group_t_
 {
 #define _(bit, name) VNET_FEATURE_GROUP_##name  = (1 << bit),
   foreach_vnet_feature_group
 #undef _
+   VNET_FEATURE_N_GROUPS
 } vnet_feature_group_t;
+
+/* enforce u8 vnet_buffer_opaque_t::escape_feature_groups field
+*/
+STATIC_ASSERT (VNET_FEATURE_N_GROUPS <= 7, "too many feature groups");
+
+u8 *format_feature_group_bitmap (u8 * s, va_list * args);
 
 #endif /*#ifdef FLEXIWAN_FEATURE*/
 

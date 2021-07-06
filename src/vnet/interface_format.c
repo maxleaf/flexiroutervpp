@@ -37,6 +37,15 @@
  *  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of features made for FlexiWAN (denoted by FLEXIWAN_FEATURE flag):
+ *   - added escaping natting for flexiEdge-to-flexiEdge vxlan tunnels.
+ *     These tunnels do not need NAT, so there is no need to create NAT session
+ *     for them. That improves performance on multi-core machines,
+ *     as NAT session are bound to the specific worker thread / core.
+ */
+
 #include <vnet/vnet.h>
 #include <vppinfra/bitmap.h>
 #include <vnet/l2/l2_input.h>
@@ -479,6 +488,10 @@ format_vnet_buffer_opaque (u8 * s, va_list * args)
 	      (u32) (o->l2_hdr_offset),
 	      (u32) (o->l3_hdr_offset),
 	      (u32) (o->l4_hdr_offset), (u32) (o->feature_arc_index));
+#ifdef FLEXIWAN_FEATURE
+  s = format (s,
+	      ", escape feature groups: %U", format_feature_group_bitmap, (u32) (o->escape_feature_groups));
+#endif /*ifdef FLEXIWAN_FEATURE*/
   vec_add1 (s, '\n');
 
   s = format (s,
