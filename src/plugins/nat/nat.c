@@ -13,6 +13,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ *
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - snat_port_refcount_fix :
+ *     1.Port reference count array was wrongly indexed with port number in
+ *       network byte order.
+ *     2.Port reference count was wrongly decremented during new port allocation
+ *
  */
 
 #include <vnet/vnet.h>
@@ -1090,6 +1098,9 @@ snat_add_static_mapping (ip4_address_t l_addr, ip4_address_t e_addr,
          address and port pair mapping when dynamic translations enabled */
       if (!(addr_only || sm->static_mapping_only || out2in_only))
 	{
+#ifdef FLEXIWAN_FIX // snat_port_refcount_fix
+	  u16 e_port_host_byte_order = clib_net_to_host_u16 (e_port);
+#endif // FLEXIWAN_FIX
 	  for (i = 0; i < vec_len (sm->addresses); i++)
 	    {
 	      if (sm->addresses[i].addr.as_u32 == e_addr.as_u32)
@@ -1098,6 +1109,19 @@ snat_add_static_mapping (ip4_address_t l_addr, ip4_address_t e_addr,
 		  /* External port must be unused */
 		  switch (proto)
 		    {
+#ifdef FLEXIWAN_FIX // snat_port_refcount_fix
+#define _(N, j, n, s) \
+                    case NAT_PROTOCOL_##N: \
+                      if (a->busy_##n##_port_refcounts[e_port_host_byte_order]) \
+                        return VNET_API_ERROR_INVALID_VALUE; \
+                      ++a->busy_##n##_port_refcounts[e_port_host_byte_order]; \
+                      if (e_port_host_byte_order > 1024) \
+                        { \
+                          a->busy_##n##_ports++; \
+                          a->busy_##n##_ports_per_thread[get_thread_idx_by_port(e_port_host_byte_order)]++; \
+                        } \
+                      break;
+#else //FLEXIWAN_FIX
 #define _(N, j, n, s) \
                     case NAT_PROTOCOL_##N: \
                       if (a->busy_##n##_port_refcounts[e_port]) \
@@ -1109,6 +1133,7 @@ snat_add_static_mapping (ip4_address_t l_addr, ip4_address_t e_addr,
                           a->busy_##n##_ports_per_thread[get_thread_idx_by_port(e_port)]++; \
                         } \
                       break;
+#endif // FLEXIWAN_FIX
 		      foreach_nat_protocol
 #undef _
 		    default:
@@ -1274,6 +1299,9 @@ snat_add_static_mapping (ip4_address_t l_addr, ip4_address_t e_addr,
       /* Free external address port */
       if (!(addr_only || sm->static_mapping_only || out2in_only))
 	{
+#ifdef FLEXIWAN_FIX // snat_port_refcount_fix
+	  u16 e_port_host_byte_order = clib_net_to_host_u16 (e_port);
+#endif //FLEXIWAN_FIX
 	  for (i = 0; i < vec_len (sm->addresses); i++)
 	    {
 	      if (sm->addresses[i].addr.as_u32 == e_addr.as_u32)
@@ -1281,6 +1309,17 @@ snat_add_static_mapping (ip4_address_t l_addr, ip4_address_t e_addr,
 		  a = sm->addresses + i;
 		  switch (proto)
 		    {
+#ifdef FLEXIWAN_FIX // snat_port_refcount_fix
+#define _(N, j, n, s) \
+                    case NAT_PROTOCOL_##N: \
+                      --a->busy_##n##_port_refcounts[e_port_host_byte_order]; \
+                      if (e_port_host_byte_order > 1024) \
+                        { \
+                          a->busy_##n##_ports--; \
+                          a->busy_##n##_ports_per_thread[get_thread_idx_by_port(e_port_host_byte_order)]--; \
+                        } \
+                      break;
+#else //FLEXIWAN_FIX
 #define _(N, j, n, s) \
                     case NAT_PROTOCOL_##N: \
                       --a->busy_##n##_port_refcounts[e_port]; \
@@ -1290,6 +1329,7 @@ snat_add_static_mapping (ip4_address_t l_addr, ip4_address_t e_addr,
                           a->busy_##n##_ports_per_thread[get_thread_idx_by_port(e_port)]--; \
                         } \
                       break;
+#endif //FLEXIWAN_FIX
 		      foreach_nat_protocol
 #undef _
 		    default:
@@ -3383,6 +3423,39 @@ nat_alloc_addr_and_port_default (snat_address_t * addresses,
       a = addresses + i;
       switch (proto)
 	{
+#ifdef FLEXIWAN_FIX //snat_port_refcount_fix
+          /* Change:
+              From: --a->busy_##n##_port_refcounts[portnum];
+              To:   ++a->busy_##n##_port_refcounts[portnum];
+           */
+#define _(N, j, n, s) \
+        case NAT_PROTOCOL_##N: \
+          if (a->busy_##n##_ports_per_thread[thread_index] < port_per_thread) \
+            { \
+              if (a->fib_index == fib_index) \
+                { \
+                  while (1) \
+                    { \
+                      portnum = (port_per_thread * \
+                        snat_thread_index) + \
+                        snat_random_port(0, port_per_thread - 1) + 1024; \
+                      if (a->busy_##n##_port_refcounts[portnum]) \
+                        continue; \
+                      ++a->busy_##n##_port_refcounts[portnum]; \
+                      a->busy_##n##_ports_per_thread[thread_index]++; \
+                      a->busy_##n##_ports++; \
+                      *addr = a->addr; \
+                      *port = clib_host_to_net_u16(portnum); \
+                      return 0; \
+                    } \
+                } \
+              else if (a->fib_index == ~0) \
+                { \
+                  ga = a; \
+                } \
+            } \
+          break;
+#else //FLEXIWAN_FIX
 #define _(N, j, n, s) \
         case NAT_PROTOCOL_##N: \
           if (a->busy_##n##_ports_per_thread[thread_index] < port_per_thread) \
@@ -3410,6 +3483,7 @@ nat_alloc_addr_and_port_default (snat_address_t * addresses,
                 } \
             } \
           break;
+#endif //FLEXIWAN_FIX
 	  foreach_nat_protocol
 #undef _
 	default:
