@@ -15,6 +15,13 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *   - Fix not initialized NAT counters (that causes statistics heap corruption and
+ *     might appear as crash in vlib_get_combined_counters() or as infinite loop in internal_malloc_stats())
+ */
+
 #include <vnet/vnet.h>
 #include <vnet/ip/ip.h>
 #include <vnet/ip/ip4.h>
@@ -2763,6 +2770,29 @@ nat_init (vlib_main_t * vm)
   nat_init_simple_counter (sm->user_limit_reached, "user-limit-reached",
 			   "/nat44/user-limit-reached");
 
+#ifdef FLEXIWAN_FIX
+#define _(x)                                                                  \
+  nat_init_simple_counter (sm->counters.fastpath.in2out.x, #x,                \
+			   "/nat44/in2out/fastpath/" #x);                  \
+  nat_init_simple_counter (sm->counters.fastpath.out2in.x, #x,                \
+			   "/nat44/out2in/fastpath/" #x);                  \
+  nat_init_simple_counter (sm->counters.slowpath.in2out.x, #x,                \
+			   "/nat44/in2out/slowpath/" #x);                  \
+  nat_init_simple_counter (sm->counters.slowpath.out2in.x, #x,                \
+			   "/nat44/out2in/slowpath/" #x);                  \
+  nat_init_simple_counter (sm->counters.fastpath.in2out_ed.x, #x,                \
+			   "/nat44/ed/in2out/fastpath/" #x);                  \
+  nat_init_simple_counter (sm->counters.fastpath.out2in_ed.x, #x,                \
+			   "/nat44/ed/out2in/fastpath/" #x);                  \
+  nat_init_simple_counter (sm->counters.slowpath.in2out_ed.x, #x,                \
+			   "/nat44/ed/in2out/slowpath/" #x);                  \
+  nat_init_simple_counter (sm->counters.slowpath.out2in_ed.x, #x,                \
+			   "/nat44/ed/out2in/slowpath/" #x);
+  foreach_nat_counter;
+#undef _
+  nat_init_simple_counter (sm->counters.hairpinning, "hairpinning",
+			   "/nat44/hairpinning");
+#else /*#ifdef FLEXIWAN_FIX*/
 #define _(x)                                            \
   sm->counters.fastpath.in2out.x.name = #x;             \
   sm->counters.fastpath.in2out.x.stat_segment_name =    \
@@ -2792,6 +2822,7 @@ nat_init (vlib_main_t * vm)
 #undef _
   sm->counters.hairpinning.name = "hairpinning";
   sm->counters.hairpinning.stat_segment_name = "/nat44/hairpinning";
+#endif /*#ifdef FLEXIWAN_FIX #else*/
 
   p = hash_get_mem (tm->thread_registrations_by_name, "workers");
   if (p)
