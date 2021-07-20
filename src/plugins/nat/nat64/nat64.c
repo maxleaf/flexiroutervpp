@@ -11,6 +11,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ *
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - snat_port_refcount_fix : Port reference count was wrongly
+ *	decremented during new port allocation
+ *
  */
 
 #include <vppinfra/crc32.h>
@@ -684,6 +690,39 @@ nat64_alloc_addr_and_port_default (nat64_address_t * addresses,
       a = addresses + i;
       switch (proto)
 	{
+#ifdef FLEXIWAN_FIX //snat_port_refcount_fix
+	  /* Change:
+	      From: --a->busy_##n##_port_refcounts[portnum];
+	      To:   ++a->busy_##n##_port_refcounts[portnum];
+	   */
+#define _(N, j, n, s) \
+        case NAT_PROTOCOL_##N: \
+          if (a->busy_##n##_ports_per_thread[thread_index] < port_per_thread) \
+            { \
+              if (a->fib_index == fib_index) \
+                { \
+                  while (1) \
+                    { \
+                      portnum = (port_per_thread * \
+                        nat_thread_index) + \
+                        nat64_random_port(0, port_per_thread - 1) + 1024; \
+                      if (a->busy_##n##_port_refcounts[portnum]) \
+                        continue; \
+                      ++a->busy_##n##_port_refcounts[portnum]; \
+                      a->busy_##n##_ports_per_thread[thread_index]++; \
+                      a->busy_##n##_ports++; \
+                      *addr = a->addr; \
+                      *port = clib_host_to_net_u16(portnum); \
+                      return 0; \
+                    } \
+                } \
+              else if (a->fib_index == ~0) \
+                { \
+                  ga = a; \
+                } \
+            } \
+          break;
+#else //FLEXIWAN_FIX
 #define _(N, j, n, s) \
         case NAT_PROTOCOL_##N: \
           if (a->busy_##n##_ports_per_thread[thread_index] < port_per_thread) \
@@ -711,6 +750,7 @@ nat64_alloc_addr_and_port_default (nat64_address_t * addresses,
                 } \
             } \
           break;
+#endif //FLEXIWAN_FIX
 	  foreach_nat_protocol
 #undef _
 	default:

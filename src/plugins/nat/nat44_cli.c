@@ -11,6 +11,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ *
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - snat_port_refcount_fix : Print ports in use and refcount in verbose mode
+ *
  */
 /**
  * @file
@@ -887,7 +892,12 @@ nat44_show_addresses_command_fn (vlib_main_t * vm, unformat_input_t * input,
 {
   snat_main_t *sm = &snat_main;
   snat_address_t *ap;
+#ifdef FLEXIWAN_FIX // snat_port_refcount_fix
+  int verbose = 0;
 
+  if (unformat (input, "verbose"))
+    verbose = 1;
+#endif //FLEXIWAN_FIX
   vlib_cli_output (vm, "NAT44 pool addresses:");
   /* *INDENT-OFF* */
   vec_foreach (ap, sm->addresses)
@@ -902,6 +912,20 @@ nat44_show_addresses_command_fn (vlib_main_t * vm, unformat_input_t * input,
       vlib_cli_output (vm, "  %d busy %s ports", ap->busy_##n##_ports, s);
       foreach_nat_protocol
     #undef _
+#ifdef FLEXIWAN_FIX // snat_port_refcount_fix
+      if (verbose)
+	{
+	  vlib_cli_output (vm, "  Protocols and Ports in use");
+    #define _(N, i, n, s) \
+	  vlib_cli_output (vm, "  %s:", s); \
+	  for (int port_index = 0; port_index < 65536; port_index++) \
+	    if (ap->busy_##n##_port_refcounts[port_index]) \
+	      vlib_cli_output (vm, "    Port: %d  Ref count: %u",\
+			       port_index, ap->busy_##n##_port_refcounts[port_index]);
+	  foreach_nat_protocol
+    #undef _
+	}
+#endif //FLEXIWAN_FIX
     }
   vlib_cli_output (vm, "NAT44 twice-nat pool addresses:");
   vec_foreach (ap, sm->twice_nat_addresses)
@@ -916,6 +940,20 @@ nat44_show_addresses_command_fn (vlib_main_t * vm, unformat_input_t * input,
       vlib_cli_output (vm, "  %d busy %s ports", ap->busy_##n##_ports, s);
       foreach_nat_protocol
     #undef _
+#ifdef FLEXIWAN_FIX // snat_port_refcount_fix
+      if (verbose)
+	{
+	  vlib_cli_output (vm, "  Protocols and Ports in use");
+    #define _(N, i, n, s) \
+	  vlib_cli_output (vm, "  %s:", s); \
+	  for (int port_index = 0; port_index < 65536; port_index++) \
+	    if (ap->busy_##n##_port_refcounts[port_index]) \
+	      vlib_cli_output (vm, "    Port: %d  Ref count: %u",\
+			       port_index, ap->busy_##n##_port_refcounts[port_index]);
+	  foreach_nat_protocol
+    #undef _
+	}
+#endif //FLEXIWAN_FIX
     }
   /* *INDENT-ON* */
   return 0;
@@ -2291,7 +2329,11 @@ VLIB_CLI_COMMAND (nat44_show_summary_command, static) = {
 ?*/
 VLIB_CLI_COMMAND (nat44_show_addresses_command, static) = {
   .path = "show nat44 addresses",
+#ifdef FLEXIWAN_FIX // snat_port_refcount_fix
+  .short_help = "show nat44 addresses [verbose]",
+#else //FLEXIWAN_FIX
   .short_help = "show nat44 addresses",
+#endif //FLEXIWAN_FIX
   .function = nat44_show_addresses_command_fn,
 };
 

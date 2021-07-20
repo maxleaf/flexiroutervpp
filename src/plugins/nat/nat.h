@@ -11,6 +11,10 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - snat_port_refcount_fix: Port refcount array was wrongly sized as (65K -1)
+ *
  */
 /**
  * @file nat.c
@@ -324,10 +328,17 @@ typedef struct
   u32 tx_sw_if_index;
 #endif
 /* *INDENT-OFF* */
+#ifdef FLEXIWAN_FIX //snat_port_refcount_fix
+#define _(N, i, n, s) \
+  u32 busy_##n##_ports; \
+  u32 * busy_##n##_ports_per_thread; \
+  u32 busy_##n##_port_refcounts[65536];
+#else //FLEXIWAN_FIX
 #define _(N, i, n, s) \
   u32 busy_##n##_ports; \
   u32 * busy_##n##_ports_per_thread; \
   u32 busy_##n##_port_refcounts[65535];
+#endif //FLEXIWAN_FIX
   foreach_nat_protocol
 #undef _
 /* *INDENT-ON* */

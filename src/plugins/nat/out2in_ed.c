@@ -24,6 +24,12 @@
  *     These tunnels do not need NAT, so there is no need to create NAT session
  *     for them. That improves performance on multi-core machines,
  *     as NAT session are bound to the specific worker thread / core.
+ *
+ *
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - snat_port_refcount_fix : Port reference count was wrongly
+ *	decremented during new port allocation
+ *
  */
 
 #include <vlib/vlib.h>
@@ -216,6 +222,32 @@ nat_alloc_addr_and_port_exact (snat_address_t * a,
 
   switch (proto)
     {
+#ifdef FLEXIWAN_FIX //snat_port_refcount_fix
+  /* Change:
+      From: --a->busy_##n##_port_refcounts[portnum];
+      To:   ++a->busy_##n##_port_refcounts[portnum];
+   */
+#define _(N, j, n, s) \
+    case NAT_PROTOCOL_##N: \
+      if (a->busy_##n##_ports_per_thread[thread_index] < port_per_thread) \
+        { \
+          while (1) \
+            { \
+              portnum = (port_per_thread * \
+                snat_thread_index) + \
+                snat_random_port(0, port_per_thread - 1) + 1024; \
+              if (a->busy_##n##_port_refcounts[portnum]) \
+                continue; \
+              ++a->busy_##n##_port_refcounts[portnum]; \
+              a->busy_##n##_ports_per_thread[thread_index]++; \
+              a->busy_##n##_ports++; \
+              *addr = a->addr; \
+              *port = clib_host_to_net_u16(portnum); \
+              return 0; \
+            } \
+        } \
+      break;
+#else //FLEXIWAN_FIX
 #define _(N, j, n, s) \
     case NAT_PROTOCOL_##N: \
       if (a->busy_##n##_ports_per_thread[thread_index] < port_per_thread) \
@@ -236,6 +268,7 @@ nat_alloc_addr_and_port_exact (snat_address_t * a,
             } \
         } \
       break;
+#endif //FLEXIWAN_FIX
       foreach_nat_protocol
 #undef _
     default:
