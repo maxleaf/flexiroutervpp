@@ -20,6 +20,8 @@
  *     1.Port reference count array was wrongly indexed with port number in
  *       network byte order.
  *     2.Port reference count was wrongly decremented during new port allocation
+ *     3.Prevent presence of dynamic translation from stopping the addition of
+ *       nat44 static mapping in endpoint-dependent mode
  *
  */
 
@@ -1110,9 +1112,15 @@ snat_add_static_mapping (ip4_address_t l_addr, ip4_address_t e_addr,
 		  switch (proto)
 		    {
 #ifdef FLEXIWAN_FIX // snat_port_refcount_fix
+		      /* The endpoint dependent mode can reuse same port of an
+			 address as long as the session entry is unique
+			 (nat_ed_alloc_addr_and_port). So below change skips
+			 refcount check for ed mode. This change is needed to
+			 make nat44 static mapping work in ed mode when the
+			 port is already in use by another dynamic translation */
 #define _(N, j, n, s) \
                     case NAT_PROTOCOL_##N: \
-                      if (a->busy_##n##_port_refcounts[e_port_host_byte_order]) \
+                      if ((!sm->endpoint_dependent) && (a->busy_##n##_port_refcounts[e_port_host_byte_order])) \
                         return VNET_API_ERROR_INVALID_VALUE; \
                       ++a->busy_##n##_port_refcounts[e_port_host_byte_order]; \
                       if (e_port_host_byte_order > 1024) \
