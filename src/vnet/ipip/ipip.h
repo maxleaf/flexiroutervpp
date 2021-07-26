@@ -15,6 +15,12 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *   - Exposed ipip tunnel device class to filter out these tunnels in vppsb.
+ */
+
 #ifndef included_ipip_h
 #define included_ipip_h
 
@@ -25,6 +31,9 @@
 #include <vnet/tunnel/tunnel.h>
 
 extern vnet_hw_interface_class_t ipip_hw_interface_class;
+#ifdef FLEXIWAN_FEATURE
+extern vnet_device_class_t ipip_device_class;
+#endif
 
 #define foreach_ipip_error				\
   /* Must be first. */					\
