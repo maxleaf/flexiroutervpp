@@ -5,12 +5,6 @@
   comments, complaints, performance data, etc to dl@cs.oswego.edu
 */
 
-/*
- *  Copyright (C) 2021 flexiWAN Ltd.
- *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
- *   - Add assert that offset to next element is correct to avoid stuck in a chunks loop forever.
- */
-
 #include <vppinfra/dlmalloc.h>
 #include <vppinfra/sanitizer.h>
 
