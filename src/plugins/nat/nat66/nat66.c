@@ -80,10 +80,12 @@ nat66_init (vlib_main_t * vm)
 static void
 nat66_validate_counters (nat66_main_t * nm, u32 sw_if_index)
 {
+#ifndef FLEXIWAN_FIX
   vlib_validate_simple_counter (&nm->in2out_packets, sw_if_index);
   vlib_zero_simple_counter (&nm->in2out_packets, sw_if_index);
   vlib_validate_simple_counter (&nm->out2in_packets, sw_if_index);
   vlib_zero_simple_counter (&nm->out2in_packets, sw_if_index);
+#endif /*#ifndef FLEXIWAN_FIX*/
 }
 
 int

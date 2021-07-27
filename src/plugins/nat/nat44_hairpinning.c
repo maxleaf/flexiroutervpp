@@ -514,7 +514,7 @@ nat44_hairpinning_fn_inline (vlib_main_t * vm,
 
 	  if (next0 != NAT_HAIRPIN_NEXT_DROP)
 	    {
-	      vlib_increment_simple_counter (&sm->counters.hairpinning,
+	      vlib_increment_simple_counter_dummy (&sm->counters.hairpinning,
 					     vm->thread_index, sw_if_index0,
 					     1);
 	    }

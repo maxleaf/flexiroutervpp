@@ -2109,9 +2109,8 @@ static struct dlmallinfo internal_mallinfo(mstate m) {
           size_t sz = chunksize(q);
 #ifdef FLEXIWAN_FIX
           if (sz < MIN_CHUNK_SIZE) {
-            _clib_error(4 /* CLIB_ERROR_WARNING */, (char *) __FUNCTION__, __LINE__,
+            _clib_error(CLIB_ERROR_ABORT, (char *) __FUNCTION__, __LINE__,
                 "Corrupted dlmalloc structure chunksize %u", sz);
-            assert(sz >= MIN_CHUNK_SIZE);
           }
 #endif
           sum += sz;
@@ -2160,9 +2159,8 @@ static void internal_malloc_stats(mstate m) {
 #ifdef FLEXIWAN_FIX
                size_t sz = chunksize(q);
                if (sz < MIN_CHUNK_SIZE) {
-                  _clib_error(4 /* CLIB_ERROR_WARNING */, (char *) __FUNCTION__, __LINE__,
+                  _clib_error(CLIB_ERROR_ABORT, (char *) __FUNCTION__, __LINE__,
                       "Corrupted dlmalloc structure chunksize %u", sz);
-                  assert(sz >= MIN_CHUNK_SIZE);
                }
 #endif
           if (!is_inuse(q))

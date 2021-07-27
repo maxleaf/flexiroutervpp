@@ -37,6 +37,17 @@
  *  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *   - Provide xxx_dummy counter API that effectively removes counter logic.
+ *     This is to be able to disable counter functionality in various places.
+ *     For example, the NAT in vpp 21.01 has crucial bug in counter utilization
+ *     that causes incrementing of not allocated counter that in turn causes
+ *     corruption of the statistics heap. As we deciced not to fix it at the moment
+ *     we use the dummy API to disable counter functionality completely.
+ */
+
 #ifndef included_vlib_counter_h
 #define included_vlib_counter_h
 
@@ -347,6 +358,15 @@ void vlib_free_combined_counter (vlib_combined_counter_main_t * cm);
     @returns vec_len(cm->maxi)
 */
 #define vlib_counter_len(cm) vec_len((cm)->maxi)
+
+#ifdef FLEXIWAN_FEATURE
+#define vlib_validate_simple_counter_dummy(_cm, _index)
+#define vlib_zero_simple_counter_dummy(_cm, _index)
+#define vlib_set_simple_counter_dummy(_cm, _thread_index, _index, _value)
+#define vlib_increment_simple_counter_dummy(_cm, _thread_index, _index, _increment)
+#define vlib_decrement_simple_counter(_cm, _thread_index, _index, _decrement)
+#define vlib_free_simple_counter_dummy(_cm)
+#endif /*#ifdef FLEXIWAN_FEATURE*/
 
 #endif /* included_vlib_counter_h */
 
