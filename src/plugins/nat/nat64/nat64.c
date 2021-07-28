@@ -502,6 +502,7 @@ nat64_add_interface_address (u32 sw_if_index, int is_add)
 static void
 nat64_validate_counters (nat64_main_t * nm, u32 sw_if_index)
 {
+#ifndef FLEXIWAN_FIX
 #define _(x)                                                          \
   vlib_validate_simple_counter (&nm->counters.in2out.x, sw_if_index); \
   vlib_zero_simple_counter (&nm->counters.in2out.x, sw_if_index);     \
@@ -509,6 +510,7 @@ nat64_validate_counters (nat64_main_t * nm, u32 sw_if_index)
   vlib_zero_simple_counter (&nm->counters.out2in.x, sw_if_index);
   foreach_nat_counter;
 #undef _
+#endif /*#ifndef FLEXIWAN_FIX*/
 }
 
 void
