@@ -2101,6 +2101,12 @@ static struct dlmallinfo internal_mallinfo(mstate m) {
         while (segment_holds(s, q) &&
                q != m->top && q->head != FENCEPOST_HEAD) {
           size_t sz = chunksize(q);
+#ifdef FLEXIWAN_FIX
+          if (sz < MIN_CHUNK_SIZE) {
+            _clib_error(CLIB_ERROR_ABORT, (char *) __FUNCTION__, __LINE__,
+                "Corrupted dlmalloc structure chunksize %u", sz);
+          }
+#endif
           sum += sz;
           if (!is_inuse(q)) {
             mfree += sz;
@@ -2144,6 +2150,13 @@ static void internal_malloc_stats(mstate m) {
         mchunkptr q = align_as_chunk(s->base);
         while (segment_holds(s, q) &&
                q != m->top && q->head != FENCEPOST_HEAD) {
+#ifdef FLEXIWAN_FIX
+               size_t sz = chunksize(q);
+               if (sz < MIN_CHUNK_SIZE) {
+                  _clib_error(CLIB_ERROR_ABORT, (char *) __FUNCTION__, __LINE__,
+                      "Corrupted dlmalloc structure chunksize %u", sz);
+               }
+#endif
           if (!is_inuse(q))
             used -= chunksize(q);
           q = next_chunk(q);

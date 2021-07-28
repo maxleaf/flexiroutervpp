@@ -518,7 +518,7 @@ VLIB_NODE_FN (nat64_out2in_node) (vlib_main_t * vm,
 {
   u32 n_left_from, *from, *to_next;
   nat64_out2in_next_t next_index;
-  nat64_main_t *nm = &nat64_main;
+//  nat64_main_t *nm = &nat64_main;
   u32 thread_index = vm->thread_index;
 
   from = vlib_frame_vector_args (frame);
@@ -567,14 +567,14 @@ VLIB_NODE_FN (nat64_out2in_node) (vlib_main_t * vm,
 		  next0 = NAT64_OUT2IN_NEXT_DROP;
 		  b0->error = node->errors[NAT64_OUT2IN_ERROR_NO_TRANSLATION];
 		}
-	      vlib_increment_simple_counter (&nm->counters.out2in.other,
+	      vlib_increment_simple_counter_dummy (&nm->counters.out2in.other,
 					     thread_index, sw_if_index0, 1);
 	      goto trace0;
 	    }
 
 	  if (proto0 == NAT_PROTOCOL_ICMP)
 	    {
-	      vlib_increment_simple_counter (&nm->counters.out2in.icmp,
+	      vlib_increment_simple_counter_dummy (&nm->counters.out2in.icmp,
 					     thread_index, sw_if_index0, 1);
 	      if (icmp_to_icmp6
 		  (b0, nat64_out2in_icmp_set_cb, &ctx0,
@@ -588,10 +588,10 @@ VLIB_NODE_FN (nat64_out2in_node) (vlib_main_t * vm,
 	  else
 	    {
 	      if (proto0 == NAT_PROTOCOL_TCP)
-		vlib_increment_simple_counter (&nm->counters.out2in.tcp,
+		vlib_increment_simple_counter_dummy (&nm->counters.out2in.tcp,
 					       thread_index, sw_if_index0, 1);
 	      else
-		vlib_increment_simple_counter (&nm->counters.out2in.udp,
+		vlib_increment_simple_counter_dummy (&nm->counters.out2in.udp,
 					       thread_index, sw_if_index0, 1);
 
 	      if (nat64_out2in_tcp_udp (vm, b0, &ctx0))
@@ -626,7 +626,7 @@ VLIB_NODE_FN (nat64_out2in_node) (vlib_main_t * vm,
 
 	  if (next0 == NAT64_OUT2IN_NEXT_DROP)
 	    {
-	      vlib_increment_simple_counter (&nm->counters.out2in.drops,
+	      vlib_increment_simple_counter_dummy (&nm->counters.out2in.drops,
 					     thread_index, sw_if_index0, 1);
 	    }
 

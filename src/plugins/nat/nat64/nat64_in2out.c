@@ -1097,7 +1097,7 @@ nat64_in2out_node_fn_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 	    {
 	      if (PREDICT_TRUE (proto0 == NAT_PROTOCOL_OTHER))
 		{
-		  vlib_increment_simple_counter (&nm->counters.in2out.other,
+		  vlib_increment_simple_counter_dummy (&nm->counters.in2out.other,
 						 thread_index, sw_if_index0,
 						 1);
 		  if (is_hairpinning (&ip60->dst_address))

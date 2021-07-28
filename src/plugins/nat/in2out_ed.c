@@ -391,6 +391,10 @@ slow_path_ed (snat_main_t * sm,
   ip4_address_t sm_addr;
   u16 sm_port;
   u32 sm_fib_index;
+
+  ctx.now = now;
+  ctx.thread_index = thread_index;
+
   /* First try to match static mapping by local address and port */
   if (snat_static_mapping_match
       (sm, l_addr, l_port, rx_fib_index, nat_proto, &sm_addr, &sm_port,
@@ -494,8 +498,6 @@ slow_path_ed (snat_main_t * sm,
   clib_bihash_kv_16_8_t in2out_ed_kv;
   init_ed_kv (&in2out_ed_kv, l_addr, l_port, r_addr, r_port, rx_fib_index,
 	      proto, thread_index, s - tsm->sessions);
-  ctx.now = now;
-  ctx.thread_index = thread_index;
   if (clib_bihash_add_or_overwrite_stale_16_8 (&tsm->in2out_ed, &in2out_ed_kv,
 					       nat44_i2o_ed_is_idle_session_cb,
 					       &ctx))
@@ -1159,7 +1161,7 @@ nat44_ed_in2out_fast_path_node_fn_inline (vlib_main_t * vm,
 	      mss_clamping (sm->mss_clamping, tcp0, &sum0);
 	      tcp0->checksum = ip_csum_fold (sum0);
 	    }
-	  vlib_increment_simple_counter (&sm->counters.fastpath.in2out_ed.tcp,
+	  vlib_increment_simple_counter_dummy (&sm->counters.fastpath.in2out_ed.tcp,
 					 thread_index, sw_if_index0, 1);
 	  nat44_set_tcp_session_state_i2o (sm, now, s0, b0, thread_index);
 	}
@@ -1186,7 +1188,7 @@ nat44_ed_in2out_fast_path_node_fn_inline (vlib_main_t * vm,
 	      ip0->dst_address.as_u32 = s0->ext_host_addr.as_u32;
 	    }
 	  udp0->checksum = ip_csum_fold (sum0);
-	  vlib_increment_simple_counter (&sm->counters.fastpath.in2out_ed.udp,
+	  vlib_increment_simple_counter_dummy (&sm->counters.fastpath.in2out_ed.udp,
 					 thread_index, sw_if_index0, 1);
 	}
       else
@@ -1199,7 +1201,7 @@ nat44_ed_in2out_fast_path_node_fn_inline (vlib_main_t * vm,
 		  udp0->dst_port = s0->ext_host_port;
 		  ip0->dst_address.as_u32 = s0->ext_host_addr.as_u32;
 		}
-	      vlib_increment_simple_counter (&sm->counters.fastpath.
+	      vlib_increment_simple_counter_dummy (&sm->counters.fastpath.
 					     in2out_ed.udp, thread_index,
 					     sw_if_index0, 1);
 	    }
@@ -1231,7 +1233,7 @@ nat44_ed_in2out_fast_path_node_fn_inline (vlib_main_t * vm,
 
       if (next[0] == NAT_NEXT_DROP)
 	{
-	  vlib_increment_simple_counter (&sm->counters.fastpath.
+	  vlib_increment_simple_counter_dummy (&sm->counters.fastpath.
 					 in2out_ed.drops, thread_index,
 					 sw_if_index0, 1);
 	}
@@ -1315,7 +1317,7 @@ nat44_ed_in2out_slow_path_node_fn_inline (vlib_main_t * vm,
 	  if (!s0)
 	    next[0] = NAT_NEXT_DROP;
 
-	  vlib_increment_simple_counter (&sm->counters.slowpath.
+	  vlib_increment_simple_counter_dummy (&sm->counters.slowpath.
 					 in2out_ed.other, thread_index,
 					 sw_if_index0, 1);
 	  goto trace0;
@@ -1327,7 +1329,7 @@ nat44_ed_in2out_slow_path_node_fn_inline (vlib_main_t * vm,
 	    icmp_in2out_ed_slow_path (sm, b0, ip0, icmp0, sw_if_index0,
 				      rx_fib_index0, node, next[0], now,
 				      thread_index, &s0);
-	  vlib_increment_simple_counter (&sm->counters.slowpath.
+	  vlib_increment_simple_counter_dummy (&sm->counters.slowpath.
 					 in2out_ed.icmp, thread_index,
 					 sw_if_index0, 1);
 	  goto trace0;
@@ -1445,7 +1447,7 @@ nat44_ed_in2out_slow_path_node_fn_inline (vlib_main_t * vm,
 	      mss_clamping (sm->mss_clamping, tcp0, &sum0);
 	      tcp0->checksum = ip_csum_fold (sum0);
 	    }
-	  vlib_increment_simple_counter (&sm->counters.slowpath.in2out_ed.tcp,
+	  vlib_increment_simple_counter_dummy (&sm->counters.slowpath.in2out_ed.tcp,
 					 thread_index, sw_if_index0, 1);
 	  nat44_set_tcp_session_state_i2o (sm, now, s0, b0, thread_index);
 	}
@@ -1472,7 +1474,7 @@ nat44_ed_in2out_slow_path_node_fn_inline (vlib_main_t * vm,
 	      ip0->dst_address.as_u32 = s0->ext_host_addr.as_u32;
 	    }
 	  udp0->checksum = ip_csum_fold (sum0);
-	  vlib_increment_simple_counter (&sm->counters.slowpath.in2out_ed.udp,
+	  vlib_increment_simple_counter_dummy (&sm->counters.slowpath.in2out_ed.udp,
 					 thread_index, sw_if_index0, 1);
 	}
       else
@@ -1485,7 +1487,7 @@ nat44_ed_in2out_slow_path_node_fn_inline (vlib_main_t * vm,
 		  udp0->dst_port = s0->ext_host_port;
 		  ip0->dst_address.as_u32 = s0->ext_host_addr.as_u32;
 		}
-	      vlib_increment_simple_counter (&sm->counters.slowpath.
+	      vlib_increment_simple_counter_dummy (&sm->counters.slowpath.
 					     in2out_ed.udp, thread_index,
 					     sw_if_index0, 1);
 	    }
@@ -1516,7 +1518,7 @@ nat44_ed_in2out_slow_path_node_fn_inline (vlib_main_t * vm,
 
       if (next[0] == NAT_NEXT_DROP)
 	{
-	  vlib_increment_simple_counter (&sm->counters.slowpath.
+	  vlib_increment_simple_counter_dummy (&sm->counters.slowpath.
 					 in2out_ed.drops, thread_index,
 					 sw_if_index0, 1);
 	}

@@ -18,8 +18,22 @@
 /*
  *  Copyright (C) 2021 flexiWAN Ltd.
  *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
- *   - Fix not initialized NAT counters (that causes statistics heap corruption and
- *     might appear as crash in vlib_get_combined_counters() or as infinite loop in internal_malloc_stats())
+ *   - Disable per interface NAT counters.
+ *     Current vpp (21.01) has crucial bug in counter utilization
+ *     that causes incrementing of not allocated counter that in turn causes
+ *     corruption of the statistics heap. As at the moment we don't need NAT
+ *     counters per interface, we just disable them completely using the dummy counter API.
+ *     The bug is as follows: the counters are allocated only for those interfaces,
+ *     that the snat_interface_add_del() and the snat_interface_add_del_output_feature() functions
+ *     were called for, which are WAN interfaces usually. But! The counters are incremented for RX
+ *     interface - the interface on which packet was received. In flexiwan solution it is possible,
+ *     that packet is received on tunnel and is sent to the internet through the WAN interface.
+ *     In this case the counter will be incremented for the tunnel interface (loopback).
+ *     As sw_if_index of the tunnel is always greater than the sw_if_index of WAN interface,
+ *     the incremetion of the tunnel counter (that was not allocated) corrupts the statistics heap,
+ *     where the counters reside.
+ *     This corruption might cause the statistics collecting node/thread to hang
+ *     or even to crash (see FLEXIWAN assertion in the internal_mallinfo() function).
  */
 
 #include <vnet/vnet.h>
@@ -1898,6 +1912,7 @@ snat_del_address (snat_main_t * sm, ip4_address_t addr, u8 delete_sm,
 static void
 nat_validate_counters (snat_main_t * sm, u32 sw_if_index)
 {
+#ifndef FLEXIWAN_FIX
 #define _(x)                                                                  \
   vlib_validate_simple_counter (&sm->counters.fastpath.in2out.x,              \
                                 sw_if_index);                                 \
@@ -1927,6 +1942,7 @@ nat_validate_counters (snat_main_t * sm, u32 sw_if_index)
 #undef _
   vlib_validate_simple_counter (&sm->counters.hairpinning, sw_if_index);
   vlib_zero_simple_counter (&sm->counters.hairpinning, sw_if_index);
+#endif /*#ifndef FLEXIWAN_FIX*/
 }
 
 void
