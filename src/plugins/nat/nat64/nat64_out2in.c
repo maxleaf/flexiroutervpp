@@ -539,7 +539,7 @@ VLIB_NODE_FN (nat64_out2in_node) (vlib_main_t * vm,
 	  u32 proto0;
 	  nat64_out2in_set_ctx_t ctx0;
 	  udp_header_t *udp0;
-//	  u32 sw_if_index0;
+	  u32 sw_if_index0;
 
 	  /* speculatively enqueue b0 to the current next frame */
 	  bi0 = from[0];
