@@ -20,7 +20,30 @@
  *     1.Port reference count array was wrongly indexed with port number in
  *       network byte order.
  *     2.Port reference count was wrongly decremented during new port allocation
+ *     3.Prevent presence of dynamic translation from stopping the addition of
+ *       nat44 static mapping in endpoint-dependent mode
  *
+ */
+
+/*
+ *  Copyright (C) 2021 flexiWAN Ltd.
+ *  List of fixes and changes made for FlexiWAN (denoted by FLEXIWAN_FIX and FLEXIWAN_FEATURE flags):
+ *   - Disable per interface NAT counters.
+ *     Current vpp (21.01) has crucial bug in counter utilization
+ *     that causes incrementing of not allocated counter that in turn causes
+ *     corruption of the statistics heap. As at the moment we don't need NAT
+ *     counters per interface, we just disable them completely using the dummy counter API.
+ *     The bug is as follows: the counters are allocated only for those interfaces,
+ *     that the snat_interface_add_del() and the snat_interface_add_del_output_feature() functions
+ *     were called for, which are WAN interfaces usually. But! The counters are incremented for RX
+ *     interface - the interface on which packet was received. In flexiwan solution it is possible,
+ *     that packet is received on tunnel and is sent to the internet through the WAN interface.
+ *     In this case the counter will be incremented for the tunnel interface (loopback).
+ *     As sw_if_index of the tunnel is always greater than the sw_if_index of WAN interface,
+ *     the incremetion of the tunnel counter (that was not allocated) corrupts the statistics heap,
+ *     where the counters reside.
+ *     This corruption might cause the statistics collecting node/thread to hang
+ *     or even to crash (see FLEXIWAN assertion in the internal_mallinfo() function).
  */
 
 #include <vnet/vnet.h>
@@ -1110,9 +1133,15 @@ snat_add_static_mapping (ip4_address_t l_addr, ip4_address_t e_addr,
 		  switch (proto)
 		    {
 #ifdef FLEXIWAN_FIX // snat_port_refcount_fix
+		      /* The endpoint dependent mode can reuse same port of an
+			 address as long as the session entry is unique
+			 (nat_ed_alloc_addr_and_port). So below change skips
+			 refcount check for ed mode. This change is needed to
+			 make nat44 static mapping work in ed mode when the
+			 port is already in use by another dynamic translation */
 #define _(N, j, n, s) \
                     case NAT_PROTOCOL_##N: \
-                      if (a->busy_##n##_port_refcounts[e_port_host_byte_order]) \
+                      if ((!sm->endpoint_dependent) && (a->busy_##n##_port_refcounts[e_port_host_byte_order])) \
                         return VNET_API_ERROR_INVALID_VALUE; \
                       ++a->busy_##n##_port_refcounts[e_port_host_byte_order]; \
                       if (e_port_host_byte_order > 1024) \
@@ -1931,6 +1960,7 @@ snat_del_address (snat_main_t * sm, ip4_address_t addr, u8 delete_sm,
 static void
 nat_validate_counters (snat_main_t * sm, u32 sw_if_index)
 {
+#ifndef FLEXIWAN_FIX
 #define _(x)                                                                  \
   vlib_validate_simple_counter (&sm->counters.fastpath.in2out.x,              \
                                 sw_if_index);                                 \
@@ -1960,6 +1990,7 @@ nat_validate_counters (snat_main_t * sm, u32 sw_if_index)
 #undef _
   vlib_validate_simple_counter (&sm->counters.hairpinning, sw_if_index);
   vlib_zero_simple_counter (&sm->counters.hairpinning, sw_if_index);
+#endif /*#ifndef FLEXIWAN_FIX*/
 }
 
 void
@@ -2803,6 +2834,29 @@ nat_init (vlib_main_t * vm)
   nat_init_simple_counter (sm->user_limit_reached, "user-limit-reached",
 			   "/nat44/user-limit-reached");
 
+#ifdef FLEXIWAN_FIX
+#define _(x)                                                                  \
+  nat_init_simple_counter (sm->counters.fastpath.in2out.x, #x,                \
+			   "/nat44/in2out/fastpath/" #x);                  \
+  nat_init_simple_counter (sm->counters.fastpath.out2in.x, #x,                \
+			   "/nat44/out2in/fastpath/" #x);                  \
+  nat_init_simple_counter (sm->counters.slowpath.in2out.x, #x,                \
+			   "/nat44/in2out/slowpath/" #x);                  \
+  nat_init_simple_counter (sm->counters.slowpath.out2in.x, #x,                \
+			   "/nat44/out2in/slowpath/" #x);                  \
+  nat_init_simple_counter (sm->counters.fastpath.in2out_ed.x, #x,                \
+			   "/nat44/ed/in2out/fastpath/" #x);                  \
+  nat_init_simple_counter (sm->counters.fastpath.out2in_ed.x, #x,                \
+			   "/nat44/ed/out2in/fastpath/" #x);                  \
+  nat_init_simple_counter (sm->counters.slowpath.in2out_ed.x, #x,                \
+			   "/nat44/ed/in2out/slowpath/" #x);                  \
+  nat_init_simple_counter (sm->counters.slowpath.out2in_ed.x, #x,                \
+			   "/nat44/ed/out2in/slowpath/" #x);
+  foreach_nat_counter;
+#undef _
+  nat_init_simple_counter (sm->counters.hairpinning, "hairpinning",
+			   "/nat44/hairpinning");
+#else /*#ifdef FLEXIWAN_FIX*/
 #define _(x)                                            \
   sm->counters.fastpath.in2out.x.name = #x;             \
   sm->counters.fastpath.in2out.x.stat_segment_name =    \
@@ -2832,6 +2886,7 @@ nat_init (vlib_main_t * vm)
 #undef _
   sm->counters.hairpinning.name = "hairpinning";
   sm->counters.hairpinning.stat_segment_name = "/nat44/hairpinning";
+#endif /*#ifdef FLEXIWAN_FIX #else*/
 
   p = hash_get_mem (tm->thread_registrations_by_name, "workers");
   if (p)

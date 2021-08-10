@@ -15,6 +15,14 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - protection for NULL 'sa' pointer was added to handle case when the ipsec
+ *     tunnel interface is taken down in the middle of packet handling,
+ *     so the correspondent adjacency was removed from the ipsec_tun_protect_sa_by_adj_index map.
+ */
+
 #include <vnet/vnet.h>
 #include <vnet/api_errno.h>
 #include <vnet/ip/ip.h>
@@ -223,6 +231,36 @@ dpdk_esp_encrypt_inline (vlib_main_t * vm,
 	      vnet_buffer (b0)->ipsec.sad_index =
 		sa_index0 = ipsec_tun_protect_get_sa_out
 		(vnet_buffer (b0)->ip.adj_index[VLIB_TX]);
+
+#ifdef FLEXIWAN_FIX
+          if (PREDICT_FALSE (~0 == sa_index0))
+          {
+            /* In case of IKEv2, the ike plugin might take ipsec tunnels up and down,
+            so the tunnel adjacencies might be added and removed during the packet
+            handling. So we just add the protection for the sa0=NULL case,
+            when the tunnel interface is down, so the correspondent adjacency was removed.
+            */
+            if (is_ip6)
+                vlib_node_increment_counter (vm,
+                    dpdk_esp6_encrypt_node.index,
+                    ESP_ENCRYPT_ERROR_SESSION, 1);
+            else
+                vlib_node_increment_counter (vm,
+                    dpdk_esp4_encrypt_node.index,
+                    ESP_ENCRYPT_ERROR_SESSION, 1);
+            to_next[0] = bi0;
+            to_next += 1;
+            n_left_to_next -= 1;
+
+            if (PREDICT_FALSE (b0->flags & VLIB_BUFFER_IS_TRACED))
+            {
+              esp_encrypt_trace_t *tr = vlib_add_trace (vm, node, b0, sizeof (*tr));
+              clib_memset(tr, ~0, sizeof(*tr));
+            }
+            goto no_trace;
+          }
+#endif /*#ifdef FLEXIWAN_FIX*/
+
 	    }
 	  else
 	    sa_index0 = vnet_buffer (b0)->ipsec.sad_index;
@@ -577,6 +615,10 @@ dpdk_esp_encrypt_inline (vlib_main_t * vm,
 	      clib_memcpy_fast (tr->packet_data, p, sizeof (tr->packet_data));
 	    }
 	}
+
+#ifdef FLEXIWAN_FIX
+    no_trace:
+#endif
       vlib_put_next_frame (vm, node, next_index, n_left_to_next);
     }
   if (is_ip6)

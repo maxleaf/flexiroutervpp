@@ -15,6 +15,15 @@
  * limitations under the License.
  */
 
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - protection for NULL 'sa' pointer was added to handle case when the ipsec
+ *     tunnel interface is taken down in the middle of packet handling,
+ *     so the correspondent adjacency was removed from the ipsec_tun_protect_sa_by_adj_index map.
+ */
+
+
 #include <vnet/vnet.h>
 #include <vnet/api_errno.h>
 #include <vnet/ip/ip.h>
@@ -619,6 +628,27 @@ esp_encrypt_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 	  vnet_buffer (b[0])->ipsec.sad_index =
 	    sa_index0 = ipsec_tun_protect_get_sa_out
 	    (vnet_buffer (b[0])->ip.adj_index[VLIB_TX]);
+
+#ifdef FLEXIWAN_FIX
+      if (PREDICT_FALSE (~0 == sa_index0))
+      {
+        /* In case of IKEv2, the ike plugin might take ipsec tunnels up and down,
+           so the tunnel adjacencies might be added and removed during the packet
+           handling. So we just add the protection for the sa0=NULL case,
+           when the tunnel interface is down, so the correspondent adjacency was removed.
+        */
+        esp_set_next_index (is_async, from, nexts, from[b - bufs],
+			      &n_async_drop, drop_next, next);
+        if (PREDICT_FALSE (b[0]->flags & VLIB_BUFFER_IS_TRACED))
+        {
+          esp_encrypt_trace_t *tr = vlib_add_trace (vm, node, b[0], sizeof (*tr));
+          clib_memset(tr, ~0, sizeof(*tr));
+	      tr->sa_index = sa_index0;
+        }
+        goto no_trace;
+      }
+#endif /*#ifdef FLEXIWAN_FIX*/
+
 	}
       else
 	sa_index0 = vnet_buffer (b[0])->ipsec.sad_index;
@@ -962,6 +992,11 @@ esp_encrypt_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 	  tr->crypto_alg = sa0->crypto_alg;
 	  tr->integ_alg = sa0->integ_alg;
 	}
+
+#ifdef FLEXIWAN_FIX
+    no_trace:
+#endif
+
       /* next */
       n_left -= 1;
       next += 1;
