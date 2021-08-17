@@ -1012,9 +1012,9 @@ esp_encrypt_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 	 */
     if (PREDICT_FALSE (~0 != current_sa_index))
 #endif /* FLEXIWAN_FIX */
-	vlib_increment_combined_counter (&ipsec_sa_counters, thread_index,
-					 current_sa_index, current_sa_packets,
-					 current_sa_bytes);
+  vlib_increment_combined_counter (&ipsec_sa_counters, thread_index,
+				   current_sa_index, current_sa_packets,
+				   current_sa_bytes);
 
   if (!is_async)
     {
