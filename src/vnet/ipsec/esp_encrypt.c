@@ -18,9 +18,10 @@
 /*
  *  Copyright (C) 2020 flexiWAN Ltd.
  *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
- *   - protection for NULL 'sa' pointer was added to handle case when the ipsec
+ *   - invalid-sa-handling: protection for NULL 'sa' pointer was added to handle case when the ipsec
  *     tunnel interface is taken down in the middle of packet handling,
  *     so the correspondent adjacency was removed from the ipsec_tun_protect_sa_by_adj_index map.
+ *     Prevented invalid counter access as consequence of invalid-sa value
  */
 
 
@@ -1003,6 +1004,15 @@ esp_encrypt_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
       b += 1;
     }
 
+#ifdef FLEXIWAN_FIX /* invalid-sa-handling */
+	/* When (~0 == sa_index0) is true for the only packet processed in the
+	 * loop, current_sa_index shall be ~0 and leads to invalid access.
+	 * Why (~0 == sa_index0) in middle of packet path - Possibly invalidated
+	 * by IKEv2 handling or other node/event executions
+	 * i.e. ipsec_tun_protect_get_sa_out returns ~0 for tunnel sw_if_index
+	 */
+    if (PREDICT_FALSE (~0 != current_sa_index))
+#endif /* FLEXIWAN_FIX */
   vlib_increment_combined_counter (&ipsec_sa_counters, thread_index,
 				   current_sa_index, current_sa_packets,
 				   current_sa_bytes);
