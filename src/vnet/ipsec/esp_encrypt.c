@@ -1003,6 +1003,7 @@ esp_encrypt_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
       next += 1;
       b += 1;
     }
+
 #ifdef FLEXIWAN_FIX /* invalid-sa-handling */
 	/* When (~0 == sa_index0) is true for the only packet processed in the
 	 * loop, current_sa_index shall be ~0 and leads to invalid access.
@@ -1015,7 +1016,6 @@ esp_encrypt_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
   vlib_increment_combined_counter (&ipsec_sa_counters, thread_index,
 				   current_sa_index, current_sa_packets,
 				   current_sa_bytes);
-
   if (!is_async)
     {
       esp_process_ops (vm, node, ptd->crypto_ops, bufs, nexts, drop_next);
