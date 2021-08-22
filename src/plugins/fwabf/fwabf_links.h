@@ -47,9 +47,15 @@ typedef u8 fwabf_label_t;	/*flexiwan path label used by policy to choose link*/
 #define FWABF_INVALID_LABEL 0xFF
 #define FWABF_MAX_LABEL     0xFE
 
+typedef struct fwabf_quality_t_ {
+    u32 loss;
+    u32 delay;
+    u32 jitter;
+} fwabf_quality_t;
+
 /**
  * Creates FWABF Link object that holds interface <-> label mapping and other
- * data needed for FWABF Policy feature. See fwabf_sw_interface_t for details.
+ * data needed for FWABF Policy feature. See fwabf_link_t for details.
  *
  * @param sw_if_index   index of VPP software interface used by tunnel or by WAN interface.
  * @param fwlabel       FWABF label for that tunnel/WAN interface.
