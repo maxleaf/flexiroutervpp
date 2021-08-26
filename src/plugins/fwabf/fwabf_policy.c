@@ -39,7 +39,7 @@
  *
  *  3. To track tunnel state (up/down) and to keep tunnel<->labels binding and
  *     other stuff we use FWABF Link object. It represents extension of the VPP
- *     software interface object. See the fwabf_sw_interface_t structure.
+ *     software interface object. See the fwabf_link_t structure.
  *     Every Link registers itself with FIB to get continuous updates on reachability
  *     of the tunnel remote end. This is done using the FIB PathList objects.
  *     Each Link creates the PathList object with single Path to the remote end
