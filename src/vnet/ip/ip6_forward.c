@@ -1194,6 +1194,7 @@ ip6_tcp_udp_icmp_validate_checksum (vlib_main_t * vm, vlib_buffer_t * p0)
 /**
  * @brief returns number of links on which src is reachable.
  */
+/*
 always_inline int
 ip6_urpf_loose_check (ip6_main_t * im, vlib_buffer_t * b, ip6_header_t * i)
 {
@@ -1212,6 +1213,7 @@ ip6_urpf_loose_check (ip6_main_t * im, vlib_buffer_t * b, ip6_header_t * i)
 
   return (fib_urpf_check_size (lb0->lb_urpf));
 }
+*/
 
 always_inline u8
 ip6_next_proto_is_tcp_udp (vlib_buffer_t * p0, ip6_header_t * ip0,
@@ -1431,6 +1433,7 @@ ip6_local_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 
 	  /* Drop packets from unroutable hosts. */
 	  /* If this is a neighbor solicitation (ICMP), skip source RPF check */
+	  /*
 	  u8 unroutable[2];
 	  unroutable[0] = error[0] == IP6_ERROR_UNKNOWN_PROTOCOL
 	    && type[0] != IP_BUILTIN_PROTOCOL_ICMP
@@ -1452,6 +1455,7 @@ ip6_local_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 				       ip[1]) ? IP6_ERROR_SRC_LOOKUP_MISS
 		: error[1];
 	    }
+	    */
 
 	  vnet_buffer (b[0])->ip.fib_index =
 	    vnet_buffer (b[0])->sw_if_index[VLIB_TX] != ~0 ?
@@ -1569,6 +1573,7 @@ ip6_local_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 
 	  /* Drop packets from unroutable hosts. */
 	  /* If this is a neighbor solicitation (ICMP), skip source RPF check */
+	  /*
 	  u8 unroutable = error == IP6_ERROR_UNKNOWN_PROTOCOL
 	    && type != IP_BUILTIN_PROTOCOL_ICMP
 	    && !ip6_address_is_link_local_unicast (&ip->src_address);
@@ -1579,6 +1584,7 @@ ip6_local_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 				       ip) ? IP6_ERROR_SRC_LOOKUP_MISS :
 		error;
 	    }
+	    */
 
 	  vnet_buffer (b[0])->ip.fib_index =
 	    vnet_buffer (b[0])->sw_if_index[VLIB_TX] != ~0 ?
