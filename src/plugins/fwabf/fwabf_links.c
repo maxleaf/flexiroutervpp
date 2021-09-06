@@ -39,7 +39,7 @@
  * matches the policy classification. If there is match, it will choose
  * interface for packet forwarding by policy label.
  */
-typedef struct fwabf_sw_interface_t_
+typedef struct fwabf_link_t
 {
   /**
    * Linkage into the FIB graph
@@ -79,7 +79,12 @@ typedef struct fwabf_sw_interface_t_
    */
   fwabf_label_t fwlabel;
 
-} fwabf_sw_interface_t;
+  /*
+   * The quality (loss * delay * jitter).  It is used for FlexiWAN QBR feature (Quality Based Routing).
+   */
+  fwabf_quality_t quality;
+
+} fwabf_link_t;
 
 
 /**
@@ -88,7 +93,10 @@ typedef struct fwabf_sw_interface_t_
  */
 typedef struct fwabf_label_data_t_
 {
-  u32* interfaces;
+  /*
+   * The index of vnet_sw_interface_t interface served by this object.
+   */
+  u32  sw_if_index;
   u32  counter_hits;
   u32  counter_misses;
   u32  counter_enforced_hits;
@@ -101,10 +109,10 @@ typedef struct fwabf_label_data_t_
 fib_node_type_t fwabf_link_fib_node_type;
 
 /**
- * Database of fwabf_sw_interface_t objects. Vector.
+ * Database of fwabf_link_t objects. Vector.
  * sw_if_index is index in this array. The vector is never shrinks.
  */
-static fwabf_sw_interface_t* fwabf_links = NULL;
+static fwabf_link_t* fwabf_links = NULL;
 
 /**
  * Map of labels to fwabf_sw_interfaces.
@@ -115,8 +123,8 @@ static fwabf_label_data_t* fwabf_labels = NULL;
 /**
  * Map of adjacencies to labels.
  * Adjacencies are represented by indexes (as all other object in vpp).
- * Adjacencies are referenced by DPO-s kept by fwabf_sw_interface_t objects.
- * As any fwabf_sw_interface_t object stands for one tunnel or WAN interface,
+ * Adjacencies are referenced by DPO-s kept by fwabf_link_t objects.
+ * As any fwabf_link_t object stands for one tunnel or WAN interface,
  * and tunnel / WAN interafce might have one label only, relation between
  * adjacencies and labels are 1:1.
  * As adjacencies are identified by interfaces and VLIB graph nodes that use
@@ -186,9 +194,8 @@ extern vlib_node_registration_t fwabf_ip6_node;
 /*
  * Forward declarations
  */
-static void fwabf_link_refresh_dpo(fwabf_sw_interface_t* link);
-static fwabf_sw_interface_t* fwabf_links_find_link(u32 sw_if_index);
-static dpo_id_t fwabf_links_get_labeled_dpo (fwabf_label_t fwlabel);
+static void fwabf_link_refresh_dpo(fwabf_link_t* link);
+static fwabf_link_t* fwabf_links_find_link(u32 sw_if_index);
 static void fwabf_default_route_init();
 static void fwabf_default_route_refresh_dpo(fib_protocol_t proto);
 
@@ -199,7 +206,7 @@ u32 fwabf_links_add_interface (
                         const fwabf_label_t     fwlabel,
                         const fib_route_path_t* rpath)
 {
-  fwabf_sw_interface_t* link;
+  fwabf_link_t*         link;
   u32                   old_len;
   dpo_id_t              dpo_invalid = DPO_INVALID;
 
@@ -211,7 +218,7 @@ u32 fwabf_links_add_interface (
     }
 
   /*
-   * Allocate new fwabf_sw_interface_t and new label only if there is no entry yet.
+   * Allocate new fwabf_link_t and new label only if there is no entry yet.
    * Otherwise reuse existing one. Pool never shrinks.
    */
   if (sw_if_index >= vec_len(fwabf_links))
@@ -238,10 +245,10 @@ u32 fwabf_links_add_interface (
    * Labels are preallocated on bootup. No need to allocate now.
    * Just go and update label>->interface mapping.
    */
-  vec_add1 (fwabf_labels[fwlabel].interfaces, sw_if_index);
+  fwabf_labels[fwlabel].sw_if_index = sw_if_index;
 
   /*
-   * Initialize new fwabf_sw_interface_t now.
+   * Initialize new fwabf_link_t now.
    */
 
   link->fwlabel     = fwlabel;
@@ -285,9 +292,8 @@ u32 fwabf_links_add_interface (
 
 u32 fwabf_links_del_interface (const u32 sw_if_index)
 {
-  fwabf_sw_interface_t* link;
+  fwabf_link_t*         link;
   fwabf_label_t         fwlabel;
-  u32                   index;
 
   if (FWABF_SW_INTERFACE_IS_INVALID(sw_if_index))
     {
@@ -304,9 +310,7 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
   /*
    * Remove label->interface mapping.
    */
-  index = vec_search (fwabf_labels[fwlabel].interfaces, sw_if_index);
-  ASSERT (index !=INDEX_INVALID);
-  vec_del1 (fwabf_labels[fwlabel].interfaces, index);
+  fwabf_labels[fwlabel].sw_if_index = INDEX_INVALID;
 
   /*
    * Remove adjacency->label mapping.
@@ -346,9 +350,6 @@ dpo_id_t fwabf_links_get_dpo (
   const dpo_id_t* lookup_dpo;
   dpo_id_t        invalid_dpo = DPO_INVALID;
   u32             i;
-  u32*            default_route_adjacencies = (proto == DPO_PROTO_IP4) ?
-                                      fwabf_default_route.dr4.adj_index_map :
-                                      fwabf_default_route.dr6.adj_index_map;
 
   /*
    * lb - is DPO of Load Balance type. It is the object returned by the FIB
@@ -378,33 +379,11 @@ dpo_id_t fwabf_links_get_dpo (
        * DPO exists in adjacency-to-label map and the map brings the label.
        * Note the adjacency-to-label map is updated based on labeled DPO-s,
        * so if lookup DPO has label in the map, it is same DPO that we labeled.
-       * Note labeled DPO-s are kept in correspondent fwabf_sw_interface_t object
+       * Note labeled DPO-s are kept in correspondent fwabf_link_t object
        * and are managed by FWABF module. See fwabf_link_refresh_dpo()
        * for details.
        */
-
-      /*
-       * If lookup DPO stands for default route (prefix 0.0.0.0/0),
-       * do not intersect it with labeled DPO-s, use labeled DPO directly.
-       * In this way we enforce packets designated for open internet to go into
-       * labeled tunnel/WAN interface. Remember at this point we deal only with
-       * packets that matched policy rules. For example, if user configured
-       * policy to redirect Facebook traffic into tunnel, we will do this even
-       * if FIB prefers to use default route for it. Because this is what user
-       * wants us to do. Note we can't guarantee that the traffic will reach
-       * Facebook servers, as tunnel might end up with non routeable device.
-       * User should take responsibilty and configure routing on remote end of
-       * tunnel to get the Facebook traffic where it wants.
-       */
       ASSERT(lookup_dpo->dpoi_index < FWABF_MAX_ADJ_INDEX);
-      if (default_route_adjacencies[lookup_dpo->dpoi_index] == 1)
-        {
-          return fwabf_links_get_labeled_dpo(fwlabel);
-        }
-
-      /*
-       * Now go and intersect lookup DPO with labeled DPO.
-       */
       if (PREDICT_TRUE(adj_indexes_to_reachable_labels[lookup_dpo->dpoi_index] == fwlabel))
         {
           fwabf_labels[fwlabel].counter_hits++;
@@ -421,10 +400,6 @@ dpo_id_t fwabf_links_get_dpo (
         {
           lookup_dpo = load_balance_get_fwd_bucket (lb, i);
           ASSERT(lookup_dpo->dpoi_index < FWABF_MAX_ADJ_INDEX);
-          if (default_route_adjacencies[lookup_dpo->dpoi_index] == 1)
-            {
-              return fwabf_links_get_labeled_dpo(fwlabel);
-            }
           if (PREDICT_TRUE(adj_indexes_to_reachable_labels[lookup_dpo->dpoi_index] == fwlabel))
             {
               fwabf_labels[fwlabel].counter_hits++;
@@ -464,38 +439,49 @@ int fwabf_links_is_dpo_labeled_or_default_route (
   return 0;  /*No even single labeled DPO was found*/
 }
 
-/**
- * Fetches DPO of the interface with provided label (either tunnel or WAN).
- * If there are few interfaces with same label - use the first alive.
- *
- * @param fwlabel       FWABF label.
- * @return DPO of alive tunnel/WAN inteface or DPO_INVALID if not found.
- */
-static dpo_id_t fwabf_links_get_labeled_dpo (fwabf_label_t fwlabel)
+int fwabf_links_is_dpo_default_route (
+                            const load_balance_t* lb,
+                            dpo_proto_t           proto)
+{
+  dpo_id_t lookup_dpo;
+  u32*     default_route_adjacencies = (proto == DPO_PROTO_IP4) ?
+                            fwabf_default_route.dr4.adj_index_map :
+                            fwabf_default_route.dr6.adj_index_map;
+
+  for (u32 i = 0; i < lb->lb_n_buckets; i++)
+  {
+    lookup_dpo = *(load_balance_get_bucket_i (lb, i));
+    if (lookup_dpo.dpoi_type != DPO_ADJACENCY) /*usage of dpoi_index below dependens on type, we use DPO_ADJACENCY for links, so dpoi_index stands for adjacency*/
+      return 0;   /*The routes takes us to local machine probably (dpoi_type is DPO_RECEIVE)*/
+
+    ASSERT(lookup_dpo.dpoi_index < FWABF_MAX_ADJ_INDEX);
+    if (default_route_adjacencies[lookup_dpo.dpoi_index] == 1)
+        return 1;
+  }
+  return 0;  /*No even single labeled DPO was found*/
+}
+
+dpo_id_t fwabf_links_get_labeled_dpo (fwabf_label_t fwlabel)
 {
   dpo_id_t              invalid_dpo = DPO_INVALID;
-  u32*                  sw_if_index;
   fwabf_label_data_t*   label;
-  fwabf_sw_interface_t* link;
+  fwabf_link_t*         link;
 
   ASSERT(fwlabel <= FWABF_MAX_LABEL);
   label = &fwabf_labels[fwlabel];
 
-  vec_foreach(sw_if_index, label->interfaces)
+  link = &fwabf_links[label->sw_if_index];
+  if (PREDICT_TRUE(link->dpo.dpoi_type == DPO_ADJACENCY && link->quality.loss < 100))
     {
-      link = &fwabf_links[*sw_if_index];
-      if (PREDICT_TRUE(link->dpo.dpoi_type == DPO_ADJACENCY))
-        {
-          label->counter_enforced_hits++;
-          return link->dpo;
-        }
+      label->counter_enforced_hits++;
+      return link->dpo;
     }
 
   label->counter_enforced_misses++;
   return invalid_dpo;
 }
 
-static fwabf_sw_interface_t * fwabf_links_find_link(u32 sw_if_index)
+static fwabf_link_t * fwabf_links_find_link(u32 sw_if_index)
 {
   if (FWABF_SW_INTERFACE_IS_INVALID(sw_if_index))
     {
@@ -610,15 +596,93 @@ VLIB_CLI_COMMAND (fwabf_link_cmd_node, static) = {
 };
 /* *INDENT-ON* */
 
+static
+clib_error_t * fwabf_quality_cmd (
+                  vlib_main_t * vm, unformat_input_t * input, vlib_cli_command_t * cmd)
+{
+  vnet_main_t*     vnm  = vnet_get_main ();
+  fwabf_link_t*    link;
+  u32  sw_if_index = INDEX_INVALID;
+  u32  loss        = ~0;
+  u32  delay       = ~0;
+  u32  jitter      = ~0;
+
+  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (input, "sw_if_index %d", &sw_if_index))
+        ;
+      else if (unformat (input, "%U",
+                         unformat_vnet_sw_interface, vnm, &sw_if_index))
+        ;
+      else if (unformat (input, "loss %u", &loss))
+        ;
+      else if (unformat (input, "delay %u", &delay))
+	    ;
+      else if (unformat (input, "jitter %u", &jitter))
+	    ;
+      else
+        {
+          return (clib_error_return (0, "unknown input '%U'",
+                                    format_unformat_error, input));
+        }
+    }
+
+  if (sw_if_index == INDEX_INVALID)
+    {
+      vlib_cli_output (vm, "specify interface of link");
+      return (NULL);
+    }
+
+  link = fwabf_links_find_link(sw_if_index);
+  if (link == NULL)
+    {
+      vlib_cli_output (vm, "link does not exist (sw_if_index=%d)", sw_if_index);
+      return (NULL);
+    }
+
+  if (loss != ~0)
+    link->quality.loss = loss;
+  if (delay != ~0)
+    link->quality.delay = delay;
+  if (jitter != ~0)
+    link->quality.jitter = jitter;
+
+  /* We ride on Quality-Based-Routing implementation to enable manual set of
+     UP/DOWN state of link for Ordered/Random Policies. This is instead of
+     automatic FIB based monitoring. We use LOSS quality parameter to indicate
+     UP/DOWN state.
+  */
+  if (loss != ~0)
+  {
+    u32 reachable_label = (loss < 100) ? link->fwlabel : FWABF_INVALID_LABEL;
+    adj_indexes_to_reachable_labels[link->dpo.dpoi_index] = reachable_label;
+  }
+
+  return (NULL);
+}
+
+/* *INDENT-OFF* */
+/**
+ * Set link quality details.
+ */
+VLIB_CLI_COMMAND (fwabf_quality_cmd_node, static) = {
+  .path = "fwabf quality",
+  .function = fwabf_quality_cmd,
+  .short_help = "fwabf quality [sw_if_index <sw_if_index> | <if name>] loss <0..100> delay <value> jitter <value>",
+  .is_mp_safe = 1,
+};
+/* *INDENT-ON* */
+
 static u8 *
 format_fwabf_link (u8 * s, va_list * args)
 {
-  fwabf_sw_interface_t* link = va_arg (*args, fwabf_sw_interface_t*);
-  vnet_main_t*          vnm = va_arg (*args, vnet_main_t*);
+  fwabf_link_t* link = va_arg (*args, fwabf_link_t*);
+  vnet_main_t*  vnm  = va_arg (*args, vnet_main_t*);
 
-  s = format (s, " %U: sw_if_index=%d, label=%d, adj=%d\n",
+  s = format (s, " %U: sw_if_index=%d, label=%d, adj=%d, loss=%u, delay=%u, jitter=%u\n",
 	                  format_vnet_sw_if_index_name, vnm, link->sw_if_index,
-                    link->sw_if_index, link->fwlabel, link->dpo.dpoi_index);
+                    link->sw_if_index, link->fwlabel, link->dpo.dpoi_index,
+                    link->quality.loss, link->quality.delay, link->quality.jitter);
   s = fib_path_list_format(link->pathlist_index, s);
   return (s);
 }
@@ -629,7 +693,7 @@ fwabf_link_show_cmd (
 {
   u32          sw_if_index = INDEX_INVALID;
   vnet_main_t* vnm         = vnet_get_main ();
-  fwabf_sw_interface_t * link;
+  fwabf_link_t* link;
 
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
@@ -679,11 +743,10 @@ static clib_error_t *
 fwabf_link_show_labels_cmd (
         vlib_main_t * vm, unformat_input_t * input, vlib_cli_command_t * cmd)
 {
-  u32                   verbose = 0;
-  vnet_main_t*          vnm     = vnet_get_main();
-  fwabf_sw_interface_t* link;
-  u32                   i;
-  u32*                  sw_if_index;
+  u32           verbose = 0;
+  vnet_main_t*  vnm     = vnet_get_main();
+  fwabf_link_t* link;
+  u32           i;
 
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
@@ -696,25 +759,23 @@ fwabf_link_show_labels_cmd (
 
   for (i=0; i<FWABF_MAX_LABEL; i++)
     {
-      if (vec_len(fwabf_labels[i].interfaces) == 0)
+      if (fwabf_labels[i].sw_if_index == INDEX_INVALID)
         continue;
 
       vlib_cli_output(vm, "%d (hits:%d misses:%d enforced_hits:%d enforced_misses:%d):",
           i, fwabf_labels[i].counter_hits, fwabf_labels[i].counter_misses,
           fwabf_labels[i].counter_enforced_hits, fwabf_labels[i].counter_enforced_misses);
-      vec_foreach (sw_if_index, fwabf_labels[i].interfaces)
+
+      link = &fwabf_links[fwabf_labels[i].sw_if_index];
+      if (verbose)
         {
-          link = &fwabf_links[*sw_if_index];
-          if (verbose)
-            {
-              vlib_cli_output(vm, "  %U", format_fwabf_link, link, vnm);
-            }
-          else
-            {
-              vlib_cli_output(vm, "  %U (sw_if_index=%d)",
-                format_vnet_sw_if_index_name, vnm, link->sw_if_index,
-                link->sw_if_index);
-            }
+          vlib_cli_output(vm, "  %U", format_fwabf_link, link, vnm);
+        }
+      else
+        {
+          vlib_cli_output(vm, "  %U (sw_if_index=%d)",
+            format_vnet_sw_if_index_name, vnm, link->sw_if_index,
+            link->sw_if_index);
         }
     }
   return (NULL);
@@ -731,13 +792,13 @@ VLIB_CLI_COMMAND (fwabf_link_show_labels_cmd_node, static) = {
 /**
  * Updates forwarding info of the pathlist, so the pathlist will resolve
  * to the right DPO to be used for forwarding according this pathlist,
- * saves this DPO into the fwabf_sw_interface_t object for fast use
+ * saves this DPO into the fwabf_link_t object for fast use
  * and attaches the FWABF node to it. The attachment is called 'stack on dpo'
  * in terms of vpp. It creates edge in vlib graph from FWABF node to the node
  * bound to the forwarding DPO, e.g. ip4-rewrite.
  */
 static
-void fwabf_link_refresh_dpo(fwabf_sw_interface_t * link)
+void fwabf_link_refresh_dpo(fwabf_link_t * link)
 {
   dpo_id_t                 via_dpo = DPO_INVALID;
   fib_forward_chain_type_t fwd_chain_type;
@@ -794,14 +855,14 @@ void fwabf_link_refresh_dpo(fwabf_sw_interface_t * link)
  * See virtual function table fwabf_sw_interface_vft below.
  * It is used when FIB framework back walks on graph to inform nodes of
  * forwarding information update.
- * It gets the FWABF Link (fwabf_sw_interface_t object) out of embedded into it
+ * It gets the FWABF Link (fwabf_link_t object) out of embedded into it
  * fib_node_t object.
  */
 static
-fwabf_sw_interface_t * fwabf_sw_interface_get_from_node (fib_node_t * node)
+fwabf_link_t * fwabf_sw_interface_get_from_node (fib_node_t * node)
 {
-  return ((fwabf_sw_interface_t *)
-    (((char *) node) - STRUCT_OFFSET_OF (fwabf_sw_interface_t, fnode)));
+  return ((fwabf_link_t *)
+    (((char *) node) - STRUCT_OFFSET_OF (fwabf_link_t, fnode)));
 }
 
 /**
@@ -810,12 +871,12 @@ fwabf_sw_interface_t * fwabf_sw_interface_get_from_node (fib_node_t * node)
  * It is used when FIB framework back walks on graph to inform nodes of
  * forwarding information update.
  * It returns the fib_node_t object that is embedded into the FWABF Link
- * (fwabf_sw_interface_t object) by index of link in pool of links.
+ * (fwabf_link_t object) by index of link in pool of links.
  */
 static
 fib_node_t * fwabf_sw_interface_fnv_get_node (fib_node_index_t index)
 {
-  fwabf_sw_interface_t* link;
+  fwabf_link_t* link;
   ASSERT((FWABF_SW_INTERFACE_IS_VALID(index)));
   link = &fwabf_links[index];
   return (&(link->fnode));
@@ -835,7 +896,7 @@ void fwabf_sw_interface_fnv_last_lock_gone (fib_node_t * node)
 }
 
 /*
- * A back walk has reached this fwabf_sw_interface_t instance.
+ * A back walk has reached this fwabf_link_t instance.
  * That means forwarding information got updated. Most probable due to tunnel /
  * route removal/adding or due to change in NIC state (UP/DOWN).
  * We have to update our DPO with the currently available DPO.
@@ -845,7 +906,7 @@ static
 fib_node_back_walk_rc_t fwabf_sw_interface_fnv_back_walk (
                             fib_node_t * node, fib_node_back_walk_ctx_t * ctx)
 {
-  fwabf_sw_interface_t *link = fwabf_sw_interface_get_from_node(node);
+  fwabf_link_t *link = fwabf_sw_interface_get_from_node(node);
 
   /*
    * Poor multi-thread protection:
@@ -1070,7 +1131,7 @@ clib_error_t * fwabf_links_init (vlib_main_t * vm)
   for (u32 i = 0; i < vec_len(fwabf_labels); i++)
   {
     memset(&fwabf_labels[i], 0, sizeof(fwabf_labels[i]));
-    fwabf_labels[i].interfaces = vec_new(u32, 0);
+    fwabf_labels[i].sw_if_index = INDEX_INVALID;
   }
 
   /*
