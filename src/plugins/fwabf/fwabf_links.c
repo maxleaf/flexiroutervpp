@@ -196,7 +196,6 @@ extern vlib_node_registration_t fwabf_ip6_node;
  */
 static void fwabf_link_refresh_dpo(fwabf_link_t* link);
 static fwabf_link_t* fwabf_links_find_link(u32 sw_if_index);
-static dpo_id_t fwabf_links_get_labeled_dpo (fwabf_label_t fwlabel);
 static void fwabf_default_route_init();
 static void fwabf_default_route_refresh_dpo(fib_protocol_t proto);
 
@@ -366,9 +365,6 @@ dpo_id_t fwabf_links_get_dpo (
   const dpo_id_t* lookup_dpo;
   dpo_id_t        invalid_dpo = DPO_INVALID;
   u32             i;
-  u32*            default_route_adjacencies = (proto == DPO_PROTO_IP4) ?
-                                      fwabf_default_route.dr4.adj_index_map :
-                                      fwabf_default_route.dr6.adj_index_map;
 
   /*
    * lb - is DPO of Load Balance type. It is the object returned by the FIB
@@ -402,29 +398,7 @@ dpo_id_t fwabf_links_get_dpo (
        * and are managed by FWABF module. See fwabf_link_refresh_dpo()
        * for details.
        */
-
-      /*
-       * If lookup DPO stands for default route (prefix 0.0.0.0/0),
-       * do not intersect it with labeled DPO-s, use labeled DPO directly.
-       * In this way we enforce packets designated for open internet to go into
-       * labeled tunnel/WAN interface. Remember at this point we deal only with
-       * packets that matched policy rules. For example, if user configured
-       * policy to redirect Facebook traffic into tunnel, we will do this even
-       * if FIB prefers to use default route for it. Because this is what user
-       * wants us to do. Note we can't guarantee that the traffic will reach
-       * Facebook servers, as tunnel might end up with non routeable device.
-       * User should take responsibilty and configure routing on remote end of
-       * tunnel to get the Facebook traffic where it wants.
-       */
       ASSERT(lookup_dpo->dpoi_index < FWABF_MAX_ADJ_INDEX);
-      if (default_route_adjacencies[lookup_dpo->dpoi_index] == 1)
-        {
-          return fwabf_links_get_labeled_dpo(fwlabel);
-        }
-
-      /*
-       * Now go and intersect lookup DPO with labeled DPO.
-       */
       if (PREDICT_TRUE(adj_indexes_to_reachable_labels[lookup_dpo->dpoi_index] == fwlabel))
         {
           fwabf_labels[fwlabel].counter_hits++;
@@ -441,10 +415,6 @@ dpo_id_t fwabf_links_get_dpo (
         {
           lookup_dpo = load_balance_get_fwd_bucket (lb, i);
           ASSERT(lookup_dpo->dpoi_index < FWABF_MAX_ADJ_INDEX);
-          if (default_route_adjacencies[lookup_dpo->dpoi_index] == 1)
-            {
-              return fwabf_links_get_labeled_dpo(fwlabel);
-            }
           if (PREDICT_TRUE(adj_indexes_to_reachable_labels[lookup_dpo->dpoi_index] == fwlabel))
             {
               fwabf_labels[fwlabel].counter_hits++;
@@ -488,13 +458,29 @@ int fwabf_links_is_dpo_labeled_or_default_route (
   return 0;  /*No even single labeled DPO was found*/
 }
 
-/**
- * Fetches DPO of the interface with provided label (either tunnel or WAN).
- *
- * @param fwlabel       FWABF label.
- * @return DPO of alive tunnel/WAN inteface or DPO_INVALID if not found.
- */
-static dpo_id_t fwabf_links_get_labeled_dpo (fwabf_label_t fwlabel)
+int fwabf_links_is_dpo_default_route (
+                            const load_balance_t* lb,
+                            dpo_proto_t           proto)
+{
+  dpo_id_t lookup_dpo;
+  u32*     default_route_adjacencies = (proto == DPO_PROTO_IP4) ?
+                            fwabf_default_route.dr4.adj_index_map :
+                            fwabf_default_route.dr6.adj_index_map;
+
+  for (u32 i = 0; i < lb->lb_n_buckets; i++)
+  {
+    lookup_dpo = *(load_balance_get_bucket_i (lb, i));
+    if (lookup_dpo.dpoi_type != DPO_ADJACENCY) /*usage of dpoi_index below dependens on type, we use DPO_ADJACENCY for links, so dpoi_index stands for adjacency*/
+      return 0;   /*The routes takes us to local machine probably (dpoi_type is DPO_RECEIVE)*/
+
+    ASSERT(lookup_dpo.dpoi_index < FWABF_MAX_ADJ_INDEX);
+    if (default_route_adjacencies[lookup_dpo.dpoi_index] == 1)
+        return 1;
+  }
+  return 0;  /*No even single labeled DPO was found*/
+}
+
+dpo_id_t fwabf_links_get_labeled_dpo (fwabf_label_t fwlabel)
 {
   dpo_id_t              invalid_dpo = DPO_INVALID;
   fwabf_label_data_t*   label;

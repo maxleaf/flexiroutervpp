@@ -83,8 +83,9 @@ typedef struct fwabf_policy_action_t_
     /*
      * Below are internally used fields.
      */
-    u32                        n_link_groups_minus_1;
-    u32                        n_link_groups_pow2_mask;  /*0xFF...*/
+    u32  n_link_groups_minus_1;
+    u32  n_link_groups_pow2_mask;  /*0xFF...*/
+
 } fwabf_policy_action_t;
 
 typedef struct fwabf_policy_t_
@@ -117,6 +118,7 @@ typedef struct fwabf_policy_t_
   u32 counter_applied;      /*Policy applied successfully*/
   u32 counter_fallback;     /*Policy failed so fallback to default routing*/
   u32 counter_dropped;      /*Policy failed so drop the packet*/
+  u32 counter_default_route; /*Default Route Action was applied*/
 
 } fwabf_policy_t;
 
@@ -131,32 +133,17 @@ extern fwabf_policy_t *fwabf_policy_get (index_t index);
  * @param index     index of fwabf_policy_t in pool.
  * @param b         the vlib buffer to be forwarded.
  * @param lb        the DPO of Load Balancing type retrieved by FIB lookup.
+ * @param proto     the IPv4/IPv6 of lb DPO
  * @param dpo       result of the function: the DPO to be used for forwarding.
  *                  If return value is not 0, this parameter has no effect.
  * @return 1 if the policy DPO provided within 'dpo' parameter should be used for forwarding,
  *         0 otherwise which effectively means the FIB lookup result DPO should be used.
  */
-extern u32 fwabf_policy_get_dpo_ip4 (
+extern u32 fwabf_policy_get_dpo (
                                 index_t                 index,
                                 vlib_buffer_t*          b,
                                 const load_balance_t*   lb,
-                                dpo_id_t*               dpo);
-
-/**
- * Get DPO to be used for packet forwarding according to policy.
- *
- * @param index     index of fwabf_policy_t in pool.
- * @param b         the vlib buffer to be forwarded.
- * @param lb        the DPO of Load Balancing type retrieved by FIB lookup.
- * @param dpo       result of the function: the DPO to be used for forwarding.
- *                  If return value is not 0, this parameter has no effect.
- * @return 1 if the policy DPO provided within 'dpo' parameter should be used for forwarding,
- *         0 otherwise which effectively means the FIB lookup result DPO should be used.
- */
-extern u32 fwabf_policy_get_dpo_ip6 (
-                                index_t                 index,
-                                vlib_buffer_t*          b,
-                                const load_balance_t*   lb,
+                                dpo_proto_t             proto,
                                 dpo_id_t*               dpo);
 
 /**

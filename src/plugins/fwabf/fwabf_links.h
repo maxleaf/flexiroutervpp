@@ -95,6 +95,15 @@ extern dpo_id_t fwabf_links_get_dpo (
                         dpo_proto_t           proto);
 
 /**
+ * Retrieves DPO of the WAN/tunnel interface labeled with 'fwlabel'.
+ *
+ * @param fwlabel   the label of the WAN/tunnel.
+ * @return DPO to be used for forwarding or DPO_INVALID if labeled WAN/tunnel is down.
+ */
+extern dpo_id_t fwabf_links_get_labeled_dpo (
+                        fwabf_label_t         fwlabel);
+
+/**
  * Checks if DPO-s retrieved by FIB lookup belong to labeled tunnels, labeled
  * DIA interfaces or default route interface. This is either reachable currently
  * or unreachable.
@@ -108,6 +117,19 @@ extern dpo_id_t fwabf_links_get_dpo (
  * @return 1 if DPO is labeled or belongs to default route, 0 otherwise.
  */
 extern int fwabf_links_is_dpo_labeled_or_default_route (
+                            const load_balance_t* lb,
+                            dpo_proto_t           proto);
+
+/**
+ * Checks if DPO-s retrieved by FIB lookup belong to default route interface.
+ *
+ * @param lb        the result of FIB lookup. It is DPO of Load Balance type.
+ *                  It can't be used for forwarding. It is used to hold one or
+ *                  more children DPO-s that can be used for forwarding.
+ * @param proto     DPO_PROTO_IP4/DPO_PROTO_IP6.
+ * @return 1 if DPO belongs to default route, 0 otherwise.
+ */
+extern int fwabf_links_is_dpo_default_route (
                             const load_balance_t* lb,
                             dpo_proto_t           proto);
 

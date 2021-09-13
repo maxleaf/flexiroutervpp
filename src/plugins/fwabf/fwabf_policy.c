@@ -87,8 +87,47 @@ static fwabf_policy_t *abf_policy_pool;
   */
 static fwabf_policy_t *abf_policy_db;
 
+/**
+ * The action to be taken when FIB LOOKUP brings default route.
+ * If this action is not set, policy will use the policy specific action.
+ * The default route action is used for feature, where all internet traffic
+ * should be proxied through another remote flexiEdge device. To do that
+ * the local device should use default policy with labels of tunnels to the remote
+ * device, and the remote device should be configured with default route action
+ * with DIA labels. So on the local device the internet traffic will be pushed
+ * into tunnel and on remote device it will be pushed into WAN interface.
+ * Note same policy can be configured on both the local and the remote devices,
+ * so proper tunnel will be used for internet traffic in both upstream and
+ * downstream directions. The default route action should be set on the remote
+ * device only.
+ */
+static fwabf_policy_action_t default_route_action;
+
+#define FWABF_POLICY_ACTION_IS_ACTIVE(_dra) (_dra.link_groups!=NULL)
+
+
+
 #define FWABF_GET_INDEX_BY_FLOWHASH(_flowhash, _vec_len_pow2_mask, _vec_len_minus_1, _res) \
       (((_res = (_flowhash & _vec_len_pow2_mask)) <= _vec_len_minus_1) ? _res : (_res & _vec_len_minus_1))
+
+/*
+ * The policy DPO is the one that is produced by intersection of FIB lookup DPO-s
+ * and the policy labeled DPO-s. If there is no intersection, than the lookup
+ * DPO is used or packet is dropped, depending on the policy action fallback.
+ * The exception of this algorithm happens, when FIB lookup brings DPO of
+ * the default route (prefix 0.0.0.0/0). In this case we use policy labeled DPO
+ * directly. In this way we enforce packets designated for open internet to go
+ * into labeled tunnel/WAN interface. For example, if user configured
+ * policy to redirect Facebook traffic into tunnel, we will do this even
+ * if FIB prefers to use default route for it. Because this is what user
+ * wants us to do.
+ */
+#define FWABF_POLICY_GET_DPO(_fwlabel, _lb, _dpo_proto, _is_default_route_lb) \
+    (_is_default_route_lb) ? \
+    fwabf_links_get_labeled_dpo (_fwlabel) : \
+    fwabf_links_get_dpo (_fwlabel, _lb, _dpo_proto)
+
+static void fwabf_policy_action_delete (fwabf_policy_action_t* action);
 
 fwabf_policy_t *
 fwabf_policy_get (u32 index)
@@ -127,7 +166,6 @@ u32
 fwabf_policy_add (u32 policy_id, u32 acl_index, fwabf_policy_action_t * action)
 {
   fwabf_policy_t*            p;
-  fwabf_policy_link_group_t* group;
   u32 pi;
 
   pi = fwabf_policy_find (policy_id);
@@ -144,20 +182,13 @@ fwabf_policy_add (u32 policy_id, u32 acl_index, fwabf_policy_action_t * action)
   p->id  = policy_id;
   p->action = *action;
 
-  p->action.n_link_groups_minus_1   = vec_len(action->link_groups) - 1;
-  p->action.n_link_groups_pow2_mask = (vec_len(action->link_groups) <= 0xF) ? 0xF : 0xFF; /* More than 255 groups is impractical*/
-  vec_foreach (group, p->action.link_groups)
-    {
-      group->n_links_minus_1   = vec_len(group->links) - 1;
-      group->n_links_pow2_mask = (vec_len(group->links) <= 0xF) ? 0xF : 0xFF; /* Maximum number of labels is 255 */
-    }
-
   p->refCounter = 0;
 
   p->counter_matched  = 0;
   p->counter_applied  = 0;
   p->counter_fallback = 0;
   p->counter_dropped  = 0;
+  p->counter_default_route = 0;
 
   /*
     * add this new policy to the DB
@@ -169,8 +200,7 @@ fwabf_policy_add (u32 policy_id, u32 acl_index, fwabf_policy_action_t * action)
 int
 fwabf_policy_delete (u32 policy_id)
 {
-  fwabf_policy_link_group_t* group;
-  fwabf_policy_link_group_t* link_groups;
+  fwabf_policy_action_t      action;
   fwabf_policy_t*            p;
   u32                        pi;
 
@@ -186,22 +216,29 @@ fwabf_policy_delete (u32 policy_id)
    * Reset link group ASAP to prevent usage of stale policy
    * and ensure no DROP if the stale policy is used.
    */
-  link_groups           = p->action.link_groups;
-  p->action.link_groups = 0;
+  action                = p->action;
+  p->action.link_groups = NULL;
   p->action.fallback    = FWABF_FALLBACK_DEFAULT_ROUTE;
 
   /*
    * Now free resources.
    */
-  vec_foreach (group, link_groups)
-    {
-      vec_free (group->links);
-    }
-  vec_free (link_groups);
+  fwabf_policy_action_delete(&action);
 
   hash_unset (abf_policy_db, policy_id);
   pool_put (abf_policy_pool, p);
   return (0);
+}
+
+static void fwabf_policy_action_delete (fwabf_policy_action_t* action)
+{
+  fwabf_policy_link_group_t* group;
+
+  vec_foreach (group, action->link_groups)
+    {
+      vec_free (group->links);
+    }
+  vec_free (action->link_groups);
 }
 
 /**
@@ -264,21 +301,24 @@ fwabf_policy_delete (u32 policy_id)
  *    the failed links. The active links are still able to provide load balance.
  *    We are OK with that for now (April 2020).
  *
- * @param index     index of fwabf_policy_t in pool.
+ * @param p         the fwabf_policy_t object.
+ * @param action    the fwabf_policy_t action - link labels to be used for forwarding.
  * @param b         the vlib buffer to be forwarded.
  * @param lb        the DPO of Load Balance type retrieved by FIB lookup.
+ * @param is_default_route_lb  if 1 the FIB lookup brought DPO that point to default route
  * @param dpo       result of the function: the DPO to be used for forwarding.
  *                  If return value is not 0, this parameter has no effect.
  * @return 1 if the policy DPO provided within 'dpo' parameter should be used for forwarding,
  *         0 otherwise which effectively means the FIB lookup result DPO should be used.
  */
-inline u32 fwabf_policy_get_dpo_ip4 (
-                                index_t                 index,
+static inline u32 fwabf_policy_get_dpo_ip4 (
+                                fwabf_policy_t*         p,
+                                fwabf_policy_action_t*  action,
                                 vlib_buffer_t*          b,
                                 const load_balance_t*   lb,
+                                u32                     is_default_route_lb,
                                 dpo_id_t*               dpo)
 {
-  fwabf_policy_t*            p = fwabf_policy_get (index);
   fwabf_policy_link_group_t* group;
   fwabf_label_t*             pfwlabel;
   fwabf_label_t              fwlabel;
@@ -286,13 +326,11 @@ inline u32 fwabf_policy_get_dpo_ip4 (
   u32                        flow_hash = 0;
   ip4_header_t*              ip = vlib_buffer_get_current (b);
 
-  p->counter_matched++;  /*This function is called on ACL lookup hit only*/
-
   /*
    * lb - is DPO of Load Balance type. It doesn't point to adjacency directly.
    * Instead it might point to one kinda "final" DPO or to multiple "mapped"
    * DPO-s. It points to final DPO if there is only single path to destination.
-   * IN this case no load balancing is possible.
+   * In this case no load balancing is possible.
    * It points to array of mapped DPO-s, if ECMP (Equal Cost MultiPath)
    * forwarding paths are available. Mapped DPO-s are linked to the final DPO-s
    * by the load_balance_get_fwd_bucket() function.
@@ -306,13 +344,13 @@ inline u32 fwabf_policy_get_dpo_ip4 (
    * Optimization is possible here, but it complicates code a lot,
    * so we decided not to implement it for now (April 2020).
    */
-  if (p->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(p->action.link_groups) > 1)
+  if (action->alg == FWABF_SELECTION_RANDOM  &&  vec_len(action->link_groups) > 1)
     {
       flow_hash = ip4_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
       i = FWABF_GET_INDEX_BY_FLOWHASH(
-                        flow_hash, p->action.n_link_groups_pow2_mask,
-                        p->action.n_link_groups_minus_1, i);
-      group = &p->action.link_groups[i];
+                        flow_hash, action->n_link_groups_pow2_mask,
+                        action->n_link_groups_minus_1, i);
+      group = &action->link_groups[i];
 
       /*
        * The randomly selected group might have multiple links/labels/interfaces.
@@ -325,7 +363,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
           i = FWABF_GET_INDEX_BY_FLOWHASH(
                 flow_hash, group->n_links_pow2_mask, group->n_links_minus_1, i);
           fwlabel = group->links[i];
-          *dpo    = fwabf_links_get_dpo (fwlabel, lb, DPO_PROTO_IP4);
+          *dpo    = FWABF_POLICY_GET_DPO(fwlabel, lb, DPO_PROTO_IP4, is_default_route_lb);
           if (dpo_id_is_valid (dpo))
             {
               p->counter_applied++;
@@ -340,21 +378,21 @@ inline u32 fwabf_policy_get_dpo_ip4 (
        */
       vec_foreach (pfwlabel, group->links)
         {
-          *dpo = fwabf_links_get_dpo (*pfwlabel, lb, DPO_PROTO_IP4);
+          *dpo = FWABF_POLICY_GET_DPO(*pfwlabel, lb, DPO_PROTO_IP4, is_default_route_lb);
           if (dpo_id_is_valid (dpo))
             {
               p->counter_applied++;
               return 1;
             }
         }
-    } /*if (p->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(p->action.link_groups) > 1)*/
+    } /*if (action->alg == FWABF_SELECTION_RANDOM  &&  vec_len(action->link_groups) > 1)*/
 
 
   /*
    * No random selection - just iterate over list of groups and use the first
    * one with valid DPO.
    */
-  vec_foreach (group, p->action.link_groups)
+  vec_foreach (group, action->link_groups)
     {
       /*
        * Take a care of random selection of link within selected group.
@@ -368,7 +406,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
             flow_hash = ip4_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
           }
           fwlabel = group->links[flow_hash & group->n_links_minus_1];
-          *dpo = fwabf_links_get_dpo (fwlabel, lb, DPO_PROTO_IP4);
+          *dpo    = FWABF_POLICY_GET_DPO(fwlabel, lb, DPO_PROTO_IP4, is_default_route_lb);
           if (dpo_id_is_valid (dpo))
             {
               p->counter_applied++;
@@ -377,7 +415,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
         }
       vec_foreach (pfwlabel, group->links)
         {
-          *dpo = fwabf_links_get_dpo (*pfwlabel, lb, DPO_PROTO_IP4);
+          *dpo = FWABF_POLICY_GET_DPO(*pfwlabel, lb, DPO_PROTO_IP4, is_default_route_lb);
           if (dpo_id_is_valid (dpo))
             {
               p->counter_applied++;
@@ -392,7 +430,7 @@ inline u32 fwabf_policy_get_dpo_ip4 (
    * to use DPO found by FIB lookup.
    * If fallback is to drop packets, return DPO_DROP.
    */
-  if (PREDICT_TRUE(p->action.fallback==FWABF_FALLBACK_DEFAULT_ROUTE))
+  if (PREDICT_TRUE(action->fallback==FWABF_FALLBACK_DEFAULT_ROUTE))
     {
       p->counter_fallback++;
       return 0;
@@ -405,29 +443,30 @@ inline u32 fwabf_policy_get_dpo_ip4 (
 /**
  * Get DPO to be used for packet forwarding according to policy.
  *
- * @param index     index of fwabf_policy_t in pool
+ * @param p         the fwabf_policy_t object.
+ * @param action    the fwabf_policy_t action - link labels to be used for forwarding.
  * @param b         the buffer to be forwarded
  * @param lb        the DPO of Load Balancing type retrieved by FIB lookup.
+ * @param is_default_route_lb  if 1 the FIB lookup brought DPO that point to default route
  * @param dpo       result of the function: the DPO to be used for forwarding.
  *                  If return value is not 0, this parameter has no effect.
  * @return 1 if the policy DPO provided within 'dpo' parameter should be used for forwarding,
  *         0 otherwise which effectively means the FIB lookup result DPO should be used.
  */
-inline u32 fwabf_policy_get_dpo_ip6 (
-                                index_t                 index,
+static inline u32 fwabf_policy_get_dpo_ip6 (
+                                fwabf_policy_t*         p,
+                                fwabf_policy_action_t*  action,
                                 vlib_buffer_t*          b,
                                 const load_balance_t*   lb,
+                                u32                     is_default_route_lb,
                                 dpo_id_t*               dpo)
 {
-  fwabf_policy_t*            p = fwabf_policy_get (index);
   fwabf_policy_link_group_t* group;
   fwabf_label_t*             pfwlabel;
   fwabf_label_t              fwlabel;
   u32                        i;
   u32                        flow_hash = 0;
   ip6_header_t*              ip = vlib_buffer_get_current (b);
-
-  p->counter_matched++;  /*This function is called on ACL lookup hit only*/
 
   /*
    * lb - is DPO of Load Balance type. It doesn't point to adjacency directly.
@@ -447,13 +486,13 @@ inline u32 fwabf_policy_get_dpo_ip6 (
    * Optimization is possible here, but it complicates code a lot,
    * so we decided not to implement it for now (April 2020).
    */
-  if (p->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(p->action.link_groups) > 1)
+  if (action->alg == FWABF_SELECTION_RANDOM  &&  vec_len(action->link_groups) > 1)
     {
       flow_hash = ip6_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
       i = FWABF_GET_INDEX_BY_FLOWHASH(
-                        flow_hash, p->action.n_link_groups_pow2_mask,
-                        p->action.n_link_groups_minus_1, i);
-      group = &p->action.link_groups[i];
+                        flow_hash, action->n_link_groups_pow2_mask,
+                        action->n_link_groups_minus_1, i);
+      group = &action->link_groups[i];
 
       /*
        * The randomly selected group might have multiple links/labels/interfaces.
@@ -466,7 +505,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
           i = FWABF_GET_INDEX_BY_FLOWHASH(
                 flow_hash, group->n_links_pow2_mask, group->n_links_minus_1, i);
           fwlabel = group->links[i];
-          *dpo    = fwabf_links_get_dpo (fwlabel, lb, DPO_PROTO_IP6);
+          *dpo    = FWABF_POLICY_GET_DPO(fwlabel, lb, DPO_PROTO_IP6, is_default_route_lb);
           if (dpo_id_is_valid (dpo))
             {
               p->counter_applied++;
@@ -481,21 +520,21 @@ inline u32 fwabf_policy_get_dpo_ip6 (
        */
       vec_foreach (pfwlabel, group->links)
         {
-          *dpo = fwabf_links_get_dpo (*pfwlabel, lb, DPO_PROTO_IP6);
+          *dpo = FWABF_POLICY_GET_DPO(*pfwlabel, lb, DPO_PROTO_IP6, is_default_route_lb);
           if (dpo_id_is_valid (dpo))
             {
               p->counter_applied++;
               return 1;
             }
         }
-    } /*if (p->action.alg == FWABF_SELECTION_RANDOM  &&  vec_len(p->action.link_groups) > 1)*/
+    } /*if (action->alg == FWABF_SELECTION_RANDOM  &&  vec_len(action->link_groups) > 1)*/
 
 
   /*
    * No random selection - just iterate over list of groups and use the first
    * one with valid DPO.
    */
-  vec_foreach (group, p->action.link_groups)
+  vec_foreach (group, action->link_groups)
     {
       /*
        * Take a care of random selection of link within selected group.
@@ -509,7 +548,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
             flow_hash = ip6_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
           }
           fwlabel = group->links[flow_hash & group->n_links_minus_1];
-          *dpo = fwabf_links_get_dpo (fwlabel, lb, DPO_PROTO_IP6);
+          *dpo    = FWABF_POLICY_GET_DPO(fwlabel, lb, DPO_PROTO_IP6, is_default_route_lb);
           if (dpo_id_is_valid (dpo))
             {
               p->counter_applied++;
@@ -518,7 +557,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
         }
       vec_foreach (pfwlabel, group->links)
         {
-          *dpo = fwabf_links_get_dpo (*pfwlabel, lb, DPO_PROTO_IP6);
+          *dpo = FWABF_POLICY_GET_DPO(*pfwlabel, lb, DPO_PROTO_IP6, is_default_route_lb);
           if (dpo_id_is_valid (dpo))
             {
               p->counter_applied++;
@@ -533,7 +572,7 @@ inline u32 fwabf_policy_get_dpo_ip6 (
    * to use DPO found by FIB lookup.
    * If fallback is to drop packets, return DPO_DROP.
    */
-  if (PREDICT_TRUE(p->action.fallback==FWABF_FALLBACK_DEFAULT_ROUTE))
+  if (PREDICT_TRUE(action->fallback==FWABF_FALLBACK_DEFAULT_ROUTE))
     {
       p->counter_fallback++;
       return 0;
@@ -541,6 +580,52 @@ inline u32 fwabf_policy_get_dpo_ip6 (
   dpo_copy(dpo, drop_dpo_get(DPO_PROTO_IP6));
   p->counter_dropped++;
   return 1;
+}
+
+inline u32 fwabf_policy_get_dpo (
+                                index_t                 index,
+                                vlib_buffer_t*          b,
+                                const load_balance_t*   lb,
+                                dpo_proto_t             proto,
+                                dpo_id_t*               dpo)
+{
+  fwabf_policy_t*        policy = fwabf_policy_get (index);
+  fwabf_policy_action_t* action;
+  u32                    dpo_found;
+  u32                    is_default_route_lb;
+
+  policy->counter_matched++;  /*This function is called on ACL lookup hit only*/
+
+  /*
+   * At this point we have to understand if the FIB lookup found
+   * the default route rule. Policy might have the "default route action" -
+   * the action to be applied to the packet in this case. This action just like
+   * normal policy action might have group of links. In comparisson to the normal
+   * policy action the links should have DIA labels.
+   * The default route action is used for the Internet Gateway topology, where
+   * the local machine pushes all internet traffic into tunnel to the remote
+   * machine, where from this traffic goes to internet. I call the remote machine
+   * the Internet Gateway. We decide if the traffic is designated to internet by
+   * inspection the FIB lookup result. If it brings the default route rule,
+   * we push the traffic into tunnel. If same policy is applied on the remote
+   * machine, it will push the received on tunnel internet traffic back into tunnel
+   * instead of forwarding it to internet. To prevent this a customer should
+   * set the default route action with DIA labels on the remote machine,
+   * so packets designated for internet will be sent on WAN interfaces.
+   */
+  is_default_route_lb = fwabf_links_is_dpo_default_route (lb, proto);
+  if (PREDICT_FALSE(is_default_route_lb && default_route_action.link_groups != NULL))
+  {
+    policy->counter_default_route++;
+    action = &default_route_action;
+  }
+  else
+    action = &policy->action;
+
+  dpo_found = (proto==DPO_PROTO_IP4) ?
+              fwabf_policy_get_dpo_ip4 (policy, action, b, lb, is_default_route_lb, dpo):
+              fwabf_policy_get_dpo_ip6 (policy, action, b, lb, is_default_route_lb, dpo);
+  return dpo_found;
 }
 
 uword
@@ -611,7 +696,7 @@ unformat_action (unformat_input_t * input, va_list * args)
 {
   vlib_main_t*              vm     = va_arg (*args, vlib_main_t *);;
   fwabf_policy_action_t*    action = va_arg (*args, fwabf_policy_action_t *);
-  fwabf_policy_link_group_t group;
+  fwabf_policy_link_group_t group, *p_group;
   u32                       gid;
 
   action->fallback    = FWABF_FALLBACK_DEFAULT_ROUTE;
@@ -633,7 +718,7 @@ unformat_action (unformat_input_t * input, va_list * args)
       else if (unformat (input, "%U", unformat_link_group, vm, &group))
         {
           vec_add1(action->link_groups, group);
-          return 1;   /* finished to parse list of groups*/
+          break;   /* finished to parse list of groups*/
         }
       /* Now give a chance to list of groups */
       else if (unformat (input, "group %d %U", &gid, unformat_link_group, vm, &group))
@@ -643,6 +728,17 @@ unformat_action (unformat_input_t * input, va_list * args)
       else
         return 0; /* failed to parse action*/
     }
+
+  /* Now we have valid action, initialize the internal data.
+  */
+  action->n_link_groups_minus_1   = vec_len(action->link_groups) - 1;
+  action->n_link_groups_pow2_mask = (vec_len(action->link_groups) <= 0xF) ? 0xF : 0xFF; /* More than 255 groups is impractical*/
+  vec_foreach (p_group, action->link_groups)
+    {
+      p_group->n_links_minus_1   = vec_len(p_group->links) - 1;
+      p_group->n_links_pow2_mask = (vec_len(p_group->links) <= 0xF) ? 0xF : 0xFF; /* Maximum number of labels is 255 */
+    }
+
   return 1;
 }
 
@@ -779,8 +875,8 @@ format_abf (u8 * s, va_list * args)
 
   s = format (s, "fwabf:[%d]: policy:%d acl:%d\n",
 	      p - abf_policy_pool, p->id, p->acl);
-  s = format (s, " counters: matched:%d applied:%d fallback:%d dropped:%d\n",
-	      p->counter_matched, p->counter_applied, p->counter_fallback, p->counter_dropped);
+  s = format (s, " counters: matched:%d applied:%d fallback:%d dropped:%d default route:%d\n",
+	      p->counter_matched, p->counter_applied, p->counter_fallback, p->counter_dropped, p->counter_default_route);
   s = format (s, "%U", format_action, &p->action);
   return s;
 }
@@ -834,8 +930,97 @@ VLIB_CLI_COMMAND (abf_policy_show_policy_cmd_node, static) = {
 /* *INDENT-ON* */
 
 static clib_error_t *
+fwabf_default_route_action_cmd (vlib_main_t * vm, unformat_input_t * input, vlib_cli_command_t * cmd)
+{
+  fwabf_policy_action_t policy_action;
+  u32                   is_add    = 0;
+  u32                   is_del    = 0;
+  u32                   is_update = 0;
+
+  memset(&policy_action, 0, sizeof(policy_action));
+
+  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (input, "del"))
+        is_del = 1;
+      else if (unformat (input, "add"))
+        is_add = 1;
+      else if (unformat (input, "update"))
+        is_update = 1;
+      else if (unformat (input, "%U", unformat_action, vm, &policy_action))
+        ;
+      else
+        return (clib_error_return (0, "unknown input '%U'",
+                                   format_unformat_error, input));
+    }
+
+  if (policy_action.link_groups == NULL && (is_add || is_update))
+    {
+      vlib_cli_output (vm, "specify at least one group of links in action");
+      return 0;
+    }
+
+  if (is_add)
+    {
+      if (FWABF_POLICY_ACTION_IS_ACTIVE(default_route_action))
+        {
+            return (clib_error_return (0, "default route action exists"));
+        }
+      default_route_action = policy_action;
+    }
+  else if (is_del)
+    {
+      if (FWABF_POLICY_ACTION_IS_ACTIVE(default_route_action))
+      {
+        fwabf_policy_action_delete(&default_route_action);
+      }
+    }
+  else if (is_update)
+    {
+      if (FWABF_POLICY_ACTION_IS_ACTIVE(default_route_action))
+        {
+          fwabf_policy_action_delete(&default_route_action);
+        }
+      default_route_action = policy_action;
+    }
+
+  return 0;
+}
+
+/* *INDENT-OFF* */
+/**
+ * Create an ABF policy.
+ */
+VLIB_CLI_COMMAND (fwabf_default_route_action_cmd_node, static) = {
+  .path = "fwabf default_route_action",
+  .function = fwabf_default_route_action_cmd,
+  .short_help = "fwabf default_route_action [add|del|update] [select_group random] [fallback drop] [group <id>] [random] labels <label1,label2,...> [group <id> [random] labels <label1,label2,...>] ...",
+  .is_mp_safe = 1,
+};
+/* *INDENT-ON* */
+
+static clib_error_t *
+fwabf_default_route_action_show_cmd (vlib_main_t * vm,
+		     unformat_input_t * input, vlib_cli_command_t * cmd)
+{
+  if (FWABF_POLICY_ACTION_IS_ACTIVE(default_route_action))
+    vlib_cli_output (vm, "%U", format_action, &default_route_action);
+  return (NULL);
+}
+
+/* *INDENT-OFF* */
+VLIB_CLI_COMMAND (fwabf_default_route_action_show_cmd_node, static) = {
+  .path = "show fwabf default_route_action",
+  .function = fwabf_default_route_action_show_cmd,
+  .short_help = "show fwabf default_route_action",
+  .is_mp_safe = 1,
+};
+/* *INDENT-ON* */
+
+static clib_error_t *
 fwabf_policy_init (vlib_main_t * vm)
 {
+  default_route_action.link_groups = NULL;
   return (NULL);
 }
 
