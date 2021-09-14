@@ -490,6 +490,12 @@ dpo_id_t fwabf_links_get_labeled_dpo (fwabf_label_t fwlabel)
   label = &fwabf_labels[fwlabel];
 
   link = &fwabf_links[label->sw_if_index];
+
+  if (PREDICT_FALSE(label->sw_if_index == INDEX_INVALID))  /*we use no locks, so check sw_if_index after fetching link*/
+    {
+        return invalid_dpo;
+    }
+
   if (PREDICT_TRUE(FWABF_DPO_ADJACENCY_UP(link->dpo) && link->quality.loss < 100))
     {
       label->counter_enforced_hits++;
