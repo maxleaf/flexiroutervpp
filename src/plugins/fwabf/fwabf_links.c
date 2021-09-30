@@ -199,6 +199,21 @@ static fwabf_link_t* fwabf_links_find_link(u32 sw_if_index);
 static void fwabf_default_route_init();
 static void fwabf_default_route_refresh_dpo(fib_protocol_t proto);
 
+/*
+ * The FWABF_DPO_ADJACENCY_UP macro returns TRUE if adjacency referenced by DPO
+ * is reachable and can be used for packet forwarding.
+ *  DPO_ADJACENCY - the adjacency was ARP resolved and can be used for forwarding
+ *                  This state is used for physical adjacencies, like WAN interfaces
+ *                  and flexiEdge <-> flexiEdge tunnels.
+ * DPO_ADJACENCY_MIDCHAIN - the adjacency is a kind of virtual adjacency, that
+ *                  was resolved to the other midchain/physical adjacency that
+ *                  in turn was ARP resolved and can be used for packet forwarding.
+ * DPO_ADJACENCY_INCOMPLETE - the adjacency is not ARP resolved and can't be used
+ *                  for packet forwarding.
+ * All the rest of DPO types are not relevant for TX links.
+ */
+#define FWABF_DPO_ADJACENCY_UP(_dpo) ((_dpo).dpoi_type == DPO_ADJACENCY || \
+                                      (_dpo).dpoi_type == DPO_ADJACENCY_MIDCHAIN)
 
 
 u32 fwabf_links_add_interface (
@@ -427,9 +442,13 @@ int fwabf_links_is_dpo_labeled_or_default_route (
   for (u32 i = 0; i < lb->lb_n_buckets; i++)
   {
     lookup_dpo = *(load_balance_get_bucket_i (lb, i));
-    if (lookup_dpo.dpoi_type != DPO_ADJACENCY) /*usage of dpoi_index below dependens on type, we use DPO_ADJACENCY for links, so dpoi_index stands for adjacency*/
+    if (!(FWABF_DPO_ADJACENCY_UP(lookup_dpo)))
       return 0;   /*The routes takes us to local machine probably (dpoi_type is DPO_RECEIVE)*/
 
+    /* Semantic of dpoi_index that we use below, dependens on DPO type.
+     * In DPO_ADJACENCY/DPO_ADJACENCY_MIDCHAIN DPO-s it stands for adjacency
+     * that reflects the link interface, either WAN interface or tunnel.
+     */
     ASSERT(lookup_dpo.dpoi_index < FWABF_MAX_ADJ_INDEX);
     if (adj_indexes_to_labels[lookup_dpo.dpoi_index] != FWABF_INVALID_LABEL)
         return 1;
@@ -471,7 +490,13 @@ dpo_id_t fwabf_links_get_labeled_dpo (fwabf_label_t fwlabel)
   label = &fwabf_labels[fwlabel];
 
   link = &fwabf_links[label->sw_if_index];
-  if (PREDICT_TRUE(link->dpo.dpoi_type == DPO_ADJACENCY && link->quality.loss < 100))
+
+  if (PREDICT_FALSE(label->sw_if_index == INDEX_INVALID))  /*we use no locks, so check sw_if_index after fetching link*/
+    {
+        return invalid_dpo;
+    }
+
+  if (PREDICT_TRUE(FWABF_DPO_ADJACENCY_UP(link->dpo) && link->quality.loss < 100))
     {
       label->counter_enforced_hits++;
       return link->dpo;
@@ -826,12 +851,12 @@ void fwabf_link_refresh_dpo(fwabf_link_t * link)
   /*
    * Update adj_indexes_to_reachable_labels map with refreshed DPO.
    * Note we add only active DPO-s to the map, so ensure that DPO state
-   * is DPO_ADJACENCY and not DPO_ADJACENCY_INCOMPLETE.
+   * is DPO_ADJACENCY/DPO_ADJACENCY_MIDCHAIN and not DPO_ADJACENCY_INCOMPLETE.
    * The last is set, if the adjacency is not arp-resolved, which means
    * the tunnel / WAN nexthop is down.
    */
   ASSERT(link->dpo.dpoi_index < FWABF_MAX_ADJ_INDEX);
-  if (PREDICT_TRUE(link->dpo.dpoi_type == DPO_ADJACENCY))
+  if (PREDICT_TRUE(FWABF_DPO_ADJACENCY_UP(link->dpo)))
     {
       adj_indexes_to_reachable_labels[link->dpo.dpoi_index] = link->fwlabel;
     }
@@ -1011,7 +1036,7 @@ static void fwabf_default_route_refresh_dpo(fib_protocol_t proto)
     for (u32 i = 0; i < lb->lb_n_buckets; i++)
     {
       dpo_i = *(load_balance_get_bucket_i (lb, i));
-      if (PREDICT_TRUE(dpo_i.dpoi_type == DPO_ADJACENCY))
+      if (PREDICT_TRUE(FWABF_DPO_ADJACENCY_UP(dpo_i)))
       {
         adj_index = dpo_i.dpoi_index;
         ASSERT(adj_index < FWABF_MAX_ADJ_INDEX);
