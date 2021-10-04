@@ -361,7 +361,7 @@ slow_path_ed (snat_main_t * sm,
 {
   snat_main_per_thread_data_t *tsm = &sm->per_thread_data[thread_index];
   clib_bihash_kv_16_8_t out2in_ed_kv;
-  nat44_is_idle_session_ctx_t ctx;
+  nat44_is_idle_session_ctx_t ctx = {.now = now, .thread_index = thread_index};
   ip4_address_t outside_addr;
   u16 outside_port;
   u8 identity_nat;
@@ -438,9 +438,6 @@ slow_path_ed (snat_main_t * sm,
   ip4_address_t sm_addr;
   u16 sm_port;
   u32 sm_fib_index;
-
-  ctx.now = now;
-  ctx.thread_index = thread_index;
 
   /* First try to match static mapping by local address and port */
   if (snat_static_mapping_match
