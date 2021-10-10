@@ -191,6 +191,51 @@ extern vlib_node_registration_t fwabf_ip6_node;
                 ((_sw_if_index) >= vec_len(fwabf_links) || \
                 fwabf_links[(_sw_if_index)].sw_if_index == INDEX_INVALID)
 
+typedef enum fwabf_quality_priority_t_ {
+    FWABF_QUALITY_PRIORITY_LOW              = 0,
+    FWABF_QUALITY_PRIORITY_MEDIUM           = 1,
+    FWABF_QUALITY_PRIORITY_HIGH             = 2,
+} fwabf_quality_priority_t;
+
+typedef struct fwabf_quality_service_tolerance_t_
+{
+ fwabf_quality_service_class_t service_class;
+ fwabf_quality_level_t loss_level;
+ fwabf_quality_level_t delay_level;
+ fwabf_quality_level_t jitter_level;
+} fwabf_quality_service_tolerance_t;
+
+/* As per RFC 4564 Figure 3 The mapping of Service Class requirements into metric thresholds */
+static fwabf_quality_t quality_levels[] = {
+ /* -----+-------+--------+---------------*/
+ /* Loss | Delay | Jitter | Quality Level */
+ /* -----+-------+--------+---------------*/
+ { 1,     150,     30 },  /*  VERY_LOW    */
+ { 2,     250,     45 },  /*  LOW         */
+ { 3,     350,     60 },  /*  LOW_MEDIUM  */
+ { 5,     450,     75 },  /*  MEDIUM      */
+ { 7,     550,     90 },  /*  MEDIUM_HIGH */
+ { 9,     650,    115 },  /*  HIGH        */
+ { 100, 10000,  10000 },  /*  YES         */
+};
+
+/* As per RFC 4564 Figure 2 Service Classes Characteristics */
+static fwabf_quality_service_tolerance_t service_class_quality[] = {
+ /* ----------------------------------------+-------------------------------+---------------------------------+------------------------------*/
+ /*   Service Class                         |   Loss                        |  Delay                          |  Jitter                      */
+ /* ----------------------------------------+-------------------------------+---------------------------------+------------------------------*/
+ {FWABF_QUALITY_SC_TELEPHONY,                 FWABF_QUALITY_LEVEL_VERY_LOW,    FWABF_QUALITY_LEVEL_VERY_LOW,     FWABF_QUALITY_LEVEL_VERY_LOW},
+ {FWABF_QUALITY_SC_BROADCAST_VIDEO,           FWABF_QUALITY_LEVEL_VERY_LOW,    FWABF_QUALITY_LEVEL_MEDIUM,       FWABF_QUALITY_LEVEL_LOW},
+ {FWABF_QUALITY_SC_REAL_TIME,                 FWABF_QUALITY_LEVEL_LOW,         FWABF_QUALITY_LEVEL_VERY_LOW,     FWABF_QUALITY_LEVEL_LOW},
+ {FWABF_QUALITY_SC_SIGNALING_NETWORK_CONTROL, FWABF_QUALITY_LEVEL_LOW,         FWABF_QUALITY_LEVEL_LOW,          FWABF_QUALITY_LEVEL_YES},
+ {FWABF_QUALITY_SC_LOW_LATENCY,               FWABF_QUALITY_LEVEL_LOW,         FWABF_QUALITY_LEVEL_LOW_MEDIUM,   FWABF_QUALITY_LEVEL_YES},
+ {FWABF_QUALITY_SC_OAM,                       FWABF_QUALITY_LEVEL_LOW,         FWABF_QUALITY_LEVEL_MEDIUM,       FWABF_QUALITY_LEVEL_YES},
+ {FWABF_QUALITY_SC_HIGH_THROUGHPUT,           FWABF_QUALITY_LEVEL_LOW,         FWABF_QUALITY_LEVEL_MEDIUM_HIGH,  FWABF_QUALITY_LEVEL_YES},
+ {FWABF_QUALITY_SC_MULTIMEDIA_CONFERENCING,   FWABF_QUALITY_LEVEL_LOW_MEDIUM,  FWABF_QUALITY_LEVEL_VERY_LOW,     FWABF_QUALITY_LEVEL_LOW},
+ {FWABF_QUALITY_SC_MULTIMEDIA_STREAMING,      FWABF_QUALITY_LEVEL_LOW_MEDIUM,  FWABF_QUALITY_LEVEL_MEDIUM,       FWABF_QUALITY_LEVEL_YES},
+ {FWABF_QUALITY_SC_STANDARD,                  FWABF_QUALITY_LEVEL_HIGH,        FWABF_QUALITY_LEVEL_HIGH,         FWABF_QUALITY_LEVEL_YES},
+};
+
 /*
  * Forward declarations
  */
@@ -353,6 +398,42 @@ u32 fwabf_links_del_interface (const u32 sw_if_index)
   ASSERT(link->pathlist_index==INDEX_INVALID);
   fib_path_list_child_remove(old_pl, link->pathlist_sibling);
   link->pathlist_sibling = ~0;
+
+  return 0;
+}
+
+int fwabf_links_check_quality (
+                        fwabf_label_t                   fwlabel,
+                        fwabf_quality_service_class_t   sc,
+                        int                             reduce_level)
+{
+  fwabf_label_data_t*   label;
+  fwabf_link_t*         link;
+  fwabf_quality_level_t loss_level, delay_level;
+
+  if (sc == FWABF_QUALITY_SC_STANDARD)
+    return 1;
+
+  ASSERT(fwlabel <= FWABF_MAX_LABEL);
+  label = &fwabf_labels[fwlabel];
+
+  if (PREDICT_FALSE(label->sw_if_index == INDEX_INVALID))
+      return 1;
+
+  link = &fwabf_links[label->sw_if_index];
+  loss_level = service_class_quality[sc].loss_level;
+  delay_level = service_class_quality[sc].delay_level;
+
+  if (reduce_level && loss_level < FWABF_QUALITY_LEVEL_YES)
+    loss_level += reduce_level;
+
+  if (reduce_level && delay_level < FWABF_QUALITY_LEVEL_YES)
+    delay_level += reduce_level;
+
+  if ((link->quality.loss <= quality_levels[loss_level].loss)
+   && (link->quality.delay <= quality_levels[delay_level].delay)
+     )
+    return 1;
 
   return 0;
 }
