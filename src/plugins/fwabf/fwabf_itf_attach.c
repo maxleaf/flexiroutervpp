@@ -593,8 +593,10 @@ fwabf_input_ip4 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
                   * match:
                   *  follow the DPO chain if available. Otherwise fallback to feature arc.
                   */
+                  acl_main_t *am = acl_plugin.p_acl_main;
+                  fwabf_quality_service_class_t sc = am->acls[match_acl_index].tag[0] - '0';
                   fia0 = fwabf_itf_attach_get (attachments0[match_acl_pos]);
-                  match0 = fwabf_policy_get_dpo (fia0->fia_policy, b0, lb0, DPO_PROTO_IP4, &dpo0_policy);
+                  match0 = fwabf_policy_get_dpo (fia0->fia_policy, b0, lb0, sc, DPO_PROTO_IP4, &dpo0_policy);
                   if (PREDICT_TRUE(match0))
                     {
                       next0 = dpo0_policy.dpoi_next_node;
@@ -766,8 +768,10 @@ fwabf_input_ip6 (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * fr
                   * match:
                   *  follow the DPO chain if available. Otherwise fallback to feature arc.
                   */
+                  acl_main_t *am = acl_plugin.p_acl_main;
+                  fwabf_quality_service_class_t sc = am->acls[match_acl_index].tag[0] - '0';
                   fia0 = fwabf_itf_attach_get (attachments0[match_acl_pos]);
-                  match0 = fwabf_policy_get_dpo (fia0->fia_policy, b0, lb0, DPO_PROTO_IP6, &dpo0_policy);
+                  match0 = fwabf_policy_get_dpo (fia0->fia_policy, b0, lb0, sc, DPO_PROTO_IP6, &dpo0_policy);
                   if (PREDICT_TRUE(match0))
                     {
                       next0 = dpo0_policy.dpoi_next_node;

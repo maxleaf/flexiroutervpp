@@ -306,18 +306,20 @@ static void fwabf_policy_action_delete (fwabf_policy_action_t* action)
  * @param b         the vlib buffer to be forwarded.
  * @param lb        the DPO of Load Balance type retrieved by FIB lookup.
  * @param is_default_route_lb  if 1 the FIB lookup brought DPO that point to default route
+ * @param sc        traffic service class from ACL matched by packet
  * @param dpo       result of the function: the DPO to be used for forwarding.
  *                  If return value is not 0, this parameter has no effect.
  * @return 1 if the policy DPO provided within 'dpo' parameter should be used for forwarding,
  *         0 otherwise which effectively means the FIB lookup result DPO should be used.
  */
 static inline u32 fwabf_policy_get_dpo_ip4 (
-                                fwabf_policy_t*         p,
-                                fwabf_policy_action_t*  action,
-                                vlib_buffer_t*          b,
-                                const load_balance_t*   lb,
-                                u32                     is_default_route_lb,
-                                dpo_id_t*               dpo)
+                                fwabf_policy_t*                 p,
+                                fwabf_policy_action_t*          action,
+                                vlib_buffer_t*                  b,
+                                const load_balance_t*           lb,
+                                u32                             is_default_route_lb,
+                                fwabf_quality_service_class_t   sc,
+                                dpo_id_t*                       dpo)
 {
   fwabf_policy_link_group_t* group;
   fwabf_label_t*             pfwlabel;
@@ -352,27 +354,75 @@ static inline u32 fwabf_policy_get_dpo_ip4 (
                         action->n_link_groups_minus_1, i);
       group = &action->link_groups[i];
 
-      /*
-       * The randomly selected group might have multiple links/labels/interfaces.
-       * Take a care of random selection of link within group in the same manner
-       * as random selection of group: try selection one time only, if that brings
-       * no match, go to iterations over list of links.
-       */
-      if (group->alg == FWABF_SELECTION_RANDOM  &&  vec_len(group->links) > 1)
-        {
-          i = FWABF_GET_INDEX_BY_FLOWHASH(
-                flow_hash, group->n_links_pow2_mask, group->n_links_minus_1, i);
-          fwlabel = group->links[i];
-          *dpo    = FWABF_POLICY_GET_DPO(fwlabel, lb, DPO_PROTO_IP4, is_default_route_lb);
-          if (dpo_id_is_valid (dpo))
-            {
-              p->counter_applied++;
-              return 1;
-            }
-        }
+      if (vec_len(group->links) > 1)
+      {
+        /*
+        * The randomly selected group might have multiple links/labels/interfaces.
+        * Take a care of random selection of link within group in the same manner
+        * as random selection of group: try selection one time only, if that brings
+        * no match, go to iterations over list of links.
+        */
+        if (group->alg == FWABF_SELECTION_RANDOM)
+          {
+            i = FWABF_GET_INDEX_BY_FLOWHASH(
+                  flow_hash, group->n_links_pow2_mask, group->n_links_minus_1, i);
+            fwlabel = group->links[i];
+            *dpo    = FWABF_POLICY_GET_DPO(fwlabel, lb, DPO_PROTO_IP4, is_default_route_lb);
+            if (dpo_id_is_valid (dpo))
+              {
+                p->counter_applied++;
+                return 1;
+              }
+          }
+
+        /*
+        * if selection is by link quality iterate over avaliable links and select links
+        * which satisfy quality requirements for traffic service class.
+        * Then perform random selection among classified links.
+        */
+        if (group->alg == FWABF_SELECTION_QUALITY)
+          {
+            fwabf_policy_link_group_t quality_group;
+            fwabf_label_t*            plabel;
+            int                       reduce_level = 0;
+
+            memset(&quality_group, 0, sizeof(quality_group));
+            do {
+                vec_foreach (plabel, group->links)
+                  {
+                    if (fwabf_links_check_quality (*plabel, sc, reduce_level))
+                      vec_add1(quality_group.links, (fwabf_label_t)*plabel);
+                  }
+                  reduce_level++;
+                  if (reduce_level > FWABF_QUALITY_LEVEL_YES)
+                    break;
+            } while (vec_len(quality_group.links) == 0);
+
+            if (vec_len(quality_group.links) > 0)
+              {
+                quality_group.n_links_minus_1   = vec_len(quality_group.links) - 1;
+                quality_group.n_links_pow2_mask = (vec_len(quality_group.links) <= 0xF) ? 0xF : 0xFF; /* Maximum number of labels is 255 */
+
+                if (!flow_hash)
+                  flow_hash = ip4_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
+
+                i = FWABF_GET_INDEX_BY_FLOWHASH(
+                      flow_hash, quality_group.n_links_pow2_mask, quality_group.n_links_minus_1, i);
+                fwlabel = quality_group.links[i];
+                vec_free (quality_group.links);
+
+                *dpo = FWABF_POLICY_GET_DPO(fwlabel, lb, DPO_PROTO_IP4, is_default_route_lb);
+                if (dpo_id_is_valid (dpo))
+                  {
+                    p->counter_applied++;
+                    return 1;
+                  }
+              }
+          }
+      }
 
       /*
-       * No random selection - just iterate over list of labels and use the first
+       * Priority selection - just iterate over list of labels and use the first
        * one with valid DPO. If no valid label was found, fallback into ordered
        * search over list of link groups and their labels.
        */
@@ -394,25 +444,76 @@ static inline u32 fwabf_policy_get_dpo_ip4 (
    */
   vec_foreach (group, action->link_groups)
     {
-      /*
-       * Take a care of random selection of link within selected group.
-       * If randomly selected label has no suitable DPO, fallback into ordered
-       * search over list of labels.
-       */
-      if (group->alg == FWABF_SELECTION_RANDOM  &&  vec_len(group->links) > 1)
-        {
-          if (!flow_hash)
+      if (vec_len(group->links) > 1)
+      {
+        /*
+        * Take a care of random selection of link within selected group.
+        * If randomly selected label has no suitable DPO, fallback into ordered
+        * search over list of labels.
+        */
+        if (group->alg == FWABF_SELECTION_RANDOM)
           {
-            flow_hash = ip4_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
-          }
-          fwlabel = group->links[flow_hash & group->n_links_minus_1];
-          *dpo    = FWABF_POLICY_GET_DPO(fwlabel, lb, DPO_PROTO_IP4, is_default_route_lb);
-          if (dpo_id_is_valid (dpo))
+            if (!flow_hash)
             {
-              p->counter_applied++;
-              return 1;
+              flow_hash = ip4_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
             }
-        }
+            fwlabel = group->links[flow_hash & group->n_links_minus_1];
+            *dpo    = FWABF_POLICY_GET_DPO(fwlabel, lb, DPO_PROTO_IP4, is_default_route_lb);
+            if (dpo_id_is_valid (dpo))
+              {
+                p->counter_applied++;
+                return 1;
+              }
+          }
+        /*
+        * Quality based link selection.
+        * Select link among links which satisfy quality criteria for correspondent
+        * traffic service class.
+        */
+        if (group->alg == FWABF_SELECTION_QUALITY)
+          {
+            fwabf_policy_link_group_t quality_group;
+            fwabf_label_t*            plabel;
+            int                       reduce_level = 0;
+
+            memset(&quality_group, 0, sizeof(quality_group));
+            do {
+                vec_foreach (plabel, group->links)
+                  {
+                    if (fwabf_links_check_quality (*plabel, sc, reduce_level))
+                      vec_add1(quality_group.links, (fwabf_label_t)*plabel);
+                  }
+                  reduce_level++;
+                  if (reduce_level > FWABF_QUALITY_LEVEL_YES)
+                    break;
+            } while (vec_len(quality_group.links) == 0);
+
+            if (vec_len(quality_group.links) > 0)
+              {
+                quality_group.n_links_minus_1   = vec_len(quality_group.links) - 1;
+                quality_group.n_links_pow2_mask = (vec_len(quality_group.links) <= 0xF) ? 0xF : 0xFF; /* Maximum number of labels is 255 */
+
+                if (!flow_hash)
+                  flow_hash = ip4_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
+
+                i = FWABF_GET_INDEX_BY_FLOWHASH(
+                      flow_hash, quality_group.n_links_pow2_mask, quality_group.n_links_minus_1, i);
+                fwlabel = quality_group.links[i];
+                vec_free (quality_group.links);
+
+                *dpo = FWABF_POLICY_GET_DPO(fwlabel, lb, DPO_PROTO_IP4, is_default_route_lb);
+                if (dpo_id_is_valid (dpo))
+                  {
+                    p->counter_applied++;
+                    return 1;
+                  }
+              }
+          }
+      }
+
+      /*
+       * Priority selection - just iterate over list of labels and use the first one with valid DPO.
+      */
       vec_foreach (pfwlabel, group->links)
         {
           *dpo = FWABF_POLICY_GET_DPO(*pfwlabel, lb, DPO_PROTO_IP4, is_default_route_lb);
@@ -448,18 +549,20 @@ static inline u32 fwabf_policy_get_dpo_ip4 (
  * @param b         the buffer to be forwarded
  * @param lb        the DPO of Load Balancing type retrieved by FIB lookup.
  * @param is_default_route_lb  if 1 the FIB lookup brought DPO that point to default route
+ * @param sc        traffic service class from ACL matched by packet
  * @param dpo       result of the function: the DPO to be used for forwarding.
  *                  If return value is not 0, this parameter has no effect.
  * @return 1 if the policy DPO provided within 'dpo' parameter should be used for forwarding,
  *         0 otherwise which effectively means the FIB lookup result DPO should be used.
  */
 static inline u32 fwabf_policy_get_dpo_ip6 (
-                                fwabf_policy_t*         p,
-                                fwabf_policy_action_t*  action,
-                                vlib_buffer_t*          b,
-                                const load_balance_t*   lb,
-                                u32                     is_default_route_lb,
-                                dpo_id_t*               dpo)
+                                fwabf_policy_t*                 p,
+                                fwabf_policy_action_t*          action,
+                                vlib_buffer_t*                  b,
+                                const load_balance_t*           lb,
+                                u32                             is_default_route_lb,
+                                fwabf_quality_service_class_t   sc,
+                                dpo_id_t*                       dpo)
 {
   fwabf_policy_link_group_t* group;
   fwabf_label_t*             pfwlabel;
@@ -494,27 +597,74 @@ static inline u32 fwabf_policy_get_dpo_ip6 (
                         action->n_link_groups_minus_1, i);
       group = &action->link_groups[i];
 
-      /*
-       * The randomly selected group might have multiple links/labels/interfaces.
-       * Take a care of random selection of link within group in the same manner
-       * as random selection of group: try selection one time only, if that brings
-       * no match, go to iterations over list of links.
-       */
-      if (group->alg == FWABF_SELECTION_RANDOM  &&  vec_len(group->links) > 1)
-        {
-          i = FWABF_GET_INDEX_BY_FLOWHASH(
-                flow_hash, group->n_links_pow2_mask, group->n_links_minus_1, i);
-          fwlabel = group->links[i];
-          *dpo    = FWABF_POLICY_GET_DPO(fwlabel, lb, DPO_PROTO_IP6, is_default_route_lb);
-          if (dpo_id_is_valid (dpo))
-            {
-              p->counter_applied++;
-              return 1;
-            }
-        }
+      if (vec_len(group->links) > 1)
+      {
+        /*
+        * The randomly selected group might have multiple links/labels/interfaces.
+        * Take a care of random selection of link within group in the same manner
+        * as random selection of group: try selection one time only, if that brings
+        * no match, go to iterations over list of links.
+        */
+        if (group->alg == FWABF_SELECTION_RANDOM)
+          {
+            i = FWABF_GET_INDEX_BY_FLOWHASH(
+                  flow_hash, group->n_links_pow2_mask, group->n_links_minus_1, i);
+            fwlabel = group->links[i];
+            *dpo    = FWABF_POLICY_GET_DPO(fwlabel, lb, DPO_PROTO_IP6, is_default_route_lb);
+            if (dpo_id_is_valid (dpo))
+              {
+                p->counter_applied++;
+                return 1;
+              }
+          }
+        /*
+        * if selection is by link quality iterate over avaliable links and select links
+        * which satisfy quality requirements for traffic service class.
+        * Then perform random selection among classified links.
+        */
+        if (group->alg == FWABF_SELECTION_QUALITY)
+          {
+            fwabf_policy_link_group_t quality_group;
+            fwabf_label_t*            plabel;
+            int                       reduce_level = 0;
+
+            memset(&quality_group, 0, sizeof(quality_group));
+            do {
+                vec_foreach (plabel, group->links)
+                  {
+                    if (fwabf_links_check_quality (*plabel, sc, reduce_level))
+                      vec_add1(quality_group.links, (fwabf_label_t)*plabel);
+                  }
+                  reduce_level++;
+                  if (reduce_level > FWABF_QUALITY_LEVEL_YES)
+                    break;
+            } while (vec_len(quality_group.links) == 0);
+
+            if (vec_len(quality_group.links) > 0)
+              {
+                quality_group.n_links_minus_1   = vec_len(quality_group.links) - 1;
+                quality_group.n_links_pow2_mask = (vec_len(quality_group.links) <= 0xF) ? 0xF : 0xFF; /* Maximum number of labels is 255 */
+
+                if (!flow_hash)
+                  flow_hash = ip6_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
+
+                i = FWABF_GET_INDEX_BY_FLOWHASH(
+                      flow_hash, quality_group.n_links_pow2_mask, quality_group.n_links_minus_1, i);
+                fwlabel = quality_group.links[i];
+                vec_free (quality_group.links);
+
+                *dpo = FWABF_POLICY_GET_DPO(fwlabel, lb, DPO_PROTO_IP6, is_default_route_lb);
+                if (dpo_id_is_valid (dpo))
+                  {
+                    p->counter_applied++;
+                    return 1;
+                  }
+              }
+          }
+      }
 
       /*
-       * No random selection - just iterate over list of labels and use the first
+       * Priority selection - just iterate over list of labels and use the first
        * one with valid DPO. If no valid label was found, fallback into ordered
        * search over list of link groups and their labels.
        */
@@ -536,25 +686,74 @@ static inline u32 fwabf_policy_get_dpo_ip6 (
    */
   vec_foreach (group, action->link_groups)
     {
-      /*
-       * Take a care of random selection of link within selected group.
-       * If randomly selected label has no suitable DPO, fallback into ordered
-       * search over list of labels.
-       */
-      if (group->alg == FWABF_SELECTION_RANDOM  &&  vec_len(group->links) > 1)
-        {
-          if (!flow_hash)
+      if (vec_len(group->links) > 1)
+      {
+        /*
+        * Take a care of random selection of link within selected group.
+        * If randomly selected label has no suitable DPO, fallback into ordered
+        * search over list of labels.
+        */
+        if (group->alg == FWABF_SELECTION_RANDOM)
           {
-            flow_hash = ip6_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
-          }
-          fwlabel = group->links[flow_hash & group->n_links_minus_1];
-          *dpo    = FWABF_POLICY_GET_DPO(fwlabel, lb, DPO_PROTO_IP6, is_default_route_lb);
-          if (dpo_id_is_valid (dpo))
+            if (!flow_hash)
             {
-              p->counter_applied++;
-              return 1;
+              flow_hash = ip6_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
             }
-        }
+            fwlabel = group->links[flow_hash & group->n_links_minus_1];
+            *dpo    = FWABF_POLICY_GET_DPO(fwlabel, lb, DPO_PROTO_IP6, is_default_route_lb);
+            if (dpo_id_is_valid (dpo))
+              {
+                p->counter_applied++;
+                return 1;
+              }
+          }
+
+        /*
+        * Quality based link selection.
+        * Select link among links which satisfy quality criteria for correspondent
+        * traffic service class.
+        */
+        if (group->alg == FWABF_SELECTION_QUALITY)
+          {
+            fwabf_policy_link_group_t quality_group;
+            fwabf_label_t*            plabel;
+            int                       reduce_level = 0;
+
+            memset(&quality_group, 0, sizeof(quality_group));
+            do {
+                vec_foreach (plabel, group->links)
+                  {
+                    if (fwabf_links_check_quality (*plabel, sc, reduce_level))
+                      vec_add1(quality_group.links, (fwabf_label_t)*plabel);
+                  }
+                  reduce_level++;
+                  if (reduce_level > FWABF_QUALITY_LEVEL_YES)
+                    break;
+            } while (vec_len(quality_group.links) == 0);
+
+            if (vec_len(quality_group.links) > 0)
+              {
+                quality_group.n_links_minus_1   = vec_len(quality_group.links) - 1;
+                quality_group.n_links_pow2_mask = (vec_len(quality_group.links) <= 0xF) ? 0xF : 0xFF; /* Maximum number of labels is 255 */
+
+                if (!flow_hash)
+                  flow_hash = ip6_compute_flow_hash (ip, IP_FLOW_HASH_DEFAULT);
+
+                i = FWABF_GET_INDEX_BY_FLOWHASH(
+                      flow_hash, quality_group.n_links_pow2_mask, quality_group.n_links_minus_1, i);
+                fwlabel = quality_group.links[i];
+                vec_free (quality_group.links);
+
+                *dpo = FWABF_POLICY_GET_DPO(fwlabel, lb, DPO_PROTO_IP6, is_default_route_lb);
+                if (dpo_id_is_valid (dpo))
+                  {
+                    p->counter_applied++;
+                    return 1;
+                  }
+              }
+          }
+      }
+
       vec_foreach (pfwlabel, group->links)
         {
           *dpo = FWABF_POLICY_GET_DPO(*pfwlabel, lb, DPO_PROTO_IP6, is_default_route_lb);
@@ -583,11 +782,12 @@ static inline u32 fwabf_policy_get_dpo_ip6 (
 }
 
 inline u32 fwabf_policy_get_dpo (
-                                index_t                 index,
-                                vlib_buffer_t*          b,
-                                const load_balance_t*   lb,
-                                dpo_proto_t             proto,
-                                dpo_id_t*               dpo)
+                                index_t                         index,
+                                vlib_buffer_t*                  b,
+                                const load_balance_t*           lb,
+                                fwabf_quality_service_class_t   sc,
+                                dpo_proto_t                     proto,
+                                dpo_id_t*                       dpo)
 {
   fwabf_policy_t*        policy = fwabf_policy_get (index);
   fwabf_policy_action_t* action;
@@ -623,8 +823,8 @@ inline u32 fwabf_policy_get_dpo (
     action = &policy->action;
 
   dpo_found = (proto==DPO_PROTO_IP4) ?
-              fwabf_policy_get_dpo_ip4 (policy, action, b, lb, is_default_route_lb, dpo):
-              fwabf_policy_get_dpo_ip6 (policy, action, b, lb, is_default_route_lb, dpo);
+              fwabf_policy_get_dpo_ip4 (policy, action, b, lb, is_default_route_lb, sc, dpo):
+              fwabf_policy_get_dpo_ip6 (policy, action, b, lb, is_default_route_lb, sc, dpo);
   return dpo_found;
 }
 
@@ -676,6 +876,10 @@ unformat_link_group (unformat_input_t * input, va_list * args)
       if (unformat (input, "random"))
         {
           group->alg = FWABF_SELECTION_RANDOM;
+        }
+      else if (unformat (input, "quality"))
+        {
+          group->alg = FWABF_SELECTION_QUALITY;
         }
       else if (unformat (input, "labels %U", unformat_labels, vm, &group->links))
         {
@@ -816,7 +1020,7 @@ fwabf_policy_cmd (vlib_main_t * vm, unformat_input_t * main_input, vlib_cli_comm
 VLIB_CLI_COMMAND (fwabf_policy_cmd_node, static) = {
   .path = "fwabf policy",
   .function = fwabf_policy_cmd,
-  .short_help = "fwabf policy [add|del] id <index> acl <index> action [select_group random] [fallback drop] [group <id>] [random] labels <label1,label2,...> [group <id> [random] labels <label1,label2,...>] ...",
+  .short_help = "fwabf policy [add|del] id <index> acl <index> action [select_group random] [fallback drop] [group <id>] [random|quality] labels <label1,label2,...> [group <id> [random|quality] labels <label1,label2,...>] ...",
   .is_mp_safe = 1,
 };
 /* *INDENT-ON* */
@@ -828,7 +1032,17 @@ format_link_group (u8 * s, va_list * args)
   u32                        n_links = vec_len(group->links);
   char*                      s_alg;
 
-  s_alg = group->alg==FWABF_SELECTION_RANDOM ? "random" : "priority";
+  switch (group->alg)
+  {
+    case FWABF_SELECTION_RANDOM:
+      s_alg = "random";
+      break;
+    case FWABF_SELECTION_QUALITY:
+      s_alg = "quality";
+      break;
+    case FWABF_SELECTION_ORDERED:
+      s_alg = "priority";
+  }
   s = format (s, "order:%s labels:", s_alg);
   if (n_links > 1)
     {

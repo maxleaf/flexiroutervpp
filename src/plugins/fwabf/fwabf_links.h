@@ -47,11 +47,40 @@ typedef u8 fwabf_label_t;	/*flexiwan path label used by policy to choose link*/
 #define FWABF_INVALID_LABEL 0xFF
 #define FWABF_MAX_LABEL     0xFE
 
+/*
+   The following structures defines traffic quality characteristics
+   as per RFC 4564 Configuration Guidelines for DiffServ Service Classes
+*/
+
 typedef struct fwabf_quality_t_ {
     u32 loss;
     u32 delay;
     u32 jitter;
 } fwabf_quality_t;
+
+/* Service Classes as per RFC 4564 Figure 2 */
+typedef enum fwabf_quality_service_class_t_ {
+    FWABF_QUALITY_SC_TELEPHONY                 = 0,
+    FWABF_QUALITY_SC_BROADCAST_VIDEO           = 1,
+    FWABF_QUALITY_SC_REAL_TIME                 = 2,
+    FWABF_QUALITY_SC_SIGNALING_NETWORK_CONTROL = 3,
+    FWABF_QUALITY_SC_LOW_LATENCY               = 4,
+    FWABF_QUALITY_SC_OAM                       = 5,
+    FWABF_QUALITY_SC_HIGH_THROUGHPUT           = 6,
+    FWABF_QUALITY_SC_MULTIMEDIA_CONFERENCING   = 7,
+    FWABF_QUALITY_SC_MULTIMEDIA_STREAMING      = 8,
+    FWABF_QUALITY_SC_STANDARD                  = 9,
+} fwabf_quality_service_class_t;
+
+typedef enum fwabf_quality_level_t_ {
+    FWABF_QUALITY_LEVEL_VERY_LOW,
+    FWABF_QUALITY_LEVEL_LOW,
+    FWABF_QUALITY_LEVEL_LOW_MEDIUM,
+    FWABF_QUALITY_LEVEL_MEDIUM,
+    FWABF_QUALITY_LEVEL_MEDIUM_HIGH,
+    FWABF_QUALITY_LEVEL_HIGH,
+    FWABF_QUALITY_LEVEL_YES
+} fwabf_quality_level_t;
 
 /**
  * Creates FWABF Link object that holds interface <-> label mapping and other
@@ -75,6 +104,21 @@ extern u32 fwabf_links_add_interface (
  * @return 1 on success, 0 otherwise.
  */
 extern u32 fwabf_links_del_interface (const u32 sw_if_index);
+
+/**
+ * Verifies if link satisfies quality requirements according
+ * to packet Service Class demands matched by ACL tag
+ *
+ * @param fwlabel      the label to be used to find labeled tunnel DPO-s
+ * @param sc           traffic service class from ACL matched by packet
+ * @param reduce_level if there is no available links which satisfy criteria for service class requirements
+ *                     we reduce requirements to the next level and check again
+ * @return 1 if link quality requirements are satisfied, 0 otherwise.
+ */
+extern int fwabf_links_check_quality (
+                        fwabf_label_t                   fwlabel,
+                        fwabf_quality_service_class_t   sc,
+                        int                             reduce_level);
 
 /**
  * Intersects DPO-s retrieved by FIB lookup with DPO-s that belong to labeled

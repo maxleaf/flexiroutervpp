@@ -55,7 +55,8 @@
 
 typedef enum fwabf_selection_alg_t_ {
     FWABF_SELECTION_RANDOM,
-    FWABF_SELECTION_ORDERED
+    FWABF_SELECTION_ORDERED,
+    FWABF_SELECTION_QUALITY
 } fwabf_selection_alg_t;
 
 typedef struct fwabf_policy_link_group_t_ {
@@ -133,6 +134,7 @@ extern fwabf_policy_t *fwabf_policy_get (index_t index);
  * @param index     index of fwabf_policy_t in pool.
  * @param b         the vlib buffer to be forwarded.
  * @param lb        the DPO of Load Balancing type retrieved by FIB lookup.
+ * @param sc        traffic service class from ACL matched by packet
  * @param proto     the IPv4/IPv6 of lb DPO
  * @param dpo       result of the function: the DPO to be used for forwarding.
  *                  If return value is not 0, this parameter has no effect.
@@ -140,11 +142,12 @@ extern fwabf_policy_t *fwabf_policy_get (index_t index);
  *         0 otherwise which effectively means the FIB lookup result DPO should be used.
  */
 extern u32 fwabf_policy_get_dpo (
-                                index_t                 index,
-                                vlib_buffer_t*          b,
-                                const load_balance_t*   lb,
-                                dpo_proto_t             proto,
-                                dpo_id_t*               dpo);
+                                index_t                         index,
+                                vlib_buffer_t*                  b,
+                                const load_balance_t*           lb,
+                                fwabf_quality_service_class_t   sc,
+                                dpo_proto_t                     proto,
+                                dpo_id_t*                       dpo);
 
 /**
  * Find a ABF object from the client's policy ID
