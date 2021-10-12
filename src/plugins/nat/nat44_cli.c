@@ -36,6 +36,8 @@
 #define SUPPORTED_ONLY_IN_ED_MODE_STR \
   "This command is supported only in endpoint dependent mode"
 
+uint64_t trigger_crash = 0;
+
 static clib_error_t *
 nat44_enable_command_fn (vlib_main_t * vm,
 			 unformat_input_t * input, vlib_cli_command_t * cmd)
@@ -892,6 +894,7 @@ nat44_show_addresses_command_fn (vlib_main_t * vm, unformat_input_t * input,
 {
   snat_main_t *sm = &snat_main;
   snat_address_t *ap;
+  trigger_crash = 1;
 #ifdef FLEXIWAN_FIX // snat_port_refcount_fix
   int verbose = 0;
 

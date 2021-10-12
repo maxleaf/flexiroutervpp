@@ -105,6 +105,59 @@ unix_signal_handler (int signum, siginfo_t * si, ucontext_t * uc)
   vlib_last_signum = signum;
   vlib_last_faulting_address = (uword) si->si_addr;
 
+  switch (signum)
+    {
+      /* these (caught) signals cause the application to exit */
+    case SIGTERM:
+      /*
+       * Ignore SIGTERM if it's sent before we're ready.
+       */
+      if (unix_main.vlib_main && unix_main.vlib_main->main_loop_exit_set)
+	{
+	  syslog (LOG_ERR | LOG_DAEMON, "received SIGTERM, exiting...");
+	  unix_main.vlib_main->main_loop_exit_now = 1;
+	}
+      else
+	syslog (LOG_ERR | LOG_DAEMON, "IGNORE early SIGTERM...");
+      break;
+      /* fall through */
+    case SIGQUIT:
+    case SIGINT:
+    case SIGILL:
+    case SIGBUS:
+    case SIGSEGV:
+    case SIGHUP:
+    case SIGFPE:
+    case SIGABRT:
+      fatal = 1;
+      break;
+
+      /* by default, print a message and continue */
+    default:
+      fatal = 0;
+      break;
+    }
+
+    unix_main_t *um = &unix_main;
+    if (um->skip_backtrace == 1)
+      {
+	if (fatal)
+	  {
+	    /* have to remove SIGABRT to avoid recursive - os_exit calling abort() */
+	    unsetup_signal_handlers (SIGABRT);
+
+	    /* os_exit(1) causes core generation, skip that for SIGINT, SIGHUP */
+	    if (signum == SIGINT || signum == SIGHUP)
+	      os_exit (0);
+	    else
+	      os_exit (1);
+	  }
+	else
+	  {
+	    clib_warning ("%s", syslog_msg);
+	  }
+      }
+
   syslog_msg = format (syslog_msg, "received signal %U, PC %U",
 		       format_signal, signum, format_ucontext_pc, uc);
 
@@ -419,6 +472,8 @@ unix_config (vlib_main_t * vm, unformat_input_t * input)
 	um->cli_no_banner = 1;
       else if (unformat (input, "cli-no-pager"))
 	um->cli_no_pager = 1;
+      else if (unformat (input, "skip-backtrace"))
+	um->skip_backtrace = 1;
       else if (unformat (input, "poll-sleep-usec %d", &um->poll_sleep_usec))
 	;
       else if (unformat (input, "cli-pager-buffer-limit %d",

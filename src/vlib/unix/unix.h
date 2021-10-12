@@ -103,6 +103,8 @@ typedef struct
   /* Suppress the pager */
   int cli_no_pager;
 
+  int skip_backtrace;
+
   /* Store the original state of stdin when it's a tty */
   struct termios tio_stdin;
   int tio_isset;

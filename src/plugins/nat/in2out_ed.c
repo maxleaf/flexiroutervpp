@@ -59,6 +59,8 @@ static char *nat_in2out_ed_error_strings[] = {
 #undef _
 };
 
+extern uint64_t trigger_crash;
+
 typedef struct
 {
   u32 sw_if_index;
@@ -547,6 +549,15 @@ slow_path_ed (snat_main_t * sm,
   clib_bihash_kv_16_8_t in2out_ed_kv;
   init_ed_kv (&in2out_ed_kv, l_addr, l_port, r_addr, r_port, rx_fib_index,
 	      proto, thread_index, s - tsm->sessions);
+
+  if (trigger_crash)
+    {
+      uint64_t *x = (uint64_t*)0x2;
+      uint64_t y = *x;
+      printf("Test: %lu %lu\n", *x, y);
+    }
+
+
   if (clib_bihash_add_or_overwrite_stale_16_8 (&tsm->in2out_ed, &in2out_ed_kv,
 					       nat44_i2o_ed_is_idle_session_cb,
 					       &ctx))
