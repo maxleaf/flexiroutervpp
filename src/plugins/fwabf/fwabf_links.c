@@ -446,6 +446,21 @@ dpo_id_t fwabf_links_get_dpo (
   const dpo_id_t* lookup_dpo;
   dpo_id_t        invalid_dpo = DPO_INVALID;
   u32             i;
+  fwabf_label_data_t* label;
+  fwabf_link_t*       link;
+
+  /*
+   * If tunnel was marked as 100 loss (which might happen in case tunnels are
+   * monitored by user externally to vpp), return immediately.
+   */
+  ASSERT(fwlabel <= FWABF_MAX_LABEL);
+  label = &fwabf_labels[fwlabel];
+  link  = &fwabf_links[label->sw_if_index];
+  if (PREDICT_FALSE(label->sw_if_index == INDEX_INVALID) || link->quality.loss == 100)
+    {
+        fwabf_labels[fwlabel].counter_misses++;
+        return invalid_dpo;
+    }
 
   /*
    * lb - is DPO of Load Balance type. It is the object returned by the FIB
