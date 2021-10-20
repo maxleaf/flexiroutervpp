@@ -37,6 +37,14 @@
  *  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+/*
+ *  Copyright (C) 2020 flexiWAN Ltd.
+ *  List of fixes made for FlexiWAN (denoted by FLEXIWAN_FIX flag):
+ *   - reset vnet_buffer(p0)->sw_if_index[VLIB_TX] for the packet that goes
+ *     to lookup node. Otherwise the lookup will use it as a fib index,
+ *     which is wrong and might cause crash in the lookup code.
+ */
+
 #include <vlib/vlib.h>
 #include <vnet/ip/ip.h>
 #include <vnet/pg/pg.h>
@@ -335,6 +343,22 @@ ip4_icmp_error (vlib_main_t * vm,
 	      ip4_address_t *if_ip =
 		ip_interface_address_get_address (lm, if_add);
 	      out_ip0->src_address = *if_ip;
+
+#ifdef FLEXIWAN_FIX
+        /* As packet is going to the ip4-lookup node, reset the VLIB_TX.
+        Otherwise the lookup will use it as a fib index, which is wrong and might
+        crash the lookup code. See ip_lookup_set_buffer_fib_index() function.
+            The flow that exposed this bug involves injecting packets with TTL=1
+        from Linux through the TAP, for example by running traceroute utility.
+        Than these packets go to the in2out NAT, where the TTL expiration is
+        detected and the ICMP error packet is triggered. When ICMP packet is
+        copied from the original Linux packet, the metadata and VLIB_TX is copied
+        as well. The original buffer has VLIB_TX set by tap_inject vppsb module,
+        as the tap is bound to the TX interface and packet enters the output
+        feature arc.
+        */
+		vnet_buffer(p0)->sw_if_index[VLIB_TX] = (u32)~0;
+#endif
 	    }
 	  else
 	    {
