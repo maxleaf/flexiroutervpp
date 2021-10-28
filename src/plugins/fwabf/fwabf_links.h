@@ -60,6 +60,7 @@ typedef struct fwabf_quality_t_ {
 
 /* Service Classes as per RFC 4564 Figure 2 */
 typedef enum fwabf_quality_service_class_t_ {
+    FWABF_QUALITY_SC_MIN                       = -1,
     FWABF_QUALITY_SC_TELEPHONY                 = 0,
     FWABF_QUALITY_SC_BROADCAST_VIDEO           = 1,
     FWABF_QUALITY_SC_REAL_TIME                 = 2,
@@ -70,6 +71,8 @@ typedef enum fwabf_quality_service_class_t_ {
     FWABF_QUALITY_SC_MULTIMEDIA_CONFERENCING   = 7,
     FWABF_QUALITY_SC_MULTIMEDIA_STREAMING      = 8,
     FWABF_QUALITY_SC_STANDARD                  = 9,
+    /* keep this last! */
+    FWABF_QUALITY_SC_MAX
 } fwabf_quality_service_class_t;
 
 typedef enum fwabf_quality_level_t_ {
