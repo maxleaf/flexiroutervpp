@@ -19,6 +19,8 @@
  *   - Disabled ASSERT on punting.
  *   - Reinitiate connection on authentication failure.
  *   - ikev2_mngr_process_child_sa: Check if profile exists before accessing it
+ *   - Reinitiate connection on rekeying failure due to missing PFS (Perfect Forward Secrecy) feature.
+ *   - Wake up manager task in case if child sa was deleted to speed up recovery from failed connection.
  */
 
 #include <vlib/vlib.h>
@@ -4395,6 +4397,10 @@ ikev2_delete_child_sa_internal (vlib_main_t * vm, ikev2_sa_t * sa,
   /* delete local child SA */
   ikev2_delete_tunnel_interface (km->vnet_main, sa, csa);
   ikev2_sa_del_child_sa (sa, csa);
+#ifdef FLEXIWAN_FIX
+  vlib_node_t *node = vlib_get_node_by_name (vm, (u8 *)"ikev2-manager-process");
+  vlib_process_signal_event_mt (vm, node->index, 0, ~0);
+#endif /* FLEXIWAN_FIX */
 }
 
 clib_error_t *
@@ -5061,7 +5067,11 @@ ikev2_mngr_process_fn (vlib_main_t * vm, vlib_node_runtime_t * rt,
 #endif /* FLEXIWAN_FIX */
           if (sa->state != IKEV2_STATE_AUTHENTICATED)
             continue;
-
+#ifdef FLEXIWAN_FIX
+          if (vec_len(sa->childs) == 0) {
+            vec_add1 (to_be_deleted, sa - tkm->sas);
+          }
+#endif /* FLEXIWAN_FIX */
           if (sa->old_remote_id_present && 0 > sa->old_id_expiration)
             {
               sa->old_remote_id_present = 0;
