@@ -21,6 +21,8 @@
  *   - ikev2_mngr_process_child_sa: Check if profile exists before accessing it
  *   - Reinitiate connection on rekeying failure due to missing PFS (Perfect Forward Secrecy) feature.
  *   - Wake up manager task in case if child sa was deleted to speed up recovery from failed connection.
+ *   - Do not ignore informational message with payload of type IKEV2_PAYLOAD_DELETE. It was ignored as far
+ *     as msg_id is equal to 0.
  */
 
 #include <vlib/vlib.h>
@@ -2714,6 +2716,14 @@ ikev2_retransmit_resp (ikev2_sa_t * sa, ike_header_t * ike)
       sa->last_msg_id = msg_id;
       return 0;
     }
+
+#ifdef FLEXIWAN_FIX
+  if (msg_id == 0)
+    {
+      sa->last_msg_id = msg_id;
+      return 0;
+    }
+#endif /* FLEXIWAN_FIX */
 
   /* retransmitted req */
   if (msg_id == sa->last_msg_id)
