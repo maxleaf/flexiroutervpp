@@ -2441,6 +2441,10 @@ ikev2_generate_message (vlib_buffer_t * b, ikev2_sa_t * sa,
 	    }
 	  vec_free (sa->del);
 	  sa->del = 0;
+#ifdef FLEXIWAN_FIX
+    vlib_node_t *node = vlib_get_node_by_name (km->vlib_main, (u8 *)"ikev2-manager-process");
+    vlib_process_signal_event_mt (km->vlib_main, node->index, 0, ~0);
+#endif /* FLEXIWAN_FIX */
 	}
       /* received N(AUTHENTICATION_FAILED) */
       else if (sa->state == IKEV2_STATE_AUTH_FAILED)
